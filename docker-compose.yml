@@ -41,7 +41,7 @@ services:
       ConnectionStrings__DefaultConnection: >-
         Host=postgres;Port=5432;Database=opentrafficdb;
         Username=opentraffic;Password=${POSTGRES_PASSWORD:-changeme}
-      Valhalla__BaseUrl: http://valhalla:8002
+      Valhalla__BaseUrl: https://opentrafficdb.ksol.it
     depends_on:
       postgres:
         condition: service_healthy
