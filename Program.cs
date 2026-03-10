@@ -26,7 +26,7 @@ public class Program
 
         // ── Services ────────────────────────────────────────────────────────────
         builder.Services.AddSingleton<AbuseDetectionService>();
-        builder.Services.AddScoped<JwtService>();
+        builder.Services.AddSingleton<JwtService>();
         builder.Services.AddScoped<SpeedValidationService>();
         builder.Services.AddScoped<TrafficAggregationService>();
         builder.Services.AddScoped<ValhallaMapMatchingService>();
