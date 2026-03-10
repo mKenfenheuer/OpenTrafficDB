@@ -2,59 +2,8 @@ before_script:
   - export CI_ENVIRONMENT_HOST=$(echo $CI_ENVIRONMENT_URL | sed 's~http[s]*://~~g')
 
 stages:
-  - tiles
   - build
   - deploy
-
-# ── OSM tile preparation ────────────────────────────────────────────────────
-# Downloads the Germany OSM PBF if not present and builds Valhalla tiles.
-# Skips all work if tiles already exist (fast exit on subsequent runs).
-prepare_osm_tiles:
-  stage: tiles
-  only:
-    - main
-  tags:
-    - docker
-    - linux
-    - shell
-  script:
-    - mkdir -p /mnt/data/opentraffic/valhalla
-    - mkdir -p /mnt/data/opentraffic/postgres
-    # Download Germany OSM PBF only if neither the PBF nor the tiles directory exist
-    - |
-      if [ ! -f /mnt/data/opentraffic/valhalla/germany-latest.osm.pbf ] && \
-         [ ! -d /mnt/data/opentraffic/valhalla/valhalla_tiles ]; then
-        echo "Downloading Germany OSM PBF ($(date))..."
-        wget -q --show-progress \
-          -O /mnt/data/opentraffic/valhalla/germany-latest.osm.pbf \
-          https://download.geofabrik.de/europe/germany-latest.osm.pbf
-        echo "Download complete ($(date))."
-      else
-        echo "OSM PBF or tiles already present — skipping download."
-      fi
-    # Build Valhalla tiles if they do not exist yet
-    - |
-      if [ ! -d /mnt/data/opentraffic/valhalla/valhalla_tiles ] && \
-         [ -f /mnt/data/opentraffic/valhalla/germany-latest.osm.pbf ]; then
-        echo "Building Valhalla routing tiles for Germany (this can take 30–90 minutes)..."
-        docker rm -f otdb-valhalla-builder 2>/dev/null || true
-        docker run -d --name otdb-valhalla-builder \
-          -v /mnt/data/opentraffic/valhalla:/custom_files \
-          -e tile_building_blocked=0 \
-          ghcr.io/gis-ops/docker-valhalla/valhalla:latest
-        # Poll until the Valhalla HTTP server responds (tiles are built and server is up)
-        echo "Waiting for tile build to complete..."
-        timeout 10800 bash -c \
-          'until docker exec otdb-valhalla-builder wget -qO- http://localhost:8002/status >/dev/null 2>&1; \
-           do echo "  still building... ($(date))"; sleep 60; done'
-        docker stop otdb-valhalla-builder
-        docker rm otdb-valhalla-builder
-        # Remove PBF so subsequent container restarts do not trigger a rebuild
-        rm -f /mnt/data/opentraffic/valhalla/germany-latest.osm.pbf
-        echo "Tile build complete. PBF removed to prevent rebuild on restart ($(date))."
-      else
-        echo "Valhalla tiles already exist — skipping tile build."
-      fi
 
 # ── Docker image build ──────────────────────────────────────────────────────
 build_amd64_image:
@@ -79,7 +28,6 @@ build_amd64_image:
 deploy_production:
   stage: deploy
   needs:
-    - prepare_osm_tiles
     - build_amd64_image
   allow_failure: false
   only:
@@ -91,6 +39,17 @@ deploy_production:
     - linux
     - no-gpu
   script:
+    - mkdir -p /mnt/data/opentraffic/valhalla
+    - mkdir -p /mnt/data/opentraffic/postgres
+    - |
+      if [ ! -f /mnt/data/opentraffic/valhalla/map.osm.pbf ]; then
+        echo "Downloading Germany OSM PBF..."
+        wget -q --show-progress \
+          -O /mnt/data/opentraffic/valhalla/map.osm.pbf \
+          https://download.geofabrik.de/europe/germany-latest.osm.pbf
+      else
+        echo "map.osm.pbf already present, skipping download."
+      fi
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - export APP_IMAGE=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
     - docker compose pull app

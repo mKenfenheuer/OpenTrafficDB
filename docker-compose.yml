@@ -22,9 +22,7 @@ services:
     volumes:
       - /mnt/data/opentraffic/valhalla:/custom_files
     environment:
-      # Place your region OSM PBF in the valhalla_data volume as "map.osm.pbf"
-      # and set tile_building_blocked=0 to trigger an initial build.
-      tile_building_blocked: "1"
+      tile_building_blocked: "0"
     ports:
       - "127.0.0.1:8002:8002"
     healthcheck:
