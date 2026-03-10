@@ -3,14 +3,28 @@ using System.Net.Mail;
 
 namespace OpenTrafficDB.Services;
 
-public class SmtpEmailService(IConfiguration config, ILogger<SmtpEmailService> logger) : IEmailService
+public class SmtpEmailService : IEmailService
 {
-    private readonly string _host     = config["Email:SmtpHost"] ?? string.Empty;
-    private readonly int    _port     = int.TryParse(config["Email:SmtpPort"], out var p) ? p : 587;
-    private readonly string _user     = config["Email:SmtpUser"] ?? string.Empty;
-    private readonly string _pass     = config["Email:SmtpPassword"] ?? string.Empty;
-    private readonly string _from     = config["Email:FromAddress"] ?? "noreply@opentrafficdb.org";
-    private readonly string _fromName = config["Email:FromName"] ?? "OpenTrafficDB";
+    private readonly string _host;
+    private readonly int _port;
+    private readonly string _user;
+    private readonly string _pass;
+    private readonly bool _ssl;
+    private readonly string _from;
+    private readonly string _fromName;
+    private readonly ILogger<SmtpEmailService> logger;
+
+    public SmtpEmailService(IConfiguration config, ILogger<SmtpEmailService> logger)
+    {
+        _host = config["Email:SmtpHost"] ?? string.Empty;
+        _port = int.TryParse(config["Email:SmtpPort"], out var p) ? p : 587;
+        _user = config["Email:SmtpUser"] ?? string.Empty;
+        _pass = config["Email:SmtpPassword"] ?? string.Empty;
+        _from = config["Email:FromAddress"] ?? "noreply@opentrafficdb.org";
+        _fromName = config["Email:FromName"] ?? "OpenTrafficDB";
+        bool.TryParse(config["Email:EnableSsl"] ?? "true", out _ssl);
+        this.logger = logger;
+    } 
 
     public async Task SendVerificationEmailAsync(string toEmail, string verificationUrl)
     {
@@ -33,17 +47,17 @@ public class SmtpEmailService(IConfiguration config, ILogger<SmtpEmailService> l
         }
 
         using var message = new MailMessage();
-        message.From    = new MailAddress(_from, _fromName);
+        message.From = new MailAddress(_from, _fromName);
         message.To.Add(toEmail);
         message.Subject = subject;
-        message.Body    = body;
+        message.Body = body;
         message.IsBodyHtml = true;
 
         using var client = new SmtpClient(_host, _port);
-        client.EnableSsl       = true;
-        client.DeliveryMethod  = SmtpDeliveryMethod.Network;
+        client.DeliveryMethod = SmtpDeliveryMethod.Network;
         client.UseDefaultCredentials = false;
-        client.Credentials     = new NetworkCredential(_user, _pass);
+        client.EnableSsl = _ssl;
+        client.Credentials = new NetworkCredential(_user, _pass);
 
         try
         {
