@@ -128,7 +128,6 @@ public class WebAuthController(
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Email, request.Email),
-            new(ClaimTypes.Name, user.Name),
             new("role", user.Role.ToString()),
         };
 
@@ -148,7 +147,6 @@ public class WebAuthController(
         return Ok(new WebLoginResponse
         {
             Id   = user.Id,
-            Name = user.Name,
             Role = user.Role.ToString()
         });
     }

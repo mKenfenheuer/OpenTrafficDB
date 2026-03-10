@@ -1,0 +1,97 @@
+@{
+    ViewData["Title"] = "Login";
+}
+
+<!-- Sign-in card (shown when not logged in) -->
+<div id="auth-panel" class="login-section container-sm hidden" style="margin:0 auto 60px">
+    <div class="login-tabs">
+    <button class="login-tab active" onclick="showTab('login')">Sign in</button>
+    </div>
+
+    <div id="tab-login">
+    <p class="text-muted text-sm mb-2">
+        Don't have an account? <a href="/Home/Register">Register here</a>.
+    </p>
+    <div id="login-alert" class="alert hidden"></div>
+    <div class="form-group">
+        <label class="form-label" for="email-input">Email</label>
+        <input type="email" id="email-input" class="form-control" placeholder="you@example.com" autocomplete="email">
+    </div>
+    <div class="form-group">
+        <label class="form-label" for="pass-input">Password</label>
+        <input type="password" id="pass-input" class="form-control" placeholder="Your password" autocomplete="current-password">
+    </div>
+    <div class="form-group" style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="remember-me" style="accent-color:var(--accent)">
+        <label for="remember-me" style="font-size:0.85rem;color:var(--text-muted);cursor:pointer">Remember me (30 days)</label>
+    </div>
+    <button class="btn btn-primary btn-block" id="login-btn" onclick="doLogin()">Sign in</button>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module">
+    import { getSession, logout, showAlert, esc } from '/js/app.js';
+    window.logout = logout;
+
+    function showTab(name) {
+      document.querySelectorAll('.login-tab').forEach((t, i) => {
+        t.classList.toggle('active', (i === 0 && name === 'login') || (i === 1 && name === 'roles'));
+      });
+      document.getElementById('tab-login').classList.toggle('hidden', name !== 'login');
+      document.getElementById('tab-roles').classList.toggle('hidden', name !== 'roles');
+    }
+    window.showTab = showTab;
+
+    // Verification banners
+    const params = new URLSearchParams(location.search);
+    if (params.get('verified') === '1')
+      document.getElementById('banner-verified').classList.remove('hidden');
+    else if (params.get('verified') === 'invalid')
+      document.getElementById('banner-invalid').classList.remove('hidden');
+
+    async function doLogin() {
+      const email    = document.getElementById('email-input').value.trim();
+      const password = document.getElementById('pass-input').value;
+      const remember = document.getElementById('remember-me').checked;
+      const alertEl  = document.getElementById('login-alert');
+      const btn      = document.getElementById('login-btn');
+
+      if (!email || !password) { showAlert(alertEl, 'Please enter your email and password.'); return; }
+
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+      alertEl.classList.add('hidden');
+
+      const res = await fetch('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, rememberMe: remember }),
+        credentials: 'same-origin'
+      });
+      const data = await res.json().catch(() => ({}));
+
+      btn.disabled = false;
+      btn.textContent = 'Sign in';
+
+      if (!res.ok) { showAlert(alertEl, data?.error || 'Login failed.'); return; }
+      window.location.href = '/Home/Dashboard';
+    }
+    window.doLogin = doLogin;
+
+    document.getElementById('pass-input')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+
+    // Check session
+    const session = await getSession();
+
+    if (session) {
+      document.getElementById('auth-panel').classList.add('hidden');
+      document.getElementById('logged-in-panel').classList.remove('hidden');
+      document.getElementById('logged-in-name').textContent = session.name || session.email;
+    } else {
+      document.getElementById('auth-panel').classList.remove('hidden');
+    }
+  </script>
+}

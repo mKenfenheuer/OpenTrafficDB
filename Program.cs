@@ -46,10 +46,6 @@ public class Program
             client.Timeout = TimeSpan.FromSeconds(30);
         });
 
-        // ── Authentication & Authorization ──────────────────────────────────────
-        var jwtKey = builder.Configuration["Jwt:Key"]
-            ?? throw new InvalidOperationException("Jwt:Key must be configured.");
-
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationHandler.SchemeName, options => { })
             .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
@@ -85,7 +81,7 @@ public class Program
             });
 
         // ── Controllers & Swagger ───────────────────────────────────────────────
-        builder.Services.AddControllers();
+        builder.Services.AddControllersWithViews().AddRazorRuntimeCompilation();
 
         builder.Services.AddSwaggerGen(c =>
         {
@@ -101,7 +97,7 @@ public class Program
                     Valhalla-compatible predicted traffic exports.
 
                     **Machine authentication flow:**
-                    1. Register at `/register.html` — creates an account and sends email verification
+                    1. Register at `/Home/Register` — creates an account and sends email verification
                     2. After verifying email, log in at `/` and create an API key on your profile page
                     3. `POST /api/v1/auth/token` — exchange API key for a short-lived JWT (IP-bound)
                     4. Include the JWT in every request: `Authorization: Bearer {token}`
@@ -189,7 +185,7 @@ public class Program
                     $"\n╔══════════════════════════════════════════════════════╗" +
                     $"\n║           DEFAULT ADMIN ACCOUNT CREATED              ║" +
                     $"\n║  Email:    admin@example.com                         ║" +
-                    $"\n║  Password: {rawPassword,-40}║" +
+                    $"\n║  Password: {rawPassword,-42}║" +
                     $"\n║  Change this password after first login!             ║" +
                     $"\n╚══════════════════════════════════════════════════════╝\n");
             }
@@ -200,7 +196,7 @@ public class Program
         app.UseCors();
         app.UseMiddleware<IpBlockingMiddleware>();
 
-        // Serve wwwroot static files; index.html is served at /
+        // Serve wwwroot static files;
         app.UseDefaultFiles();
         app.UseStaticFiles();
 
@@ -215,7 +211,12 @@ public class Program
 
         app.UseAuthentication();
         app.UseAuthorization();
-        app.MapControllers();
+
+        app.MapStaticAssets();
+        app.MapControllerRoute(
+            name: "default",
+            pattern: "{controller=Home}/{action=Index}/{id?}")
+            .WithStaticAssets();
 
         await app.RunAsync();
     }

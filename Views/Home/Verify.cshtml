@@ -1,26 +1,7 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Register – OpenTrafficDB</title>
-  <link rel="stylesheet" href="/css/style.css">
-</head>
-<body>
-  <nav class="navbar">
-    <div class="container navbar-inner">
-      <a href="/" class="navbar-brand">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-        </svg>
-        OpenTrafficDB
-      </a>
-      <ul class="navbar-nav" id="navbar-links"></ul>
-    </div>
-  </nav>
-
-  <div class="container-sm" style="padding-top:48px;padding-bottom:64px">
-    <!-- Registration form -->
+@{
+    ViewData["Title"] = "Verify";
+}
+<!-- Registration form -->
     <div id="register-view">
       <div style="text-align:center;margin-bottom:32px">
         <h1 style="font-size:1.75rem;font-weight:800;margin-bottom:8px">Create an account</h1>
@@ -74,22 +55,16 @@
         </div>
       </div>
     </div>
-  </div>
 
-  <footer>
-    <div class="container">
-      <p>OpenTrafficDB · Non-Commercial Community License</p>
-    </div>
-  </footer>
-
+@section Scripts {
+    
   <script type="module">
-    import { getSession, initNavbar, showAlert } from '/js/app.js';
+    import { getSession, showAlert } from '/js/app.js';
 
     const session = await getSession();
-    initNavbar(session, 'register');
 
     // Already logged in → go to dashboard
-    if (session) window.location.href = '/dashboard.html';
+    if (session) window.location.href = '/Home/Dashboard';
 
     async function doRegister() {
       const email = document.getElementById('reg-email').value.trim();
@@ -134,5 +109,4 @@
       if (e.key === 'Enter') doRegister();
     });
   </script>
-</body>
-</html>
+}

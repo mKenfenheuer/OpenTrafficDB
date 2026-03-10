@@ -41,11 +41,6 @@ services:
       ConnectionStrings__DefaultConnection: >-
         Host=postgres;Port=5432;Database=opentrafficdb;
         Username=opentraffic;Password=${POSTGRES_PASSWORD:-changeme}
-      Jwt__Key: ${JWT_KEY:?JWT_KEY environment variable is required}
-      Jwt__Issuer: OpenTrafficDB
-      Jwt__Audience: OpenTrafficDB
-      Jwt__ExpiryMinutes: "60"
-      Security__IpHashPepper: ${IP_HASH_PEPPER:?IP_HASH_PEPPER environment variable is required}
       Valhalla__BaseUrl: http://valhalla:8002
     depends_on:
       postgres:

@@ -1,26 +1,7 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin – OpenTrafficDB</title>
-  <link rel="stylesheet" href="/css/style.css">
-</head>
-<body>
-  <nav class="navbar">
-    <div class="container navbar-inner">
-      <a href="/" class="navbar-brand">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-        </svg>
-        OpenTrafficDB
-      </a>
-      <ul class="navbar-nav" id="navbar-links"></ul>
-    </div>
-  </nav>
-
-  <div class="container" style="padding-top:32px;padding-bottom:64px">
-    <div id="loading" style="text-align:center;padding:80px 0">
+@{
+    ViewData["Title"] = "Admin";
+}
+<div id="loading" style="text-align:center;padding:80px 0">
       <div class="spinner"></div>
     </div>
 
@@ -122,24 +103,15 @@
         </div>
       </div>
     </div>
-  </div>
-
-  <footer>
-    <div class="container">
-      <p>OpenTrafficDB Admin · <a href="/swagger" target="_blank">API Docs</a> · <a href="/dashboard.html">Dashboard</a></p>
-    </div>
-  </footer>
-
+@section Scripts {
+    
   <script type="module">
     import { getSession, logout, web, roleBadge, fmtDate, fmtDateTime, showAlert, esc } from '/js/app.js';
-    import { initNavbar } from '/js/app.js';
     window.logout = logout;
 
     const session = await getSession();
     if (!session)              { window.location.href = '/';             throw new Error(); }
-    if (session.role !== 'Admin') { window.location.href = '/dashboard.html'; throw new Error(); }
-
-    initNavbar(session, 'admin');
+    if (session.role !== 'Admin') { window.location.href = '/Home/Dashboard'; throw new Error(); }
 
     // ── Stats ──────────────────────────────────────────────────────────────────
 
@@ -333,5 +305,4 @@
 
     Promise.all([loadStats(), loadUsers(), loadBlocked()]);
   </script>
-</body>
-</html>
+}

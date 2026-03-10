@@ -4,10 +4,8 @@ using System.Text;
 namespace OpenTrafficDB.Services;
 
 /// <summary>Hashing and API key utilities (no JWT — see ApiKeyAuthenticationHandler for auth).</summary>
-public class CryptoService(IConfiguration config)
+public class CryptoService()
 {
-    private readonly string _pepper = config["Security:IpHashPepper"] ?? "default-pepper";
-
     public string GenerateRawApiKey()
     {
         var bytes = RandomNumberGenerator.GetBytes(32);
@@ -26,5 +24,5 @@ public class CryptoService(IConfiguration config)
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tripId.Trim().ToLowerInvariant()))).ToLowerInvariant();
 
     public string HashIp(string ip) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ip + _pepper))).ToLowerInvariant();
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ip))).ToLowerInvariant();
 }

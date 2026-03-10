@@ -51,31 +51,6 @@ export async function logout() {
 }
 window.logout = logout;
 
-// ── Navbar ─────────────────────────────────────────────────────────────────────
-
-/** Render the navbar. Pass the session object (or null) returned by getSession(). */
-export function initNavbar(session, activeLink = '') {
-  const nav = document.getElementById('navbar-links');
-  if (!nav) return;
-
-  let links = `<li><a href="/swagger" target="_blank">API Docs</a></li>`;
-
-  if (session) {
-    links += `<li><a href="/dashboard.html" ${activeLink === 'dashboard' ? 'class="active"' : ''}>Dashboard</a></li>`;
-    links += `<li><a href="/profile.html" ${activeLink === 'profile' ? 'class="active"' : ''}>Profile</a></li>`;
-    if (session.role === 'Admin')
-      links += `<li><a href="/admin.html" ${activeLink === 'admin' ? 'class="active"' : ''}>Admin</a></li>`;
-    const displayName = session.name || session.email || 'Account';
-    links += `<li><span class="text-muted text-sm" style="padding:6px 8px">${esc(displayName)}</span></li>`;
-    links += `<li><button class="btn btn-secondary btn-sm" onclick="logout()">Sign out</button></li>`;
-  } else {
-    links += `<li><a href="/register.html" ${activeLink === 'register' ? 'class="active"' : ''}>Register</a></li>`;
-    links += `<li><a href="/" class="btn btn-primary btn-sm" style="margin-left:4px">Sign in</a></li>`;
-  }
-
-  nav.innerHTML = links;
-}
-
 // ── UI helpers ─────────────────────────────────────────────────────────────────
 
 export function roleBadge(role) {

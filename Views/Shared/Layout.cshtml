@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>@ViewData["Title"] – OpenTrafficDB</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+    <nav class="navbar">
+        <div class="container navbar-inner">
+            <a href="/" class="navbar-brand">
+                OpenTrafficDB
+            </a>
+            <ul class="navbar-nav" id="navbar-links">
+                @RenderSection("Navbar", required: false)
+                <ul class="navbar-nav" id="navbar-links">
+                    <li><a href="/swagger" target="_blank">API Docs</a></li>
+                    <li><a href="/Home/Dashboard">Dashboard</a></li>
+                    <li><a href="/Home/Profile">Profile</a></li>
+                    @if(User.Claims.Any(c => c.Type == "role" && c.Value == "Admin"))
+                    {
+                        <li><a href="/Home/Admin">Admin</a></li>
+                    }
+                    @if(User.Identity?.IsAuthenticated == true) {
+                        <li><button class="btn btn-secondary btn-sm" onclick="logout()">Sign Out</button></li>
+                    } else {
+                        <li><a class="btn btn-secondary btn-sm" href="/Home/Login">Sign In</a></li>
+                    }
+                </ul>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container" style="padding-top:32px;padding-bottom:64px">
+        @RenderBody()
+    </div>
+    <footer>
+        <div class="container">
+            <p>OpenTrafficDB · <a href="/swagger" target="_blank">API Docs</a> · <a href="/">Home</a></p>
+        </div>
+    </footer>
+
+    @RenderSection("Scripts", required: false)
+</body>
+
+</html>
