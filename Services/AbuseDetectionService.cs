@@ -11,7 +11,7 @@ namespace OpenTrafficDB.Services;
 /// </summary>
 public class AbuseDetectionService(
     IServiceScopeFactory scopeFactory,
-    JwtService jwtService,
+    CryptoService cryptoService,
     IConfiguration config,
     ILogger<AbuseDetectionService> logger)
 {
@@ -51,7 +51,7 @@ public class AbuseDetectionService(
         if (DateTime.UtcNow - _cacheLastRefresh > TimeSpan.FromMinutes(5))
             await SeedFromDbAsync();
 
-        return _blockedCache.ContainsKey(jwtService.HashIp(ip));
+        return _blockedCache.ContainsKey(cryptoService.HashIp(ip));
     }
 
     public async Task<bool> CheckSubmitRateAsync(string ip, string apiKeyId)
@@ -80,7 +80,7 @@ public class AbuseDetectionService(
 
     public async Task ManualBlockAsync(string ip, string reason, DateTime? expiresAt)
     {
-        var ipHash = jwtService.HashIp(ip);
+        var ipHash = cryptoService.HashIp(ip);
         _blockedCache[ipHash] = 0;
 
         using var scope = scopeFactory.CreateScope();
@@ -114,7 +114,7 @@ public class AbuseDetectionService(
 
     private async Task AutoBlockAsync(string ip, string reason)
     {
-        var ipHash = jwtService.HashIp(ip);
+        var ipHash = cryptoService.HashIp(ip);
         if (_blockedCache.ContainsKey(ipHash)) return;
 
         _blockedCache[ipHash] = 0;

@@ -15,6 +15,7 @@ namespace OpenTrafficDB.Controllers;
 [ApiController]
 [Route("auth")]
 [Produces("application/json")]
+[ApiExplorerSettings(IgnoreApi = true)]
 public class WebAuthController(
     AppDbContext db,
     CryptoService crypto,

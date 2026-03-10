@@ -33,20 +33,6 @@ export async function auth(method, path, body = null) {
   return { ok: res.ok, status: res.status, data };
 }
 
-/** Fetch a machine API endpoint with a JWT Bearer token. */
-export async function api(method, path, token, body = null) {
-  const res = await fetch(API_BASE + path, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
-}
-
 // ── Session ────────────────────────────────────────────────────────────────────
 
 /** Fetch the current user's profile from the cookie session.

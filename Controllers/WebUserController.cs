@@ -16,6 +16,7 @@ namespace OpenTrafficDB.Controllers;
 [Route("web")]
 [Authorize(AuthenticationSchemes = CookieAuthenticationDefaults.AuthenticationScheme)]
 [Produces("application/json")]
+[ApiExplorerSettings(IgnoreApi = true)]
 public class WebUserController(AppDbContext db, ApiKeyService keyService, IConfiguration config) : ControllerBase
 {
     private int ContributorThreshold =>

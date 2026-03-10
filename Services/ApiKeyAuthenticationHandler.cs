@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using OpenTrafficDB.Data;
+using OpenTrafficDB.Models;
 
 namespace OpenTrafficDB.Services;
 
@@ -20,7 +21,7 @@ public class ApiKeyAuthenticationHandler(
     AppDbContext db,
     CryptoService crypto) : AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder)
 {
-    public const string SchemeName = "ApiKey";
+    public const string SchemeName = "Bearer";
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
@@ -28,10 +29,10 @@ public class ApiKeyAuthenticationHandler(
             return AuthenticateResult.NoResult();
 
         var header = authHeader.ToString();
-        if (!header.StartsWith("ApiKey ", StringComparison.OrdinalIgnoreCase))
+        if (!header.StartsWith($"{SchemeName} ", StringComparison.OrdinalIgnoreCase))
             return AuthenticateResult.NoResult();
 
-        var rawKey = header["ApiKey ".Length..].Trim();
+        var rawKey = header[$"{SchemeName} ".Length..].Trim();
         if (string.IsNullOrEmpty(rawKey))
             return AuthenticateResult.Fail("Missing API key value.");
 
@@ -58,7 +59,7 @@ public class ApiKeyAuthenticationHandler(
         var claims = new[]
         {
             new Claim("sub",   apiKey.User.Id.ToString()),
-            new Claim("role",  apiKey.User.Role.ToString()),
+            new Claim("role",  apiKey.User.Role == UserRole.User ? UserRole.User.ToString() : UserRole.Contributor.ToString()),
             new Claim("keyId", apiKey.Id.ToString()),
         };
 

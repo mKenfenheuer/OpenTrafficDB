@@ -120,7 +120,7 @@ public class SpeedController(
             user.Role = UserRole.Contributor;
     }
 
-    private static SpeedObservation MapToObservation(SpeedObservationRequest req, int apiKeyId, string ipHash) =>
+    private SpeedObservation MapToObservation(SpeedObservationRequest req, int apiKeyId, string ipHash) =>
         new()
         {
             ApiKeyId = apiKeyId,
@@ -131,8 +131,7 @@ public class SpeedController(
             Heading = req.Heading,
             AltitudeMeters = req.AltitudeMeters,
             GpsAccuracyMeters = req.GpsAccuracyMeters,
-            TripId = req.TripId,
-            // ValhallaEdgeId is set server-side by AggregationBackgroundService
+            TripId = crypto.HashTripId(apiKeyId + req.TripId),
             IpHash = ipHash,
             CreatedAt = DateTime.UtcNow
         };

@@ -32,7 +32,7 @@ public class SpeedObservationRequest
 
     /// <summary>Anonymized trip UUID — must not contain user-identifiable information</summary>
     [Required]
-    public Guid TripId { get; set; }
+    public string TripId { get; set; } = Guid.NewGuid().ToString();
 }
 
 public class SubmitSpeedResponse

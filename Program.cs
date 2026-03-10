@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -30,7 +31,7 @@ public class Program
 
         // ── Services ────────────────────────────────────────────────────────────
         builder.Services.AddSingleton<AbuseDetectionService>();
-        builder.Services.AddSingleton<JwtService>();
+        builder.Services.AddSingleton<CryptoService>();
         builder.Services.AddSingleton<PasswordService>();
         builder.Services.AddScoped<IEmailService, SmtpEmailService>();
         builder.Services.AddScoped<ApiKeyService>();
@@ -50,44 +51,15 @@ public class Program
             ?? throw new InvalidOperationException("Jwt:Key must be configured.");
 
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            .AddJwtBearer(options =>
-            {
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuer           = true,
-                    ValidateAudience         = true,
-                    ValidateLifetime         = true,
-                    ValidateIssuerSigningKey = true,
-                    ValidIssuer              = builder.Configuration["Jwt:Issuer"] ?? "OpenTrafficDB",
-                    ValidAudience            = builder.Configuration["Jwt:Audience"] ?? "OpenTrafficDB",
-                    IssuerSigningKey         = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-                    ClockSkew                = TimeSpan.FromSeconds(30)
-                };
-
-                // Reject the token if the caller's IP no longer matches the IP it was issued for.
-                options.Events = new JwtBearerEvents
-                {
-                    OnTokenValidated = context =>
-                    {
-                        var jwtSvc      = context.HttpContext.RequestServices.GetRequiredService<JwtService>();
-                        var ip          = context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-                        var tokenIpHash = context.Principal?.FindFirstValue("ipHash");
-
-                        if (tokenIpHash != null && jwtSvc.HashIp(ip) != tokenIpHash)
-                            context.Fail("Token is not valid for this IP address.");
-
-                        return Task.CompletedTask;
-                    }
-                };
-            })
+                .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationHandler.SchemeName, options => { })
             .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
             {
-                options.Cookie.Name     = "otdb_session";
+                options.Cookie.Name = "otdb_session";
                 options.Cookie.HttpOnly = true;
-                options.Cookie.SameSite     = SameSiteMode.Lax;
+                options.Cookie.SameSite = SameSiteMode.Lax;
                 options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
-                options.SlidingExpiration   = true;
-                options.ExpireTimeSpan      = TimeSpan.FromHours(12);
+                options.SlidingExpiration = true;
+                options.ExpireTimeSpan = TimeSpan.FromHours(12);
                 // Return 401 JSON instead of redirecting for API calls
                 options.Events.OnRedirectToLogin = ctx =>
                 {
@@ -119,7 +91,7 @@ public class Program
         {
             c.SwaggerDoc("v1", new OpenApiInfo
             {
-                Title   = "OpenTrafficDB API",
+                Title = "OpenTrafficDB API",
                 Version = "v1",
                 Description = """
                     **OpenTrafficDB** is a community-driven traffic speed database.
@@ -143,11 +115,11 @@ public class Program
 
             c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
             {
-                Description = "JWT access token. Enter: Bearer {token}",
-                Name        = "Authorization",
-                In          = ParameterLocation.Header,
-                Type        = SecuritySchemeType.Http,
-                Scheme      = "Bearer",
+                Description = "Api Key from your profile page.",
+                Name = "Authorization",
+                In = ParameterLocation.Header,
+                Type = SecuritySchemeType.Http,
+                Scheme = "Bearer",
                 BearerFormat = "JWT"
             });
 
@@ -194,21 +166,21 @@ public class Program
             // Seed default admin account if no Admin user exists
             if (!await db.Users.AnyAsync(u => u.Role == UserRole.Admin))
             {
-                var jwtSvc  = scope.ServiceProvider.GetRequiredService<JwtService>();
-                var pwdSvc  = scope.ServiceProvider.GetRequiredService<PasswordService>();
-                var logger  = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+                var jwtSvc = scope.ServiceProvider.GetRequiredService<CryptoService>();
+                var pwdSvc = scope.ServiceProvider.GetRequiredService<PasswordService>();
+                var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
                 var rawPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(12))
                     .Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
                 var admin = new User
                 {
-                    Name               = "Admin",
-                    EmailHash          = jwtSvc.HashEmail("admin@example.com"),
-                    PasswordHash       = pwdSvc.HashPassword(rawPassword),
-                    IsEmailVerified    = true,
-                    Role               = UserRole.Admin,
-                    CreatedAt          = DateTime.UtcNow
+                    Name = "Admin",
+                    EmailHash = jwtSvc.HashEmail("admin@example.com"),
+                    PasswordHash = pwdSvc.HashPassword(rawPassword),
+                    IsEmailVerified = true,
+                    Role = UserRole.Admin,
+                    CreatedAt = DateTime.UtcNow
                 };
                 db.Users.Add(admin);
                 await db.SaveChangesAsync();
@@ -237,8 +209,8 @@ public class Program
         app.UseSwaggerUI(c =>
         {
             c.SwaggerEndpoint("/swagger/v1/swagger.json", "OpenTrafficDB API v1");
-            c.RoutePrefix    = "swagger";
-            c.DocumentTitle  = "OpenTrafficDB API";
+            c.RoutePrefix = "swagger";
+            c.DocumentTitle = "OpenTrafficDB API";
         });
 
         app.UseAuthentication();

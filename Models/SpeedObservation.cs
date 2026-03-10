@@ -25,8 +25,8 @@ public class SpeedObservation
     /// <summary>GPS horizontal accuracy in meters (lower = better)</summary>
     public float GpsAccuracyMeters { get; set; }
 
-    /// <summary>Anonymized trip identifier (UUID, must not be user-identifiable)</summary>
-    public Guid TripId { get; set; }
+    /// <summary>Anonymized trip identifier hashed trip id by the user</summary>
+    public string TripId { get; set; } = string.Empty;
 
     /// <summary>Valhalla GraphId (64-bit edge identifier), optional</summary>
     public long? ValhallaEdgeId { get; set; }

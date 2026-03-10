@@ -15,6 +15,7 @@ namespace OpenTrafficDB.Controllers;
 [Route("web/admin")]
 [Authorize(AuthenticationSchemes = CookieAuthenticationDefaults.AuthenticationScheme, Policy = "WebAdminOnly")]
 [Produces("application/json")]
+[ApiExplorerSettings(IgnoreApi = true)]
 public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto) : ControllerBase
 {
     private int CurrentUserId =>

@@ -22,6 +22,8 @@ public class CryptoService(IConfiguration config)
 
     public string HashEmail(string email) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(email.Trim().ToLowerInvariant()))).ToLowerInvariant();
+    public string HashTripId(string tripId) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tripId.Trim().ToLowerInvariant()))).ToLowerInvariant();
 
     public string HashIp(string ip) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ip + _pepper))).ToLowerInvariant();

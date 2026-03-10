@@ -3,13 +3,23 @@ using OpenTrafficDB.Models;
 
 namespace OpenTrafficDB.Data;
 
-public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public class AppDbContext : DbContext
 {
+    public AppDbContext(DbContextOptions options) : base(options)
+    {
+        if(Database.GetPendingMigrations().Any())
+        {
+            Database.Migrate();
+        }
+    }
+
     public DbSet<User> Users => Set<User>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<SpeedObservation> SpeedObservations => Set<SpeedObservation>();
     public DbSet<BlockedIp> BlockedIps => Set<BlockedIp>();
     public DbSet<RoadSpeedAggregate> RoadSpeedAggregates => Set<RoadSpeedAggregate>();
+
+    
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
