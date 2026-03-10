@@ -48,7 +48,7 @@ public class SpeedValidationService(IConfiguration config)
             errors.Add($"Timestamp is {drift:F0}s from server time. Maximum drift is {_maxDriftSeconds}s. Ensure device clock is synced.");
 
         // TripId must not be empty
-        if (req.TripId != string.Empty)
+        if (req.TripId == string.Empty)
             errors.Add("TripId must be a non-empty string.");
 
         if (errors.Count > 0)

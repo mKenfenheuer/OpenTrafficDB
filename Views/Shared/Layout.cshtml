@@ -13,25 +13,26 @@
             <a href="/" class="navbar-brand">
                 OpenTrafficDB
             </a>
+            <button class="navbar-toggle" id="nav-toggle" aria-label="Toggle navigation" onclick="toggleNav()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
             <ul class="navbar-nav" id="navbar-links">
                 @RenderSection("Navbar", required: false)
-                <ul class="navbar-nav" id="navbar-links">
-                    <li><a href="/docs">Docs</a></li>
-                    <li><a href="/swagger" target="_blank">API</a></li>
-                    @if(User.Identity?.IsAuthenticated == true) {
-                        <li><a href="/Home/Dashboard">Dashboard</a></li>
-                        <li><a href="/Home/Profile">Profile</a></li>
-                    }
-                    @if(User.Claims.Any(c => c.Type == "role" && c.Value == "Admin"))
-                    {
-                        <li><a href="/Home/Admin">Admin</a></li>
-                    }
-                    @if(User.Identity?.IsAuthenticated == true) {
-                        <li><button class="btn btn-secondary btn-sm" onclick="logout()">Sign Out</button></li>
-                    } else {
-                        <li><a class="btn btn-secondary btn-sm" href="/Home/Login">Sign In</a></li>
-                    }
-                </ul>
+                <li><a href="/docs">Docs</a></li>
+                <li><a href="/swagger" target="_blank">API</a></li>
+                @if(User.Identity?.IsAuthenticated == true) {
+                    <li><a href="/Home/Dashboard">Dashboard</a></li>
+                    <li><a href="/Home/Profile">Profile</a></li>
+                }
+                @if(User.Claims.Any(c => c.Type == "role" && c.Value == "Admin"))
+                {
+                    <li><a href="/Home/Admin">Admin</a></li>
+                }
+                @if(User.Identity?.IsAuthenticated == true) {
+                    <li><button class="btn btn-secondary btn-sm" onclick="logout()">Sign Out</button></li>
+                } else {
+                    <li><a class="btn btn-secondary btn-sm" href="/Home/Login">Sign In</a></li>
+                }
             </ul>
         </div>
     </nav>
@@ -58,6 +59,16 @@
 
     @RenderSection("Scripts", required: false)
     <script>
+        function toggleNav() {
+            document.getElementById('navbar-links').classList.toggle('open');
+        }
+        document.addEventListener('click', function(e) {
+            var nav = document.getElementById('navbar-links');
+            var toggle = document.getElementById('nav-toggle');
+            if (nav && nav.classList.contains('open') && !nav.contains(e.target) && !toggle.contains(e.target)) {
+                nav.classList.remove('open');
+            }
+        });
         function dismissCookieBanner() {
             document.getElementById('cookie-banner').style.display = 'none';
             localStorage.setItem('cookieNoticeAck', '1');
