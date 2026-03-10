@@ -16,28 +16,20 @@ namespace OpenTrafficDB.Controllers;
 public class SpeedController(
     AppDbContext db,
     SpeedValidationService validator,
-    AbuseDetectionService abuseDetection,
     CryptoService crypto,
     IConfiguration config) : ControllerBase
 {
     private int ContributorThreshold =>
         int.TryParse(config["Security:ContributorThreshold"], out var t) ? t : 100;
 
-    /// <summary>
-    /// Submit a single speed observation.
-    /// Observations without a Valhalla edge ID are map-matched server-side in the background.
-    /// </summary>
+    /// <summary>Submit a single speed observation. Map-matching to Valhalla edges is handled server-side.</summary>
     [HttpPost]
     [ProducesResponseType(typeof(SubmitSpeedResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Submit([FromBody] SpeedObservationRequest request)
     {
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var (userId, keyId) = GetUserAndKeyId();
-
-        if (!await abuseDetection.CheckSubmitRateAsync(ip, keyId.ToString()))
-            return StatusCode(429, new { error = "Rate limit exceeded. Reduce submission frequency." });
 
         var validation = validator.Validate(request);
         if (!validation.IsValid)
@@ -70,15 +62,10 @@ public class SpeedController(
     [HttpPost("batch")]
     [ProducesResponseType(typeof(BatchSubmitResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> SubmitBatch([FromBody] BatchSpeedRequest request)
     {
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var (userId, keyId) = GetUserAndKeyId();
-
-        if (!await abuseDetection.CheckSubmitRateAsync(ip, keyId.ToString()))
-            return StatusCode(429, new { error = "Rate limit exceeded." });
-
         var ipHash = crypto.HashIp(ip);
         var response = new BatchSubmitResponse();
 

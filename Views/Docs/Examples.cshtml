@@ -61,7 +61,7 @@
 </div>
 
 <div class="card section">
-    <div class="card-title">Download Predicted Traffic (curl)</div>
+    <div class="card-title">Download Predicted Traffic CSV (curl)</div>
     <div class="code-block"><span class="code-comment"># Download Valhalla-compatible CSV</span>
 <span class="code-url">curl https://opentrafficdb.example.com/api/v1/traffic/predicted/csv</span> \
     -H <span class="code-val">'Authorization: Bearer &lt;your-api-key&gt;'</span> \
@@ -69,6 +69,24 @@
 
 <span class="code-comment"># Import into Valhalla</span>
 <span class="code-url">valhalla_add_predicted_traffic</span> --config valhalla.json -t traffic.csv</div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Download Predicted Traffic TAR (curl)</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        The TAR archive is pre-organised in Valhalla's tile folder hierarchy, so no post-processing is needed before import:
+    </p>
+    <div class="code-block"><span class="code-comment"># Download tile archive</span>
+<span class="code-url">curl https://opentrafficdb.example.com/api/v1/traffic/predicted/tar</span> \
+    -H <span class="code-val">'Authorization: Bearer &lt;your-api-key&gt;'</span> \
+    -o traffic.tar
+
+<span class="code-comment"># Extract into a tiles directory</span>
+mkdir -p /path/to/traffic_tiles
+tar -xf traffic.tar -C /path/to/traffic_tiles/
+
+<span class="code-comment"># Import into Valhalla</span>
+<span class="code-url">valhalla_add_predicted_traffic</span> --config valhalla.json -t /path/to/traffic_tiles/</div>
 </div>
 
 <div class="card section">
@@ -110,7 +128,7 @@ for fix in read_gps_fixes():          # your GPS source
 </div>
 
 <div class="card section">
-    <div class="card-title">Python — Download and Import Traffic</div>
+    <div class="card-title">Python — Download and Import Traffic (CSV)</div>
     <div class="code-block"><span class="code-comment">import requests, subprocess, tempfile, os
 
 API_BASE = "https://opentrafficdb.example.com/api/v1"
@@ -137,18 +155,34 @@ print("Traffic data imported.")</span></div>
 </div>
 
 <div class="card section">
-    <div class="card-title">Managing API Keys (curl)</div>
-    <div class="code-block"><span class="code-comment"># List your API keys</span>
-<span class="code-url">curl https://opentrafficdb.example.com/api/v1/user/me/keys</span> \
-    -H <span class="code-val">'Authorization: Bearer &lt;your-api-key&gt;'</span>
+    <div class="card-title">Python — Download and Import Traffic (TAR)</div>
+    <div class="code-block"><span class="code-comment">import requests, subprocess, tarfile, tempfile, os
 
-<span class="code-comment"># Create a new key</span>
-<span class="code-url">curl -X POST https://opentrafficdb.example.com/api/v1/user/me/keys</span> \
-    -H <span class="code-val">'Authorization: Bearer &lt;your-api-key&gt;'</span> \
-    -H <span class="code-val">'Content-Type: application/json'</span> \
-    -d <span class="code-val">'{"label": "raspberry-pi"}'</span>
+API_BASE   = "https://opentrafficdb.example.com/api/v1"
+API_KEY    = "&lt;your-api-key&gt;"
+TILES_DIR  = "/path/to/traffic_tiles"
 
-<span class="code-comment"># Revoke a key</span>
-<span class="code-url">curl -X DELETE https://opentrafficdb.example.com/api/v1/user/me/keys/42</span> \
-    -H <span class="code-val">'Authorization: Bearer &lt;your-api-key&gt;'</span></div>
+# Download TAR archive
+r = requests.get(f"{API_BASE}/traffic/predicted/tar",
+                 headers={"Authorization": f"Bearer {API_KEY}"}, stream=True)
+r.raise_for_status()
+
+with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as f:
+    for chunk in r.iter_content(chunk_size=65536):
+        f.write(chunk)
+    tar_path = f.name
+
+# Extract into tiles directory
+os.makedirs(TILES_DIR, exist_ok=True)
+with tarfile.open(tar_path) as tf:
+    tf.extractall(TILES_DIR)
+os.unlink(tar_path)
+
+# Import into Valhalla
+subprocess.run([
+    "valhalla_add_predicted_traffic",
+    "--config", "/etc/valhalla/valhalla.json",
+    "-t", TILES_DIR,
+], check=True)
+print("Traffic data imported.")</span></div>
 </div>

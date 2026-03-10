@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace OpenTrafficDB.Controllers;
 
 [Route("docs")]
+[ApiExplorerSettings(IgnoreApi = true)]
 public class DocsController : Controller
 {
     [HttpGet("")]

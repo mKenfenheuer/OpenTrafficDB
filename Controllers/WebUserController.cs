@@ -196,7 +196,7 @@ public class WebUserController(
             KeyId   = key.Id,
             Label   = key.Label,
             Message = "Store this API key securely — it will not be shown again. " +
-                      "Use POST /api/v1/auth/token to exchange it for a JWT access token."
+                      "Use it directly as the Bearer token: Authorization: Bearer <key>"
         });
     }
 

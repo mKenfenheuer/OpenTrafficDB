@@ -87,8 +87,6 @@ public class Program
                     2. After verifying email, log in and create an API key on your profile page
                     3. Include the API key in every request: `Authorization: Bearer {api-key}`
 
-                    **Roles:** User → Contributor (auto, after threshold observations) → Admin (manual)
-
                     **License:** Non-Commercial Community License
                     """,
                 Contact = new OpenApiContact { Name = "OpenTrafficDB Community" }

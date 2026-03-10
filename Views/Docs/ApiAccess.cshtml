@@ -5,7 +5,7 @@
 }
 
 <h1 style="font-size:1.75rem;font-weight:800;margin-bottom:8px">API Access</h1>
-<p class="text-muted" style="margin-bottom:32px">Full reference for authentication, endpoints, rate limits, and error codes.</p>
+<p class="text-muted" style="margin-bottom:32px">Authentication, endpoint reference, rate limits, and error codes.</p>
 
 <div class="card section">
     <div class="card-title">Authentication</div>
@@ -14,47 +14,39 @@
     </p>
     <div class="code-block">Authorization: Bearer &lt;your-api-key&gt;</div>
     <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
-        Create and manage API keys on your <a href="/Home/Profile">Profile</a> page.
-        Each key is shown only once and stored as a hash — keep it safe.
-        You can create multiple keys (e.g. one per device) and revoke them individually.
+        Create and manage API keys on your <a href="/Home/Profile">Profile</a> page. Each key is shown only once and stored as a hash — keep it safe. You can create multiple keys (e.g. one per device) and revoke them individually.
     </p>
-</div>
-
-<div class="card section">
-    <div class="card-title">Base URL</div>
-    <div class="code-block">https://opentrafficdb.example.com/api/v1</div>
-    <p class="text-muted text-sm" style="margin-top:10px">All endpoints below are relative to this base.</p>
 </div>
 
 <div class="card section">
     <div class="card-title">Observation Endpoints</div>
 
     <div style="margin-bottom:20px">
-        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">POST /speed</div>
-        <p class="text-muted text-sm" style="line-height:1.8">Submit a single GPS speed observation.</p>
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">POST /api/v1/speed</div>
+        <p class="text-muted text-sm" style="line-height:1.8">Submit a single GPS speed observation. Not rate-limited — blocked IPs are rejected with 403.</p>
         <div class="code-block"><span class="code-val">{
-    "tripId": "string (UUID, anonymized)",
-    "latitude": -90.0 … 90.0,
-    "longitude": -180.0 … 180.0,
-    "speedMs": 0.0 … 200.0,
+    "tripId":            "string (UUID, anonymized per-trip identifier)",
+    "latitude":          -90.0 … 90.0,
+    "longitude":         -180.0 … 180.0,
+    "speedMs":           0.0 … 200.0,
     "gpsAccuracyMeters": 0.01 … 10000.0,
-    "timestamp": "ISO 8601 UTC",
-    "heading": 0.0 … 360.0,       <span class="code-comment">// optional</span>
-    "altitudeMeters": -500 … 15000 <span class="code-comment">// optional</span>
+    "timestamp":         "ISO 8601 UTC",
+    "heading":           0.0 … 360.0,       <span class="code-comment">// optional</span>
+    "altitudeMeters":    -500 … 15000        <span class="code-comment">// optional</span>
 }</span></div>
         <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
-            Returns: <code>{"success": true, "observationId": 12345}</code>
+            Returns: <code>{"success": true, "observationId": 12345, "warning": null}</code>
         </p>
     </div>
 
     <div>
-        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">POST /speed/batch</div>
-        <p class="text-muted text-sm" style="line-height:1.8">Submit up to 100 observations in one request.</p>
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">POST /api/v1/speed/batch</div>
+        <p class="text-muted text-sm" style="line-height:1.8">Submit up to 100 observations in one request. Not rate-limited. Invalid observations are rejected individually; valid ones are still accepted.</p>
         <div class="code-block"><span class="code-val">{
     "observations": [ ... ]  <span class="code-comment">// 1–100 SpeedObservationRequest objects</span>
 }</span></div>
         <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
-            Returns: <code>{"accepted": 98, "rejected": 2, "errors": ["..."]}</code>
+            Returns: <code>{"accepted": 98, "rejected": 2, "errors": ["[trip xyz]: ..."]}</code>
         </p>
     </div>
 </div>
@@ -63,8 +55,8 @@
     <div class="card-title">Traffic Endpoints</div>
 
     <div style="margin-bottom:20px">
-        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /traffic/live</div>
-        <p class="text-muted text-sm" style="line-height:1.8">Query real-time speed observations within a bounding box.</p>
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /api/v1/traffic/live</div>
+        <p class="text-muted text-sm" style="line-height:1.8">Query real-time speed observations within a bounding box (max 1° × 1°). Rate-limited.</p>
         <div class="code-block"><span class="code-url">GET /api/v1/traffic/live?minLat=48.8&maxLat=48.9&minLon=2.3&maxLon=2.4&maxAgeMinutes=15</span></div>
         <div style="margin-top:8px">
             <table style="font-size:0.8rem;width:100%;border-collapse:collapse">
@@ -82,70 +74,61 @@
         </div>
     </div>
 
-    <div>
-        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /traffic/predicted/csv</div>
+    <div style="margin-bottom:20px">
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /api/v1/traffic/predicted/csv</div>
         <p class="text-muted text-sm" style="line-height:1.8">
-            Download a Valhalla-compatible predicted traffic CSV with 2016 time buckets per edge.
+            Download a Valhalla-compatible predicted traffic CSV with 2016 time buckets per edge. Rate-limited.
             See <a href="/docs/valhalla">Valhalla Integration</a> for details.
+        </p>
+    </div>
+
+    <div>
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /api/v1/traffic/predicted/tar</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            Download a <code>traffic.tar</code> archive pre-organised in Valhalla's tile folder hierarchy. Rate-limited.
+            The archive mirrors Valhalla's tile structure (<code>{level}/{tile_id/1000:D3}/{tile_id%1000:D3}.csv</code>),
+            so it can be extracted directly and passed to <code>valhalla_add_predicted_traffic</code> without
+            any post-processing:
+        </p>
+        <div class="code-block"><span class="code-comment"># extract, then import</span>
+tar -xf traffic.tar -C /path/to/traffic_tiles/
+valhalla_add_predicted_traffic --config valhalla.json -t /path/to/traffic_tiles/</div>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+            Use this endpoint instead of <code>/csv</code> when your Valhalla build expects per-tile files rather than a single flat CSV.
         </p>
     </div>
 </div>
 
 <div class="card section">
-    <div class="card-title">User Endpoints</div>
-    <div style="display:flex;flex-direction:column;gap:10px;font-size:0.82rem">
-        <div style="display:flex;gap:12px;align-items:baseline">
-            <code style="flex-shrink:0;color:var(--accent)">GET /user/me</code>
-            <span class="text-muted">Your account info (id, role, name, contributions)</span>
-        </div>
-        <div style="display:flex;gap:12px;align-items:baseline">
-            <code style="flex-shrink:0;color:var(--accent)">PUT /user/me</code>
-            <span class="text-muted">Update your display name</span>
-        </div>
-        <div style="display:flex;gap:12px;align-items:baseline">
-            <code style="flex-shrink:0;color:var(--accent)">GET /user/me/keys</code>
-            <span class="text-muted">List your API keys (labels, creation date, last used)</span>
-        </div>
-        <div style="display:flex;gap:12px;align-items:baseline">
-            <code style="flex-shrink:0;color:var(--accent)">POST /user/me/keys</code>
-            <span class="text-muted">Create a new API key (returns raw key once)</span>
-        </div>
-        <div style="display:flex;gap:12px;align-items:baseline">
-            <code style="flex-shrink:0;color:var(--accent)">DELETE /user/me/keys/{id}</code>
-            <span class="text-muted">Revoke an API key</span>
-        </div>
-    </div>
-</div>
-
-<div class="card section">
     <div class="card-title">Rate Limits</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Submission endpoints (<code>/speed</code>, <code>/speed/batch</code>) are <strong style="color:var(--text)">not rate-limited</strong>.
+        Read endpoints are rate-limited per IP and per key:
+    </p>
     <div style="font-size:0.82rem">
         <table style="width:100%;border-collapse:collapse">
             <thead><tr style="border-bottom:1px solid var(--border)">
-                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Role</th>
-                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Single submission</th>
-                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Batch submission</th>
-                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Read / export</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Endpoint group</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Per IP / min</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Per key / min</th>
             </tr></thead>
             <tbody class="text-muted">
                 <tr style="border-bottom:1px solid var(--border)">
-                    <td style="padding:6px 8px"><span class="badge">User</span></td>
-                    <td style="padding:6px 8px">60 / hour (per IP)</td>
-                    <td style="padding:6px 8px">10 / hour</td>
-                    <td style="padding:6px 8px">30 / hour</td>
+                    <td style="padding:6px 8px">Submission (<code>/speed</code>, <code>/speed/batch</code>)</td>
+                    <td style="padding:6px 8px">No limit</td>
+                    <td style="padding:6px 8px">No limit</td>
                 </tr>
                 <tr>
-                    <td style="padding:6px 8px"><span class="badge badge-contributor">Contributor</span></td>
-                    <td style="padding:6px 8px">600 / hour</td>
-                    <td style="padding:6px 8px">60 / hour</td>
-                    <td style="padding:6px 8px">120 / hour</td>
+                    <td style="padding:6px 8px">Read/export (<code>/traffic/*</code>)</td>
+                    <td style="padding:6px 8px">30</td>
+                    <td style="padding:6px 8px">60</td>
                 </tr>
             </tbody>
         </table>
     </div>
     <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        IPs that trigger abuse detection are automatically blocked for 24 hours and receive <code>403 Forbidden</code>.
         Rate limit exceeded responses return <code>429 Too Many Requests</code>.
-        Repeated abuse may result in temporary IP blocks.
     </p>
 </div>
 
@@ -159,10 +142,12 @@
             </tr></thead>
             <tbody class="text-muted">
                 <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>200</code></td><td style="padding:6px 8px">Success</td></tr>
-                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>400</code></td><td style="padding:6px 8px">Validation error — check the request body</td></tr>
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>400</code></td><td style="padding:6px 8px">Validation error — check the request body fields</td></tr>
                 <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>401</code></td><td style="padding:6px 8px">Missing or invalid API key</td></tr>
-                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>403</code></td><td style="padding:6px 8px">Forbidden (insufficient role)</td></tr>
-                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>429</code></td><td style="padding:6px 8px">Rate limit exceeded</td></tr>
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>403</code></td><td style="padding:6px 8px">IP blocked due to abuse detection</td></tr>
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>404</code></td><td style="padding:6px 8px">Resource not found</td></tr>
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>409</code></td><td style="padding:6px 8px">Conflict (e.g. email already in use)</td></tr>
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>429</code></td><td style="padding:6px 8px">Rate limit exceeded on read endpoints</td></tr>
                 <tr><td style="padding:6px 8px"><code>500</code></td><td style="padding:6px 8px">Internal server error</td></tr>
             </tbody>
         </table>

@@ -10,6 +10,7 @@ using OpenTrafficDB.Services;
 namespace OpenTrafficDB.Controllers;
 
 [Authorize(AuthenticationSchemes = "Cookies")]
+[ApiExplorerSettings(IgnoreApi = true)]
 public class HomeController() : Controller
 {
     [AllowAnonymous]
