@@ -1,5 +1,5 @@
 @{
-    ViewData["Title"] = "Home";
+    ViewData["Title"] = "Profile";
 }
 <div id="loading" style="text-align:center;padding:80px 0">
     <div class="spinner"></div>
@@ -8,7 +8,7 @@
 <div id="content" class="hidden">
     <div class="page-header">
     <h1>Profile</h1>
-    <p class="text-muted">Manage your display name and API keys</p>
+    <p class="text-muted">Manage your account settings and API keys</p>
     </div>
 
     <!-- Display name -->
@@ -40,6 +40,41 @@
     </div>
     </div>
 
+    <!-- Change Password -->
+    <div class="card section">
+    <div class="card-title">Change Password</div>
+    <div id="pwd-alert" class="alert hidden"></div>
+    <div class="form-group">
+        <label class="form-label" for="pwd-current">Current password</label>
+        <input type="password" id="pwd-current" class="form-control" autocomplete="current-password" />
+    </div>
+    <div class="form-group">
+        <label class="form-label" for="pwd-new">New password</label>
+        <input type="password" id="pwd-new" class="form-control" placeholder="At least 8 characters" autocomplete="new-password" />
+    </div>
+    <div class="form-group">
+        <label class="form-label" for="pwd-confirm">Confirm new password</label>
+        <input type="password" id="pwd-confirm" class="form-control" autocomplete="new-password" />
+    </div>
+    <button class="btn btn-primary" id="save-pwd-btn" onclick="changePassword()">Update Password</button>
+    </div>
+
+    <!-- Change Email -->
+    <div class="card section">
+    <div class="card-title">Change Email Address</div>
+    <p class="text-muted text-sm mb-2">A confirmation link will be sent to your new address. Your current email remains active until you click the link.</p>
+    <div id="email-alert" class="alert hidden"></div>
+    <div class="form-group">
+        <label class="form-label" for="email-new">New email address</label>
+        <input type="email" id="email-new" class="form-control" placeholder="new@example.com" autocomplete="email" />
+    </div>
+    <div class="form-group">
+        <label class="form-label" for="email-pwd">Current password (to confirm)</label>
+        <input type="password" id="email-pwd" class="form-control" autocomplete="current-password" />
+    </div>
+    <button class="btn btn-primary" id="save-email-btn" onclick="changeEmail()">Send Confirmation</button>
+    </div>
+
     <!-- API Keys -->
     <div class="card section">
     <div class="d-flex justify-between align-center mb-2">
@@ -48,8 +83,8 @@
     </div>
 
     <p class="text-muted text-sm mb-2">
-        API keys are used to obtain IP-bound JWT tokens for machine/app access.
-        Use <code>POST /api/v1/auth/token</code> with your key to get a token.
+        Use your API key directly as a Bearer token: <code>Authorization: Bearer &lt;key&gt;</code>.
+        The key is shown only once when created — store it securely.
     </p>
 
     <div id="create-key-form" class="hidden" style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px">
@@ -96,6 +131,13 @@
     document.getElementById('acc-role').innerHTML   = roleBadge(session.role);
     document.getElementById('acc-contribs').textContent = session.totalContributions.toLocaleString();
 
+    // Show emailchanged banner if redirected from verify
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('emailchanged') === '1') {
+      const el = document.getElementById('email-alert');
+      showAlert(el, 'Email address updated successfully.', 'success');
+    }
+
     // ── Save name ──────────────────────────────────────────────────────────────
     async function saveName() {
       const name    = document.getElementById('name-input').value.trim();
@@ -120,6 +162,74 @@
     document.getElementById('name-input').addEventListener('keydown', e => {
       if (e.key === 'Enter') saveName();
     });
+
+    // ── Change password ────────────────────────────────────────────────────────
+    async function changePassword() {
+      const alertEl = document.getElementById('pwd-alert');
+      const btn     = document.getElementById('save-pwd-btn');
+      const currentPassword  = document.getElementById('pwd-current').value;
+      const newPassword      = document.getElementById('pwd-new').value;
+      const newPasswordConfirm = document.getElementById('pwd-confirm').value;
+
+      alertEl.classList.add('hidden');
+
+      if (!currentPassword || !newPassword || !newPasswordConfirm) {
+        showAlert(alertEl, 'Please fill in all password fields.'); return;
+      }
+      if (newPassword.length < 8) {
+        showAlert(alertEl, 'New password must be at least 8 characters.'); return;
+      }
+      if (newPassword !== newPasswordConfirm) {
+        showAlert(alertEl, 'New passwords do not match.'); return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Updating…';
+
+      const res = await web('PUT', '/me/password', { currentPassword, newPassword, newPasswordConfirm });
+      btn.disabled = false;
+      btn.textContent = 'Update Password';
+
+      if (!res || !res.ok) {
+        showAlert(alertEl, res?.data?.error || 'Failed to update password.');
+        return;
+      }
+      showAlert(alertEl, 'Password updated successfully.', 'success');
+      document.getElementById('pwd-current').value  = '';
+      document.getElementById('pwd-new').value      = '';
+      document.getElementById('pwd-confirm').value  = '';
+    }
+    window.changePassword = changePassword;
+
+    // ── Change email ───────────────────────────────────────────────────────────
+    async function changeEmail() {
+      const alertEl = document.getElementById('email-alert');
+      const btn     = document.getElementById('save-email-btn');
+      const newEmail = document.getElementById('email-new').value.trim();
+      const password = document.getElementById('email-pwd').value;
+
+      alertEl.classList.add('hidden');
+
+      if (!newEmail || !password) {
+        showAlert(alertEl, 'Please fill in all fields.'); return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+
+      const res = await web('POST', '/me/email', { newEmail, password });
+      btn.disabled = false;
+      btn.textContent = 'Send Confirmation';
+
+      if (!res || !res.ok) {
+        showAlert(alertEl, res?.data?.error || 'Failed to send confirmation.');
+        return;
+      }
+      showAlert(alertEl, res.data.message || 'Confirmation email sent.', 'success');
+      document.getElementById('email-new').value = '';
+      document.getElementById('email-pwd').value = '';
+    }
+    window.changeEmail = changeEmail;
 
     // ── Keys ───────────────────────────────────────────────────────────────────
     async function loadKeys() {

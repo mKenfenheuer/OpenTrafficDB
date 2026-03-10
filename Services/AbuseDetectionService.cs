@@ -78,6 +78,11 @@ public class AbuseDetectionService(
         return Allow($"register:ip:{ip}", 3600, _registerIpLimit);
     }
 
+    public bool CheckPasswordResetRate(string ip)
+    {
+        return Allow($"pwreset:ip:{ip}", 3600, _registerIpLimit); // same limit as registration
+    }
+
     public async Task ManualBlockAsync(string ip, string reason, DateTime? expiresAt)
     {
         var ipHash = cryptoService.HashIp(ip);

@@ -16,9 +16,12 @@
             <ul class="navbar-nav" id="navbar-links">
                 @RenderSection("Navbar", required: false)
                 <ul class="navbar-nav" id="navbar-links">
-                    <li><a href="/swagger" target="_blank">API Docs</a></li>
-                    <li><a href="/Home/Dashboard">Dashboard</a></li>
-                    <li><a href="/Home/Profile">Profile</a></li>
+                    <li><a href="/docs">Docs</a></li>
+                    <li><a href="/swagger" target="_blank">API</a></li>
+                    @if(User.Identity?.IsAuthenticated == true) {
+                        <li><a href="/Home/Dashboard">Dashboard</a></li>
+                        <li><a href="/Home/Profile">Profile</a></li>
+                    }
                     @if(User.Claims.Any(c => c.Type == "role" && c.Value == "Admin"))
                     {
                         <li><a href="/Home/Admin">Admin</a></li>
@@ -33,16 +36,36 @@
         </div>
     </nav>
 
-    <div class="container" style="padding-top:32px;padding-bottom:64px">
+    <div class="container" style="padding-top:32px;padding-bottom:64px;flex:1">
         @RenderBody()
     </div>
     <footer>
         <div class="container">
-            <p>OpenTrafficDB · <a href="/swagger" target="_blank">API Docs</a> · <a href="/">Home</a></p>
+            <p>OpenTrafficDB · <a href="/swagger" target="_blank">API Docs</a> · <a href="/">Home</a> · <a href="/Home/License">License</a> · <a href="/Home/Privacy">Privacy</a> · <a href="/Home/Imprint">Imprint</a></p>
         </div>
     </footer>
 
+    <!-- Cookie notice (technically necessary cookies only, no consent required) -->
+    <div id="cookie-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:200;padding:14px 0">
+        <div class="container" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+            <p style="font-size:0.82rem;color:var(--text-muted);margin:0">
+                This site uses only strictly necessary cookies for login. No tracking or analytics cookies are used.
+                <a href="/Home/Privacy" style="white-space:nowrap">Privacy Policy</a>
+            </p>
+            <button onclick="dismissCookieBanner()" class="btn btn-secondary btn-sm" style="flex-shrink:0">Got it</button>
+        </div>
+    </div>
+
     @RenderSection("Scripts", required: false)
+    <script>
+        function dismissCookieBanner() {
+            document.getElementById('cookie-banner').style.display = 'none';
+            localStorage.setItem('cookieNoticeAck', '1');
+        }
+        if (!localStorage.getItem('cookieNoticeAck')) {
+            document.getElementById('cookie-banner').style.display = '';
+        }
+    </script>
 </body>
 
 </html>

@@ -209,3 +209,4 @@ FakesAssemblies/
 # JetBrains Rider
 *.sln.iml
 .claude
+.local.txt

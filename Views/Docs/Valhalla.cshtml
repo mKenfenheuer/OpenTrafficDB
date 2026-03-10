@@ -1,0 +1,111 @@
+@{
+    Layout = "~/Views/Docs/_DocsLayout.cshtml";
+    ViewData["Title"] = "Valhalla Integration";
+    ViewData["DocsPage"] = "valhalla";
+}
+
+<h1 style="font-size:1.75rem;font-weight:800;margin-bottom:8px">Valhalla Integration</h1>
+<p class="text-muted" style="margin-bottom:32px">How server-side map matching works and how to import predicted traffic into your Valhalla instance.</p>
+
+<div class="card section">
+    <div class="card-title">Overview</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        OpenTrafficDB uses a server-side <a href="https://github.com/valhalla/valhalla" target="_blank" rel="noopener">Valhalla</a>
+        instance for map matching. When you submit a GPS observation (lat/lon/speed), the server
+        automatically matches it to the nearest road edge — you never need to compute or provide Valhalla edge IDs yourself.
+    </p>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+        Aggregated speeds are stored per Valhalla edge and time bucket. This data can be exported as a
+        predicted traffic CSV and loaded directly into your own Valhalla instance.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Map Matching Pipeline</div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;gap:16px;align-items:flex-start">
+            <div style="width:28px;height:28px;border-radius:50%;background:rgba(47,129,247,0.15);color:var(--accent);font-size:0.8rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</div>
+            <div>
+                <div style="font-size:0.875rem;font-weight:600;color:var(--text)">Client submits observation</div>
+                <div class="text-muted text-sm" style="margin-top:2px">lat, lon, speedMs, heading (optional), gpsAccuracyMeters, tripId, timestamp</div>
+            </div>
+        </div>
+        <div style="display:flex;gap:16px;align-items:flex-start">
+            <div style="width:28px;height:28px;border-radius:50%;background:rgba(47,129,247,0.15);color:var(--accent);font-size:0.8rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</div>
+            <div>
+                <div style="font-size:0.875rem;font-weight:600;color:var(--text)">Validation</div>
+                <div class="text-muted text-sm" style="margin-top:2px">GPS accuracy, speed range, duplicate detection, rate limits checked server-side</div>
+            </div>
+        </div>
+        <div style="display:flex;gap:16px;align-items:flex-start">
+            <div style="width:28px;height:28px;border-radius:50%;background:rgba(47,129,247,0.15);color:var(--accent);font-size:0.8rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">3</div>
+            <div>
+                <div style="font-size:0.875rem;font-weight:600;color:var(--text)">Map matching via Valhalla</div>
+                <div class="text-muted text-sm" style="margin-top:2px">Server calls the local Valhalla instance's <code>trace_attributes</code> endpoint to identify the road edge</div>
+            </div>
+        </div>
+        <div style="display:flex;gap:16px;align-items:flex-start">
+            <div style="width:28px;height:28px;border-radius:50%;background:rgba(47,129,247,0.15);color:var(--accent);font-size:0.8rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">4</div>
+            <div>
+                <div style="font-size:0.875rem;font-weight:600;color:var(--text)">Storage and aggregation</div>
+                <div class="text-muted text-sm" style="margin-top:2px">Observation stored with Valhalla edge ID. A background job aggregates observations into per-edge, per-bucket average speeds.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Time Buckets</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        Valhalla predicted traffic uses <strong style="color:var(--text)">2016 time buckets</strong>:
+        7 days × 288 buckets per day (one per 5 minutes) = 2016 total.
+        Bucket 0 is Monday 00:00–00:05 UTC.
+    </p>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+        The exported CSV encodes speeds in Valhalla's internal unit (free-flow speed factor × 256, clamped to 255).
+        The server handles this encoding automatically.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Downloading the Traffic CSV</div>
+    <div class="code-block"><span class="code-comment"># Download predicted traffic CSV</span>
+<span class="code-url">curl -H 'Authorization: Bearer &lt;your-api-key&gt;' \
+     https://opentrafficdb.example.com/api/v1/traffic/predicted/csv \
+     -o traffic.csv</span></div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        The file uses Valhalla's standard format:
+    </p>
+    <div class="code-block"><span class="code-comment"># edgeId,bucket0,bucket1,...,bucket2015</span>
+123456789,72,71,71,72,73,...</div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Importing into Valhalla</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Use the <code>valhalla_add_predicted_traffic</code> tool that ships with Valhalla to import the CSV:
+    </p>
+    <div class="code-block"><span class="code-comment"># Import traffic data into your Valhalla tiles</span>
+<span class="code-url">valhalla_add_predicted_traffic</span> \
+    --config /path/to/valhalla.json \
+    -t traffic.csv</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        After import, restart Valhalla (or signal it to reload tiles) for the new traffic data to take effect.
+        Route requests using <code>"date_time": {"type": 1, "value": "2024-06-01T08:00"}</code>
+        will then use time-aware traffic speeds.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Requirements</div>
+    <ul class="text-muted text-sm" style="line-height:2;margin:0 0 0 20px">
+        <li>Valhalla 3.x or later with predicted traffic support compiled in</li>
+        <li>Your Valhalla tiles must cover the same geographic region as the observations</li>
+        <li>The <code>valhalla_add_predicted_traffic</code> binary must be on your <code>PATH</code></li>
+        <li>Edge IDs in the CSV correspond to the Valhalla graph tiles — they are not transferable between different tile builds</li>
+    </ul>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        See the <a href="https://valhalla.github.io/valhalla/meili/" target="_blank" rel="noopener">Valhalla documentation</a>
+        for more details on map matching and predicted traffic.
+    </p>
+</div>

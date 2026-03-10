@@ -1,0 +1,181 @@
+@{
+    Layout = "~/Views/Docs/_DocsLayout.cshtml";
+    ViewData["Title"] = "API Access";
+    ViewData["DocsPage"] = "api-access";
+}
+
+<h1 style="font-size:1.75rem;font-weight:800;margin-bottom:8px">API Access</h1>
+<p class="text-muted" style="margin-bottom:32px">Full reference for authentication, endpoints, rate limits, and error codes.</p>
+
+<div class="card section">
+    <div class="card-title">Authentication</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Every API request must include your API key as a Bearer token:
+    </p>
+    <div class="code-block">Authorization: Bearer &lt;your-api-key&gt;</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        Create and manage API keys on your <a href="/Home/Profile">Profile</a> page.
+        Each key is shown only once and stored as a hash — keep it safe.
+        You can create multiple keys (e.g. one per device) and revoke them individually.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Base URL</div>
+    <div class="code-block">https://opentrafficdb.example.com/api/v1</div>
+    <p class="text-muted text-sm" style="margin-top:10px">All endpoints below are relative to this base.</p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Observation Endpoints</div>
+
+    <div style="margin-bottom:20px">
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">POST /speed</div>
+        <p class="text-muted text-sm" style="line-height:1.8">Submit a single GPS speed observation.</p>
+        <div class="code-block"><span class="code-val">{
+    "tripId": "string (UUID, anonymized)",
+    "latitude": -90.0 … 90.0,
+    "longitude": -180.0 … 180.0,
+    "speedMs": 0.0 … 200.0,
+    "gpsAccuracyMeters": 0.01 … 10000.0,
+    "timestamp": "ISO 8601 UTC",
+    "heading": 0.0 … 360.0,       <span class="code-comment">// optional</span>
+    "altitudeMeters": -500 … 15000 <span class="code-comment">// optional</span>
+}</span></div>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+            Returns: <code>{"success": true, "observationId": 12345}</code>
+        </p>
+    </div>
+
+    <div>
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">POST /speed/batch</div>
+        <p class="text-muted text-sm" style="line-height:1.8">Submit up to 100 observations in one request.</p>
+        <div class="code-block"><span class="code-val">{
+    "observations": [ ... ]  <span class="code-comment">// 1–100 SpeedObservationRequest objects</span>
+}</span></div>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+            Returns: <code>{"accepted": 98, "rejected": 2, "errors": ["..."]}</code>
+        </p>
+    </div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Traffic Endpoints</div>
+
+    <div style="margin-bottom:20px">
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /traffic/live</div>
+        <p class="text-muted text-sm" style="line-height:1.8">Query real-time speed observations within a bounding box.</p>
+        <div class="code-block"><span class="code-url">GET /api/v1/traffic/live?minLat=48.8&maxLat=48.9&minLon=2.3&maxLon=2.4&maxAgeMinutes=15</span></div>
+        <div style="margin-top:8px">
+            <table style="font-size:0.8rem;width:100%;border-collapse:collapse">
+                <thead><tr style="border-bottom:1px solid var(--border)">
+                    <th style="text-align:left;padding:4px 8px;color:var(--text-muted)">Parameter</th>
+                    <th style="text-align:left;padding:4px 8px;color:var(--text-muted)">Type</th>
+                    <th style="text-align:left;padding:4px 8px;color:var(--text-muted)">Description</th>
+                </tr></thead>
+                <tbody class="text-muted">
+                    <tr><td style="padding:4px 8px"><code>minLat</code>, <code>maxLat</code></td><td style="padding:4px 8px">double</td><td style="padding:4px 8px">Latitude bounds (-90 … 90)</td></tr>
+                    <tr><td style="padding:4px 8px"><code>minLon</code>, <code>maxLon</code></td><td style="padding:4px 8px">double</td><td style="padding:4px 8px">Longitude bounds (-180 … 180)</td></tr>
+                    <tr><td style="padding:4px 8px"><code>maxAgeMinutes</code></td><td style="padding:4px 8px">int (1–60)</td><td style="padding:4px 8px">Max age of observations (default: 15)</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div>
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /traffic/predicted/csv</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            Download a Valhalla-compatible predicted traffic CSV with 2016 time buckets per edge.
+            See <a href="/docs/valhalla">Valhalla Integration</a> for details.
+        </p>
+    </div>
+</div>
+
+<div class="card section">
+    <div class="card-title">User Endpoints</div>
+    <div style="display:flex;flex-direction:column;gap:10px;font-size:0.82rem">
+        <div style="display:flex;gap:12px;align-items:baseline">
+            <code style="flex-shrink:0;color:var(--accent)">GET /user/me</code>
+            <span class="text-muted">Your account info (id, role, name, contributions)</span>
+        </div>
+        <div style="display:flex;gap:12px;align-items:baseline">
+            <code style="flex-shrink:0;color:var(--accent)">PUT /user/me</code>
+            <span class="text-muted">Update your display name</span>
+        </div>
+        <div style="display:flex;gap:12px;align-items:baseline">
+            <code style="flex-shrink:0;color:var(--accent)">GET /user/me/keys</code>
+            <span class="text-muted">List your API keys (labels, creation date, last used)</span>
+        </div>
+        <div style="display:flex;gap:12px;align-items:baseline">
+            <code style="flex-shrink:0;color:var(--accent)">POST /user/me/keys</code>
+            <span class="text-muted">Create a new API key (returns raw key once)</span>
+        </div>
+        <div style="display:flex;gap:12px;align-items:baseline">
+            <code style="flex-shrink:0;color:var(--accent)">DELETE /user/me/keys/{id}</code>
+            <span class="text-muted">Revoke an API key</span>
+        </div>
+    </div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Rate Limits</div>
+    <div style="font-size:0.82rem">
+        <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Role</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Single submission</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Batch submission</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Read / export</th>
+            </tr></thead>
+            <tbody class="text-muted">
+                <tr style="border-bottom:1px solid var(--border)">
+                    <td style="padding:6px 8px"><span class="badge">User</span></td>
+                    <td style="padding:6px 8px">60 / hour (per IP)</td>
+                    <td style="padding:6px 8px">10 / hour</td>
+                    <td style="padding:6px 8px">30 / hour</td>
+                </tr>
+                <tr>
+                    <td style="padding:6px 8px"><span class="badge badge-contributor">Contributor</span></td>
+                    <td style="padding:6px 8px">600 / hour</td>
+                    <td style="padding:6px 8px">60 / hour</td>
+                    <td style="padding:6px 8px">120 / hour</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        Rate limit exceeded responses return <code>429 Too Many Requests</code>.
+        Repeated abuse may result in temporary IP blocks.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Error Codes</div>
+    <div style="font-size:0.82rem">
+        <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Status</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Meaning</th>
+            </tr></thead>
+            <tbody class="text-muted">
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>200</code></td><td style="padding:6px 8px">Success</td></tr>
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>400</code></td><td style="padding:6px 8px">Validation error — check the request body</td></tr>
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>401</code></td><td style="padding:6px 8px">Missing or invalid API key</td></tr>
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>403</code></td><td style="padding:6px 8px">Forbidden (insufficient role)</td></tr>
+                <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 8px"><code>429</code></td><td style="padding:6px 8px">Rate limit exceeded</td></tr>
+                <tr><td style="padding:6px 8px"><code>500</code></td><td style="padding:6px 8px">Internal server error</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Interactive API Explorer</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        The full OpenAPI specification is available via Swagger UI.
+        Authorize with your API key (paste it into the Bearer field) and try requests directly in the browser.
+    </p>
+    <div style="margin-top:12px">
+        <a href="/swagger" target="_blank" class="btn btn-secondary btn-sm">Open Swagger UI →</a>
+    </div>
+</div>

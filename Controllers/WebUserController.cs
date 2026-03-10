@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -17,8 +18,16 @@ namespace OpenTrafficDB.Controllers;
 [Authorize(AuthenticationSchemes = CookieAuthenticationDefaults.AuthenticationScheme)]
 [Produces("application/json")]
 [ApiExplorerSettings(IgnoreApi = true)]
-public class WebUserController(AppDbContext db, ApiKeyService keyService, IConfiguration config) : ControllerBase
+public class WebUserController(
+    AppDbContext db,
+    ApiKeyService keyService,
+    PasswordService passwordService,
+    CryptoService crypto,
+    IEmailService emailService,
+    IConfiguration config) : ControllerBase
 {
+    private string BaseUrl => config["BaseUrl"] ?? $"{Request.Scheme}://{Request.Host}";
+
     private int ContributorThreshold =>
         int.TryParse(config["Security:ContributorThreshold"], out var t) ? t : 100;
 
@@ -78,6 +87,66 @@ public class WebUserController(AppDbContext db, ApiKeyService keyService, IConfi
         await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
 
         return Ok(new { message = "Display name updated.", name = user.Name });
+    }
+
+    /// <summary>Change the current user's password. Requires the current password for verification.</summary>
+    [HttpPut("me/password")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        if (request.NewPassword != request.NewPasswordConfirm)
+            return BadRequest(new { error = "New passwords do not match." });
+
+        var user = await db.Users.FindAsync(CurrentUserId);
+        if (user == null) return NotFound();
+
+        if (!passwordService.VerifyPassword(request.CurrentPassword, user.PasswordHash))
+            return BadRequest(new { error = "Current password is incorrect." });
+
+        user.PasswordHash = passwordService.HashPassword(request.NewPassword);
+        await db.SaveChangesAsync();
+
+        return Ok(new { message = "Password updated successfully." });
+    }
+
+    /// <summary>
+    /// Initiate an email address change. Requires the current password for verification.
+    /// A confirmation link is sent to the new email address; the change takes effect only after clicking it.
+    /// </summary>
+    [HttpPost("me/email")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ChangeEmail([FromBody] ChangeEmailRequest request)
+    {
+        var user = await db.Users.FindAsync(CurrentUserId);
+        if (user == null) return NotFound();
+
+        if (!passwordService.VerifyPassword(request.Password, user.PasswordHash))
+            return BadRequest(new { error = "Password is incorrect." });
+
+        var newEmailHash = crypto.HashEmail(request.NewEmail);
+
+        if (newEmailHash == user.EmailHash)
+            return BadRequest(new { error = "The new email address is the same as the current one." });
+
+        if (await db.Users.AnyAsync(u => u.EmailHash == newEmailHash))
+            return Conflict(new { error = "An account with that email address already exists." });
+
+        var token  = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+                         .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        user.PendingEmailHash  = newEmailHash;
+        user.VerificationToken  = token;
+        user.VerificationExpiry = DateTime.UtcNow.AddHours(24);
+        await db.SaveChangesAsync();
+
+        var verifyUrl = $"{BaseUrl}/auth/verify?token={Uri.EscapeDataString(token)}";
+        await emailService.SendEmailChangeVerificationAsync(request.NewEmail, verifyUrl);
+
+        return Ok(new { message = "A confirmation link has been sent to your new email address. Click it to complete the change." });
     }
 
     // ── Stats ─────────────────────────────────────────────────────────────────

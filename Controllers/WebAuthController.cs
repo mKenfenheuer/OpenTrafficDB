@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OpenTrafficDB.Data;
@@ -77,26 +78,102 @@ public class WebAuthController(
 
     // ── Verify Email ──────────────────────────────────────────────────────────
 
-    /// <summary>Verify email address using the token sent by email. Redirects to the home page.</summary>
+    /// <summary>
+    /// Verify email address using the token sent by email. Handles both initial registration
+    /// verification and email-change confirmation. Redirects to the home page.
+    /// </summary>
     [HttpGet("verify")]
     [ProducesResponseType(StatusCodes.Status302Found)]
     public async Task<IActionResult> VerifyEmail([FromQuery] string token)
     {
         if (string.IsNullOrWhiteSpace(token))
-            return Redirect("/?verified=invalid");
+            return Redirect("/Home/Login?verified=invalid");
 
         var user = await db.Users.FirstOrDefaultAsync(u =>
             u.VerificationToken == token && u.VerificationExpiry > DateTime.UtcNow);
 
         if (user == null)
-            return Redirect("/?verified=invalid");
+            return Redirect("/Home/Login?verified=invalid");
 
+        if (user.PendingEmailHash != null)
+        {
+            // Email-change confirmation: swap to the new email hash
+            user.EmailHash         = user.PendingEmailHash;
+            user.PendingEmailHash  = null;
+            user.VerificationToken  = null;
+            user.VerificationExpiry = null;
+            await db.SaveChangesAsync();
+            return Redirect("/Home/Profile?emailchanged=1");
+        }
+
+        // Initial registration verification
         user.IsEmailVerified    = true;
         user.VerificationToken  = null;
         user.VerificationExpiry = null;
         await db.SaveChangesAsync();
 
-        return Redirect("/?verified=1");
+        return Redirect("/Home/Login?verified=1");
+    }
+
+    // ── Forgot Password ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Request a password reset link. Always returns 200 to prevent user enumeration.
+    /// If the email matches an account a reset link is sent.
+    /// </summary>
+    [HttpPost("forgot-password")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+    {
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (!abuseDetection.CheckPasswordResetRate(ip))
+            return StatusCode(429, new { error = "Too many requests. Try again later." });
+
+        var emailHash = crypto.HashEmail(request.Email);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.EmailHash == emailHash && u.IsActive);
+
+        if (user != null && user.IsEmailVerified)
+        {
+            var token  = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+                             .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+            user.PasswordResetToken  = token;
+            user.PasswordResetExpiry = DateTime.UtcNow.AddHours(1);
+            await db.SaveChangesAsync();
+
+            var resetUrl = $"{BaseUrl}/Home/ResetPassword?token={Uri.EscapeDataString(token)}";
+            await emailService.SendPasswordResetEmailAsync(request.Email, resetUrl);
+        }
+
+        return Ok(new { message = "If an account with that email exists, a password reset link has been sent." });
+    }
+
+    // ── Reset Password ────────────────────────────────────────────────────────
+
+    /// <summary>Reset password using a token received by email.</summary>
+    [HttpPost("reset-password")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
+    {
+        if (request.Password != request.PasswordConfirm)
+            return BadRequest(new { error = "Passwords do not match." });
+
+        if (string.IsNullOrWhiteSpace(request.Token))
+            return BadRequest(new { error = "Invalid or expired token." });
+
+        var user = await db.Users.FirstOrDefaultAsync(u =>
+            u.PasswordResetToken == request.Token && u.PasswordResetExpiry > DateTime.UtcNow);
+
+        if (user == null)
+            return BadRequest(new { error = "Invalid or expired reset link. Please request a new one." });
+
+        user.PasswordHash        = passwordService.HashPassword(request.Password);
+        user.PasswordResetToken  = null;
+        user.PasswordResetExpiry = null;
+        await db.SaveChangesAsync();
+
+        return Ok(new { message = "Password reset successfully. You can now log in with your new password." });
     }
 
     // ── Login ─────────────────────────────────────────────────────────────────

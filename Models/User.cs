@@ -15,10 +15,18 @@ public class User
 
     public bool IsEmailVerified { get; set; } = false;
 
-    /// <summary>Single-use token for email verification (stored as-is, 256-bit entropy)</summary>
+    /// <summary>Single-use token for email verification or email-change verification (stored as-is, 256-bit entropy)</summary>
     public string? VerificationToken { get; set; }
 
     public DateTime? VerificationExpiry { get; set; }
+
+    /// <summary>Hashed new email awaiting verification during an email-change flow</summary>
+    public string? PendingEmailHash { get; set; }
+
+    /// <summary>Single-use token for password reset (stored as-is, 256-bit entropy)</summary>
+    public string? PasswordResetToken { get; set; }
+
+    public DateTime? PasswordResetExpiry { get; set; }
 
     public bool IsActive { get; set; } = true;
 

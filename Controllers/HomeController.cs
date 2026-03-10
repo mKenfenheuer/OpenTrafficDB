@@ -50,4 +50,34 @@ public class HomeController() : Controller
     {
         return View();
     }
+
+    [AllowAnonymous]
+    public IActionResult Imprint()
+    {
+        return View();
+    }
+
+    [AllowAnonymous]
+    public IActionResult Privacy()
+    {
+        return View();
+    }
+
+    [AllowAnonymous]
+    public IActionResult License()
+    {
+        return View();
+    }
+
+    [AllowAnonymous]
+    public IActionResult ForgotPassword()
+    {
+        return View();
+    }
+
+    [AllowAnonymous]
+    public IActionResult ResetPassword()
+    {
+        return View();
+    }
 }

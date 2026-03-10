@@ -17,14 +17,6 @@
     </div>
 </section>
 
-<!-- Verified / error banners -->
-<div id="banner-verified" class="alert alert-success hidden container-sm" style="margin:0 auto 24px">
-    Email verified! Your account is now active — sign in below.
-</div>
-<div id="banner-invalid" class="alert alert-error hidden container-sm" style="margin:0 auto 24px">
-    Verification link is invalid or has expired. Please register again or contact support.
-</div>
-
 <!-- How it works -->
 <div style="margin-bottom:16px">
     <h2 style="font-size:1.25rem;font-weight:700;margin-bottom:24px;text-align:center">How it works</h2>
@@ -39,7 +31,7 @@
     </div>
     <div class="step">
         <div class="step-num">3</div>
-        <div><h4>Get a JWT</h4><p>Exchange your API key for a short-lived JWT. The token is bound to your IP for security.</p></div>
+        <div><h4>Authenticate</h4><p>Include your API key in every request as <code>Authorization: Bearer &lt;key&gt;</code>. No token exchange needed.</p></div>
     </div>
     <div class="step">
         <div class="step-num">4</div>
@@ -85,85 +77,29 @@
 <!-- Quick start -->
 <div class="card mb-3" style="margin-bottom:60px">
     <div class="card-title">Quick start (machine access)</div>
-    <div class="code-block"><span class="code-comment"># 1. Register at /Home/Register, verify email, then create an API key at /Home/Profile</span>
+    <div class="code-block"><span class="code-comment"># 1. Register at /Home/Register and verify your email</span>
 
-<span class="code-comment"># 2. Get a api key (from your profile page)</span>
+<span class="code-comment"># 2. Log in, go to /Home/Profile and create an API key</span>
+<span class="code-comment">#    The key is shown only once — store it securely</span>
 
-<span class="code-comment"># 3. Submit an observation</span>
+<span class="code-comment"># 3. Submit an observation (use your API key directly as the Bearer token)</span>
 <span class="code-url">curl -X POST /api/v1/speed</span> \
-    -H <span class="code-val">'Authorization: Bearer &lt;token&gt;'</span> \
+    -H <span class="code-val">'Authorization: Bearer &lt;your-api-key&gt;'</span> \
     -H <span class="code-val">'Content-Type: application/json'</span> \
     -d <span class="code-val">'{"latitude":48.8566,"longitude":2.3522,"speedMs":13.9,"tripId":"trip-1","timestamp":"2024-01-01T12:00:00Z"}'</span>
 
 <span class="code-comment"># 4. Export predicted traffic CSV for Valhalla</span>
 <span class="code-url">curl /api/v1/traffic/predicted/csv</span> \
-    -H <span class="code-val">'Authorization: Bearer &lt;token&gt;'</span> -o traffic.csv
+    -H <span class="code-val">'Authorization: Bearer &lt;your-api-key&gt;'</span> -o traffic.csv
 <span class="code-url">valhalla_add_predicted_traffic</span> --config valhalla.json -t traffic.csv</div>
 </div>
 
 @section Scripts {
-    <script type="module">
-    import { getSession, logout, showAlert, esc } from '/js/app.js';
+  <script type="module">
+    import { getSession, logout } from '/js/app.js';
     window.logout = logout;
 
-    function showTab(name) {
-      document.querySelectorAll('.login-tab').forEach((t, i) => {
-        t.classList.toggle('active', (i === 0 && name === 'login') || (i === 1 && name === 'roles'));
-      });
-      document.getElementById('tab-login').classList.toggle('hidden', name !== 'login');
-      document.getElementById('tab-roles').classList.toggle('hidden', name !== 'roles');
-    }
-    window.showTab = showTab;
-
-    // Verification banners
-    const params = new URLSearchParams(location.search);
-    if (params.get('verified') === '1')
-      document.getElementById('banner-verified').classList.remove('hidden');
-    else if (params.get('verified') === 'invalid')
-      document.getElementById('banner-invalid').classList.remove('hidden');
-
-    async function doLogin() {
-      const email    = document.getElementById('email-input').value.trim();
-      const password = document.getElementById('pass-input').value;
-      const remember = document.getElementById('remember-me').checked;
-      const alertEl  = document.getElementById('login-alert');
-      const btn      = document.getElementById('login-btn');
-
-      if (!email || !password) { showAlert(alertEl, 'Please enter your email and password.'); return; }
-
-      btn.disabled = true;
-      btn.textContent = 'Signing in…';
-      alertEl.classList.add('hidden');
-
-      const res = await fetch('/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, rememberMe: remember }),
-        credentials: 'same-origin'
-      });
-      const data = await res.json().catch(() => ({}));
-
-      btn.disabled = false;
-      btn.textContent = 'Sign in';
-
-      if (!res.ok) { showAlert(alertEl, data?.error || 'Login failed.'); return; }
-      window.location.href = '/Home/Dashboard';
-    }
-    window.doLogin = doLogin;
-
-    document.getElementById('pass-input')?.addEventListener('keydown', e => {
-      if (e.key === 'Enter') doLogin();
-    });
-
-    // Check session
     const session = await getSession();
-
-    if (session) {
-      document.getElementById('auth-panel').classList.add('hidden');
-      document.getElementById('logged-in-panel').classList.remove('hidden');
-      document.getElementById('logged-in-name').textContent = session.name || session.email;
-    } else {
-      document.getElementById('auth-panel').classList.remove('hidden');
-    }
+    if (session) window.location.href = '/Home/Dashboard';
   </script>
 }

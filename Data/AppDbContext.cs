@@ -27,6 +27,7 @@ public class AppDbContext : DbContext
         {
             e.HasIndex(u => u.EmailHash).IsUnique();
             e.HasIndex(u => u.VerificationToken).HasFilter("\"VerificationToken\" IS NOT NULL");
+            e.HasIndex(u => u.PasswordResetToken).HasFilter("\"PasswordResetToken\" IS NOT NULL");
             e.Property(u => u.Role).HasConversion<string>().HasDefaultValue(UserRole.User);
         });
 

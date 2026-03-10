@@ -1,81 +1,59 @@
 @{
     ViewData["Title"] = "Register";
 }
-<!-- Registration form -->
-    <div id="register-view">
-      <div style="text-align:center;margin-bottom:32px">
-        <h1 style="font-size:1.75rem;font-weight:800;margin-bottom:8px">Create an account</h1>
-        <p class="text-muted">Free and non-commercial. Verify your email to get started.</p>
-      </div>
 
-      <div class="card">
-        <div id="reg-alert" class="alert hidden"></div>
-
-        <div class="form-group">
-          <label class="form-label" for="reg-email">Email address</label>
-          <input type="email" id="reg-email" class="form-control" placeholder="you@example.com" maxlength="255" autocomplete="email">
-          <p class="text-sm text-muted mt-1">Stored as a one-way hash — your raw email is never saved.</p>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="reg-pass">Password</label>
-          <input type="password" id="reg-pass" class="form-control" placeholder="At least 8 characters" minlength="8" maxlength="100" autocomplete="new-password">
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="reg-pass2">Confirm password</label>
-          <input type="password" id="reg-pass2" class="form-control" placeholder="Repeat password" autocomplete="new-password">
-        </div>
-
-        <button class="btn btn-primary btn-block" id="reg-btn" onclick="doRegister()">
-          Create account
-        </button>
-
-        <p class="text-sm text-muted mt-2" style="text-align:center">
-          Already have an account? <a href="/">Sign in</a>
-        </p>
-      </div>
+<div class="login-section container-sm" style="margin:0 auto">
+    <div class="login-tabs">
+        <button class="login-tab" onclick="window.location.href='/Home/Login'">Sign in</button>
+        <button class="login-tab active">Register</button>
     </div>
 
-    <!-- Success view -->
-    <div id="success-view" class="hidden">
-      <div style="text-align:center;margin-bottom:32px">
-        <div style="width:56px;height:56px;background:rgba(63,185,80,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </div>
-        <h1 style="font-size:1.5rem;font-weight:800;margin-bottom:8px">Check your email</h1>
-        <p class="text-muted">We've sent a verification link to your email address. Click it to activate your account.</p>
-      </div>
+    <div id="reg-alert" class="alert hidden"></div>
 
-      <div class="card">
-        <div class="alert alert-info">
-          The verification link expires in <strong>24 hours</strong>.
-          If you don't receive the email within a few minutes, check your spam folder.
+    <div id="reg-form">
+        <div class="form-group">
+            <label class="form-label" for="reg-email">Email address</label>
+            <input type="email" id="reg-email" class="form-control" placeholder="you@example.com" maxlength="255" autocomplete="email">
+            <p class="text-sm text-muted mt-1">Stored as a one-way hash — your raw email is never saved.</p>
         </div>
-        <div style="margin-top:16px;text-align:center">
-          <a href="/" class="btn btn-primary">Back to sign in</a>
+        <div class="form-group">
+            <label class="form-label" for="reg-pass">Password</label>
+            <input type="password" id="reg-pass" class="form-control" placeholder="At least 8 characters" minlength="8" maxlength="100" autocomplete="new-password">
         </div>
-      </div>
+        <div class="form-group">
+            <label class="form-label" for="reg-pass2">Confirm password</label>
+            <input type="password" id="reg-pass2" class="form-control" placeholder="Repeat password" autocomplete="new-password">
+        </div>
+        <button class="btn btn-primary btn-block" id="reg-btn" onclick="doRegister()">Create account</button>
     </div>
+
+    <div id="reg-success" class="hidden" style="text-align:center;padding:16px 0">
+        <div style="width:48px;height:48px;background:rgba(63,185,80,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 12px">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <p style="font-weight:600;margin-bottom:6px">Check your email</p>
+        <p class="text-muted text-sm">We sent a verification link to your address. Click it to activate your account. The link expires in 24 hours.</p>
+        <a href="/Home/Login" class="btn btn-secondary mt-2">Back to sign in</a>
+    </div>
+</div>
 
 @section Scripts {
-    
   <script type="module">
     import { getSession, showAlert } from '/js/app.js';
 
     const session = await getSession();
-
-    // Already logged in → go to dashboard
-    if (session) window.location.href = '/Home/Dashboard';
+    if (session) { window.location.href = '/Home/Dashboard'; throw new Error(); }
 
     async function doRegister() {
-      const email = document.getElementById('reg-email').value.trim();
-      const pass  = document.getElementById('reg-pass').value;
-      const pass2 = document.getElementById('reg-pass2').value;
+      const email   = document.getElementById('reg-email').value.trim();
+      const pass    = document.getElementById('reg-pass').value;
+      const pass2   = document.getElementById('reg-pass2').value;
       const alertEl = document.getElementById('reg-alert');
       const btn     = document.getElementById('reg-btn');
 
-      if (!email)         { showAlert(alertEl, 'Email is required.'); return; }
-      if (pass.length < 8){ showAlert(alertEl, 'Password must be at least 8 characters.'); return; }
-      if (pass !== pass2) { showAlert(alertEl, 'Passwords do not match.'); return; }
+      if (!email)          { showAlert(alertEl, 'Email is required.'); return; }
+      if (pass.length < 8) { showAlert(alertEl, 'Password must be at least 8 characters.'); return; }
+      if (pass !== pass2)  { showAlert(alertEl, 'Passwords do not match.'); return; }
 
       btn.disabled = true;
       btn.textContent = 'Creating account…';
@@ -94,18 +72,18 @@
 
       if (!res.ok) {
         const msg = res.status === 409 ? 'An account with this email already exists.'
-          : res.status === 429         ? 'Too many attempts. Please try again later.'
-          : data?.error                || 'Registration failed.';
+          : res.status === 429        ? 'Too many attempts. Please try again later.'
+          : data?.error              || 'Registration failed.';
         showAlert(alertEl, msg);
         return;
       }
 
-      document.getElementById('register-view').classList.add('hidden');
-      document.getElementById('success-view').classList.remove('hidden');
+      document.getElementById('reg-form').classList.add('hidden');
+      document.getElementById('reg-success').classList.remove('hidden');
     }
     window.doRegister = doRegister;
 
-    document.getElementById('reg-pass2')?.addEventListener('keydown', e => {
+    document.getElementById('reg-pass2').addEventListener('keydown', e => {
       if (e.key === 'Enter') doRegister();
     });
   </script>

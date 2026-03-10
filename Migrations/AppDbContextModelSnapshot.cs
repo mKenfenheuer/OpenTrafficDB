@@ -226,6 +226,15 @@ namespace OpenTrafficDB.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("PasswordResetExpiry")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PasswordResetToken")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PendingEmailHash")
+                        .HasColumnType("text");
+
                     b.Property<string>("Role")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -245,6 +254,9 @@ namespace OpenTrafficDB.Migrations
 
                     b.HasIndex("EmailHash")
                         .IsUnique();
+
+                    b.HasIndex("PasswordResetToken")
+                        .HasFilter("\"PasswordResetToken\" IS NOT NULL");
 
                     b.HasIndex("VerificationToken")
                         .HasFilter("\"VerificationToken\" IS NOT NULL");

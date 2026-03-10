@@ -26,7 +26,7 @@ public class SmtpEmailService : IEmailService
         this.logger = logger;
     } 
 
-    public async Task SendVerificationEmailAsync(string toEmail, string verificationUrl)
+    public Task SendVerificationEmailAsync(string toEmail, string verificationUrl)
     {
         var subject = "Verify your OpenTrafficDB email address";
         var body = $"""
@@ -36,13 +36,42 @@ public class SmtpEmailService : IEmailService
             <p>This link expires in <strong>24 hours</strong>.</p>
             <p style="color:#888;font-size:12px">If you did not register, you can safely ignore this email.</p>
             """;
+        return SendAsync(toEmail, subject, body, "Verification");
+    }
 
+    public Task SendPasswordResetEmailAsync(string toEmail, string resetUrl)
+    {
+        var subject = "Reset your OpenTrafficDB password";
+        var body = $"""
+            <p>You requested a password reset for your <strong>OpenTrafficDB</strong> account.</p>
+            <p>Click the link below to set a new password:</p>
+            <p><a href="{resetUrl}" style="font-size:16px">{resetUrl}</a></p>
+            <p>This link expires in <strong>1 hour</strong>.</p>
+            <p style="color:#888;font-size:12px">If you did not request a password reset, you can safely ignore this email.</p>
+            """;
+        return SendAsync(toEmail, subject, body, "PasswordReset");
+    }
+
+    public Task SendEmailChangeVerificationAsync(string toEmail, string verifyUrl)
+    {
+        var subject = "Confirm your new OpenTrafficDB email address";
+        var body = $"""
+            <p>You requested an email address change for your <strong>OpenTrafficDB</strong> account.</p>
+            <p>Click the link below to confirm your new email address:</p>
+            <p><a href="{verifyUrl}" style="font-size:16px">{verifyUrl}</a></p>
+            <p>This link expires in <strong>24 hours</strong>.</p>
+            <p style="color:#888;font-size:12px">If you did not request this change, you can safely ignore this email.</p>
+            """;
+        return SendAsync(toEmail, subject, body, "EmailChange");
+    }
+
+    private async Task SendAsync(string toEmail, string subject, string body, string logLabel)
+    {
         if (string.IsNullOrEmpty(_host))
         {
-            // Dev mode: log the link instead of sending
             logger.LogWarning(
-                "Email not configured (Email:SmtpHost missing). Verification URL for {Email}: {Url}",
-                toEmail, verificationUrl);
+                "Email not configured (Email:SmtpHost missing). {Label} email for {Email}: {Body}",
+                logLabel, toEmail, body);
             return;
         }
 
@@ -62,11 +91,11 @@ public class SmtpEmailService : IEmailService
         try
         {
             await client.SendMailAsync(message);
-            logger.LogInformation("Verification email sent to {Email}", toEmail);
+            logger.LogInformation("{Label} email sent to {Email}", logLabel, toEmail);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to send verification email to {Email}", toEmail);
+            logger.LogError(ex, "Failed to send {Label} email to {Email}", logLabel, toEmail);
             throw;
         }
     }

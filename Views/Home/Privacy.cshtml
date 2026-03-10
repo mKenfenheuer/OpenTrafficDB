@@ -1,0 +1,209 @@
+@{
+    ViewData["Title"] = "Privacy Policy";
+}
+
+<div style="max-width:760px;margin:0 auto">
+    <div class="page-header">
+        <h1>Privacy Policy</h1>
+        <p class="text-muted">Website: OpenTrafficDB · Last updated: 2026-03-10</p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">1. Controller</div>
+        <p class="text-muted text-sm" style="line-height:2">
+            Maximilian Kenfenheuer<br>
+            Lindenweg 6<br>
+            42929 Wermelskirchen<br>
+            Germany<br>
+            Email: <a href="mailto:max@ksol.it">max@ksol.it</a>
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">2. General Information</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            This privacy policy explains how we process personal data when you visit and use OpenTrafficDB.
+            "Personal data" means any information relating to an identified or identifiable natural person.
+            We take the protection of your personal data seriously and process it only to the extent
+            necessary to operate the service.
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">3. Cookies</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            We use <strong style="color:var(--text)">only technically necessary cookies</strong>.
+            We do not use tracking, analytics, or advertising cookies of any kind.
+        </p>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+            The only cookie we set is the session cookie, which is used
+            exclusively to maintain your login session after you sign in. This cookie is:
+        </p>
+        <ul class="text-muted text-sm" style="line-height:2;margin:12px 0 0 20px">
+            <li>HttpOnly (not accessible to JavaScript)</li>
+            <li>SameSite=Lax (protection against cross-site request forgery)</li>
+            <li>Set only after you explicitly log in</li>
+            <li>Deleted when you log out or when the session expires (12 hours; 30 days if "Remember me" is selected)</li>
+        </ul>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+            Because this cookie is strictly necessary to provide the service you request (authenticated access),
+            it does not require your prior consent under the ePrivacy Directive and GDPR.
+            Legal basis: Art. 6(1)(f) GDPR (legitimate interest in providing a functional authenticated service).
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">4. Hosting and Server Log Files</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            When you access our website, the web server may automatically process information
+            transmitted by your browser ("server log files"), such as:
+        </p>
+        <ul class="text-muted text-sm" style="line-height:2;margin:12px 0 0 20px">
+            <li>IP address</li>
+            <li>Date and time of access</li>
+            <li>Requested page / file (URL)</li>
+            <li>HTTP status code</li>
+            <li>Referrer URL</li>
+            <li>Browser type/version, operating system, device information</li>
+        </ul>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+            <strong style="color:var(--text)">Purpose:</strong> delivering the website, ensuring stability and security
+            (e.g., defense against attacks, abuse detection).<br>
+            <strong style="color:var(--text)">Legal basis:</strong> Art. 6(1)(f) GDPR (legitimate interests).<br>
+            <strong style="color:var(--text)">Retention:</strong> server log files are stored for up to 30 days and
+            then deleted, unless longer retention is required to investigate security incidents.
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">5. Account Registration</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            If you register an account, we process the following data:
+        </p>
+        <ul class="text-muted text-sm" style="line-height:2;margin:12px 0 0 20px">
+            <li><strong style="color:var(--text)">Email address:</strong> stored as a one-way cryptographic hash only. Your raw email address is never stored and cannot be recovered from the hash. It is used to identify your account and send transactional emails (verification, password reset).</li>
+            <li><strong style="color:var(--text)">Password:</strong> stored as a hash with a random salt. Your raw password is never stored.</li>
+            <li><strong style="color:var(--text)">Display name:</strong> optional, set by you on the profile page.</li>
+            <li><strong style="color:var(--text)">Account creation date and role.</strong></li>
+        </ul>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+            <strong style="color:var(--text)">Legal basis:</strong> Art. 6(1)(b) GDPR (performance of a contract / steps at your request prior to a contract).<br>
+            <strong style="color:var(--text)">Retention:</strong> account data is retained for as long as your account is active. You may request deletion of your account at any time.
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">6. Transactional Emails</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            We send transactional emails for account verification and password reset. For this purpose,
+            we temporarily store a single-use token alongside your account record. The token expires
+            within 24 hours (verification) or 1 hour (password reset) and is deleted after use.
+            Your raw email address is used solely to deliver these emails and is not stored in our database.
+        </p>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+            <strong style="color:var(--text)">Legal basis:</strong> Art. 6(1)(b) GDPR.
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">7. Speed Observations (Contributions)</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            When you submit GPS speed observations via the API, we process:
+        </p>
+        <ul class="text-muted text-sm" style="line-height:2;margin:12px 0 0 20px">
+            <li>GPS coordinates (latitude, longitude), speed, heading, accuracy, and timestamp</li>
+            <li>A hashed value of the trip ID you provide — the raw value is not stored</li>
+            <li>A hashed IP address (with a server-side pepper — the raw IP is not stored)</li>
+            <li>The API key ID used for submission (not the raw key)</li>
+        </ul>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+            Observations are aggregated into anonymous road-segment speed statistics and may be
+            exported as open traffic data under the <a href="/Home/License">Data License</a>.
+            Individual observations are retained for operational and aggregation purposes.
+        </p>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+            <strong style="color:var(--text)">Legal basis:</strong> Art. 6(1)(b) GDPR (contract / service use) and
+            Art. 6(1)(f) GDPR (legitimate interest in building a community traffic dataset).
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">8. API Keys and Authentication Tokens</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            API keys you create are stored as hashes; the raw key is shown only once and
+            never stored.
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">9. Abuse Detection</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            To protect the service against abuse, we maintain in-memory rate-limit counters keyed
+            by hashed IP addresses. IP addresses are also hashed (with a server-side pepper)
+            before being stored in the database as part of the blocked-IP list where applicable.
+            Raw IP addresses are not persisted beyond server log files.
+        </p>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+            <strong style="color:var(--text)">Legal basis:</strong> Art. 6(1)(f) GDPR (legitimate interest in protecting the service).
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">10. Recipients of Personal Data</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            We do not sell or share personal data with third parties for marketing purposes.
+            Personal data may be shared with:
+        </p>
+        <ul class="text-muted text-sm" style="line-height:2;margin:12px 0 0 20px">
+            <li>Hosting and infrastructure providers necessary to operate the service (processors under Art. 28 GDPR)</li>
+            <li>SMTP email service providers used to deliver transactional emails</li>
+        </ul>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+            Aggregated, anonymized traffic data may be made publicly available under the
+            <a href="/Home/License">Data License</a>. This data contains no personal information.
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">11. Your Rights under the GDPR</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            Subject to legal requirements, you have the following rights:
+        </p>
+        <ul class="text-muted text-sm" style="line-height:2;margin:12px 0 0 20px">
+            <li><strong style="color:var(--text)">Right of access</strong> (Art. 15 GDPR)</li>
+            <li><strong style="color:var(--text)">Right to rectification</strong> (Art. 16 GDPR)</li>
+            <li><strong style="color:var(--text)">Right to erasure</strong> (Art. 17 GDPR)</li>
+            <li><strong style="color:var(--text)">Right to restriction of processing</strong> (Art. 18 GDPR)</li>
+            <li><strong style="color:var(--text)">Right to data portability</strong> (Art. 20 GDPR)</li>
+            <li><strong style="color:var(--text)">Right to object</strong> (Art. 21 GDPR)</li>
+        </ul>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+            Note: because email addresses are stored only as one-way hashes, we cannot look up
+            or export data by email address directly. Please include your numeric account ID
+            (visible on your profile) when making requests.
+        </p>
+        <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+            You also have the right to lodge a complaint with a supervisory authority, in particular
+            in the EU member state of your habitual residence, place of work, or place of the alleged infringement.
+            In Germany: Landesbeauftragte für Datenschutz und Informationsfreiheit Nordrhein-Westfalen (LDI NRW),
+            <a href="https://www.ldi.nrw.de" target="_blank" rel="noopener">www.ldi.nrw.de</a>.
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">12. Contact</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            If you have questions about this privacy policy or about our processing of personal data, please contact:<br>
+            <a href="mailto:max@ksol.it">max@ksol.it</a>
+        </p>
+    </div>
+
+    <div class="card section">
+        <div class="card-title">13. Changes to This Privacy Policy</div>
+        <p class="text-muted text-sm" style="line-height:1.8">
+            We may update this privacy policy from time to time to reflect changes in our processing
+            or legal requirements. Material changes will be announced via the Service.
+            The date of the last update is shown at the top of this page.
+        </p>
+    </div>
+</div>

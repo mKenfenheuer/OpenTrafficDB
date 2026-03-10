@@ -1,4 +1,3 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -7,7 +6,6 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using OpenTrafficDB.Data;
 using OpenTrafficDB.Middleware;
@@ -20,9 +18,6 @@ public class Program
 {
     public static async Task Main(string[] args)
     {
-        // Prevent ASP.NET Core from remapping JWT claim names (keep "sub" as "sub", not ClaimTypes.NameIdentifier)
-        JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
-
         var builder = WebApplication.CreateBuilder(args);
 
         // ── Database ────────────────────────────────────────────────────────────
@@ -56,17 +51,8 @@ public class Program
                 options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
                 options.SlidingExpiration = true;
                 options.ExpireTimeSpan = TimeSpan.FromHours(12);
-                // Return 401 JSON instead of redirecting for API calls
-                options.Events.OnRedirectToLogin = ctx =>
-                {
-                    ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    return Task.CompletedTask;
-                };
-                options.Events.OnRedirectToAccessDenied = ctx =>
-                {
-                    ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
-                    return Task.CompletedTask;
-                };
+                options.LoginPath = "/Home/Login";
+                options.AccessDeniedPath = "/Home/Login";
             });
 
         builder.Services.AddAuthorizationBuilder()
@@ -98,9 +84,8 @@ public class Program
 
                     **Machine authentication flow:**
                     1. Register at `/Home/Register` — creates an account and sends email verification
-                    2. After verifying email, log in at `/` and create an API key on your profile page
-                    3. `POST /api/v1/auth/token` — exchange API key for a short-lived JWT (IP-bound)
-                    4. Include the JWT in every request: `Authorization: Bearer {token}`
+                    2. After verifying email, log in and create an API key on your profile page
+                    3. Include the API key in every request: `Authorization: Bearer {api-key}`
 
                     **Roles:** User → Contributor (auto, after threshold observations) → Admin (manual)
 
@@ -111,12 +96,11 @@ public class Program
 
             c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
             {
-                Description = "Api Key from your profile page.",
+                Description = "API key from your profile page. Format: `Bearer <your-api-key>`",
                 Name = "Authorization",
                 In = ParameterLocation.Header,
                 Type = SecuritySchemeType.Http,
-                Scheme = "Bearer",
-                BearerFormat = "JWT"
+                Scheme = "Bearer"
             });
 
             c.AddSecurityRequirement(new OpenApiSecurityRequirement

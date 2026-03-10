@@ -1,0 +1,43 @@
+@{
+    Layout = "~/Views/Shared/Layout.cshtml";
+    var page = ViewData["DocsPage"] as string ?? "";
+}
+
+<div style="display:flex;gap:32px;align-items:flex-start">
+
+    <!-- Sidebar -->
+    <aside style="width:200px;flex-shrink:0;position:sticky;top:88px">
+        <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:10px">Documentation</div>
+        <nav style="display:flex;flex-direction:column;gap:2px">
+            @{
+                var links = new[]
+                {
+                    ("getting-started", "/docs/getting-started", "Getting Started"),
+                    ("api-access",      "/docs/api-access",      "API Access"),
+                    ("valhalla",        "/docs/valhalla",        "Valhalla Integration"),
+                    ("examples",        "/docs/examples",        "Examples"),
+                };
+            }
+            @foreach (var (id, href, label) in links)
+            {
+                var active = page == id;
+                <a href="@href" style="padding:6px 10px;border-radius:var(--radius);font-size:0.875rem;color:@(active ? "var(--accent)" : "var(--text-muted)");background:@(active ? "rgba(47,129,247,0.1)" : "transparent");text-decoration:none;transition:color 0.15s,background 0.15s"
+                   onmouseover="if(!@(active.ToString().ToLower()))this.style.color='var(--text)'"
+                   onmouseout="if(!@(active.ToString().ToLower()))this.style.color='var(--text-muted)'">@label</a>
+            }
+        </nav>
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+            <a href="/swagger" target="_blank" style="font-size:0.82rem;color:var(--text-muted)">Interactive API (Swagger) →</a>
+        </div>
+    </aside>
+
+    <!-- Content -->
+    <main style="flex:1;min-width:0">
+        @RenderBody()
+    </main>
+
+</div>
+
+@section Scripts {
+    @RenderSection("Scripts", required: false)
+}
