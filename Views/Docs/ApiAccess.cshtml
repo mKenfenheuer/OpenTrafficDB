@@ -1,4 +1,5 @@
 @{
+    Layout = "~/Views/Docs/_DocsLayout.cshtml";
     ViewData["Title"] = "API Access";
     ViewData["DocsPage"] = "api-access";
 }
@@ -57,7 +58,7 @@
         <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /api/v1/traffic/live</div>
         <p class="text-muted text-sm" style="line-height:1.8">Query real-time speed observations within a bounding box (max 1° × 1°). Rate-limited.</p>
         <div class="code-block"><span class="code-url">GET /api/v1/traffic/live?minLat=48.8&maxLat=48.9&minLon=2.3&maxLon=2.4&maxAgeMinutes=15</span></div>
-        <div style="margin-top:8px">
+        <div class="table-wrap" style="margin-top:8px">
             <table style="font-size:0.8rem;width:100%;border-collapse:collapse">
                 <thead><tr style="border-bottom:1px solid var(--border)">
                     <th style="text-align:left;padding:4px 8px;color:var(--text-muted)">Parameter</th>
@@ -104,7 +105,7 @@ valhalla_add_predicted_traffic --config valhalla.json -t /path/to/traffic_tiles/
         Submission endpoints (<code>/speed</code>, <code>/speed/batch</code>) are <strong style="color:var(--text)">not rate-limited</strong>.
         Read endpoints are rate-limited per IP and per key:
     </p>
-    <div style="font-size:0.82rem">
+    <div class="table-wrap" style="font-size:0.82rem">
         <table style="width:100%;border-collapse:collapse">
             <thead><tr style="border-bottom:1px solid var(--border)">
                 <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Endpoint group</th>
@@ -133,7 +134,7 @@ valhalla_add_predicted_traffic --config valhalla.json -t /path/to/traffic_tiles/
 
 <div class="card section">
     <div class="card-title">Error Codes</div>
-    <div style="font-size:0.82rem">
+    <div class="table-wrap" style="font-size:0.82rem">
         <table style="width:100%;border-collapse:collapse">
             <thead><tr style="border-bottom:1px solid var(--border)">
                 <th style="text-align:left;padding:6px 8px;color:var(--text-muted)">Status</th>

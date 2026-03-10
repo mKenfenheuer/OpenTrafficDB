@@ -3,12 +3,12 @@
     var page = ViewData["DocsPage"] as string ?? "";
 }
 
-<div style="display:flex;gap:32px;align-items:flex-start">
+<div class="docs-layout" style="display:flex;gap:32px;align-items:flex-start">
 
     <!-- Sidebar -->
-    <aside style="width:200px;flex-shrink:0;position:sticky;top:88px">
-        <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:10px">Documentation</div>
-        <nav style="display:flex;flex-direction:column;gap:2px">
+    <aside class="docs-sidebar" style="width:200px;flex-shrink:0;position:sticky;top:88px">
+        <button class="docs-nav-toggle" id="docs-nav-toggle" onclick="toggleDocsNav()">Documentation ▾</button>
+        <nav class="docs-sidebar-links" id="docs-sidebar-links" style="display:flex;flex-direction:column;gap:2px">
             @{
                 var links = new[]
                 {
@@ -26,7 +26,7 @@
                    onmouseout="if(!@(active.ToString().ToLower()))this.style.color='var(--text-muted)'">@label</a>
             }
         </nav>
-        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+        <div class="docs-sidebar-extra" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
             <a href="/swagger" target="_blank" style="font-size:0.82rem;color:var(--text-muted)">Interactive API (Swagger) →</a>
         </div>
     </aside>
@@ -40,4 +40,13 @@
 
 @section Scripts {
     @RenderSection("Scripts", required: false)
+    <script>
+        function toggleDocsNav() {
+            var links = document.getElementById('docs-sidebar-links');
+            var extra = document.querySelector('.docs-sidebar-extra');
+            var open = links.classList.toggle('open');
+            document.getElementById('docs-nav-toggle').textContent = open ? 'Documentation ▴' : 'Documentation ▾';
+            if (extra) extra.style.display = open ? 'block' : '';
+        }
+    </script>
 }

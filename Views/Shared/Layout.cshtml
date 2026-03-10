@@ -59,6 +59,13 @@
 
     @RenderSection("Scripts", required: false)
     <script>
+        // Fallback logout for pages that don't import app.js (e.g. docs pages)
+        if (typeof window.logout === 'undefined') {
+            window.logout = async function() {
+                await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+                window.location.href = '/';
+            };
+        }
         function toggleNav() {
             document.getElementById('navbar-links').classList.toggle('open');
         }
