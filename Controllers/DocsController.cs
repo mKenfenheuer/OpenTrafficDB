@@ -1,12 +1,16 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 
 namespace OpenTrafficDB.Controllers;
 
 [Route("docs")]
+[Authorize(AuthenticationSchemes = "Cookies")]
 [ApiExplorerSettings(IgnoreApi = true)]
 public class DocsController : Controller
 {
     [HttpGet("")]
+    [AllowAnonymous]
     [HttpGet("getting-started")]
     public IActionResult GettingStarted()
     {
@@ -15,6 +19,7 @@ public class DocsController : Controller
     }
 
     [HttpGet("api-access")]
+    [AllowAnonymous]
     public IActionResult ApiAccess()
     {
         ViewData["DocsPage"] = "api-access";
@@ -22,6 +27,7 @@ public class DocsController : Controller
     }
 
     [HttpGet("valhalla")]
+    [AllowAnonymous]
     public IActionResult Valhalla()
     {
         ViewData["DocsPage"] = "valhalla";
@@ -29,6 +35,7 @@ public class DocsController : Controller
     }
 
     [HttpGet("examples")]
+    [AllowAnonymous]
     public IActionResult Examples()
     {
         ViewData["DocsPage"] = "examples";

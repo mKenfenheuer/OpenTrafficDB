@@ -1,3 +1,4 @@
+using System.Drawing;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -23,12 +24,17 @@ public class ValhallaMapMatchingService(
     /// Returns a dictionary mapping observation index to matched edge ID.
     /// </summary>
     public async Task<Dictionary<int, long>> MatchTraceAsync(
-        IReadOnlyList<(double Lat, double Lon, DateTime Time)> points,
+        IReadOnlyList<(double Lat, double Lon, DateTime Time)> data,
         CancellationToken ct = default)
     {
+        var points = new List<(double Lat, double Lon, DateTime Time)>(data);
         if (points.Count == 0) return [];
 
         var baseTime = points[0].Time;
+        if (points.Count == 1)
+        {
+            points.Add(points[0]);
+        }
         var shape = points.Select((p, i) => new
         {
             lat = p.Lat,
@@ -41,6 +47,10 @@ public class ValhallaMapMatchingService(
             shape,
             costing = "auto",
             shape_match = "map_snap",
+            trace_options = new
+            {
+                search_radius = 25,
+            },
             filters = new
             {
                 attributes = new[] { "edge.id", "matched.point_index" },
@@ -61,6 +71,8 @@ public class ValhallaMapMatchingService(
             if (!response.IsSuccessStatusCode)
             {
                 logger.LogWarning("Valhalla trace_attributes returned {Status}", response.StatusCode);
+                var dataString = await response.Content.ReadAsStringAsync();
+                logger.LogWarning("Valhalla trace_attributes returned {data}", dataString);
                 return [];
             }
 

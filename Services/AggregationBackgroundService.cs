@@ -18,7 +18,7 @@ public class AggregationBackgroundService(
         logger.LogInformation("Aggregation background service started. Interval: {Interval}.", _interval);
 
         // Initial delay to let the app fully start
-        await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
+        await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
