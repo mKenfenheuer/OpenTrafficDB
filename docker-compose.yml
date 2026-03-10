@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: opentrafficdb
+      POSTGRES_USER: opentraffic
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - /mnt/data/opentraffic/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opentraffic -d opentrafficdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    restart: unless-stopped
+    volumes:
+      - /mnt/data/opentraffic/valhalla:/custom_files
+    environment:
+      # Place your region OSM PBF in the valhalla_data volume as "map.osm.pbf"
+      # and set tile_building_blocked=0 to trigger an initial build.
+      tile_building_blocked: "1"
+    ports:
+      - "127.0.0.1:8002:8002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8002/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  api:
+    image: ${APP_IMAGE:-opentrafficdb:latest}
+    build: .
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:8080:8080"
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: >-
+        Host=postgres;Port=5432;Database=opentrafficdb;
+        Username=opentraffic;Password=${POSTGRES_PASSWORD:-changeme}
+      Jwt__Key: ${JWT_KEY:?JWT_KEY environment variable is required}
+      Jwt__Issuer: OpenTrafficDB
+      Jwt__Audience: OpenTrafficDB
+      Jwt__ExpiryMinutes: "60"
+      Security__IpHashPepper: ${IP_HASH_PEPPER:?IP_HASH_PEPPER environment variable is required}
+      Valhalla__BaseUrl: http://valhalla:8002
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valhalla:
+        condition: service_healthy

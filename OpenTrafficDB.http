@@ -1,0 +1,6 @@
+@OpenTrafficDB_HostAddress = http://localhost:5015
+
+GET {{OpenTrafficDB_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
