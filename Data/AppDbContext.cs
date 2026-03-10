@@ -5,6 +5,7 @@ namespace OpenTrafficDB.Data;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
+    public DbSet<User> Users => Set<User>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<SpeedObservation> SpeedObservations => Set<SpeedObservation>();
     public DbSet<BlockedIp> BlockedIps => Set<BlockedIp>();
@@ -12,11 +13,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<User>(e =>
+        {
+            e.HasIndex(u => u.EmailHash).IsUnique();
+            e.HasIndex(u => u.VerificationToken).HasFilter("\"VerificationToken\" IS NOT NULL");
+            e.Property(u => u.Role).HasConversion<string>().HasDefaultValue(UserRole.User);
+        });
+
         modelBuilder.Entity<ApiKey>(e =>
         {
             e.HasIndex(k => k.KeyHash).IsUnique();
             e.HasIndex(k => k.KeyPrefix);
-            e.HasIndex(k => k.EmailHash).IsUnique();
+            e.HasOne(k => k.User)
+             .WithMany(u => u.ApiKeys)
+             .HasForeignKey(k => k.UserId)
+             .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<SpeedObservation>(e =>

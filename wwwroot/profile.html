@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile – OpenTrafficDB</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container navbar-inner">
+      <a href="/" class="navbar-brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        OpenTrafficDB
+      </a>
+      <ul class="navbar-nav" id="navbar-links"></ul>
+    </div>
+  </nav>
+
+  <div class="container" style="padding-top:32px;padding-bottom:64px;max-width:820px">
+    <div id="loading" style="text-align:center;padding:80px 0">
+      <div class="spinner"></div>
+    </div>
+
+    <div id="content" class="hidden">
+      <div class="page-header">
+        <h1>Profile</h1>
+        <p class="text-muted">Manage your display name and API keys</p>
+      </div>
+
+      <!-- Display name -->
+      <div class="card section">
+        <div class="card-title">Display Name</div>
+        <div id="name-alert" class="alert hidden"></div>
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label class="form-label" for="name-input">Name</label>
+            <input type="text" id="name-input" class="form-control" placeholder="Your display name" maxlength="100">
+          </div>
+          <button class="btn btn-primary" id="save-name-btn" onclick="saveName()">Save</button>
+        </div>
+        <p class="text-muted text-sm mt-1">Visible to admins and on your dashboard. Defaults to empty until set.</p>
+      </div>
+
+      <!-- Account info (read-only) -->
+      <div class="card section">
+        <div class="card-title">Account</div>
+        <div style="display:flex;flex-direction:column;gap:10px;font-size:0.875rem">
+          <div class="d-flex justify-between">
+            <span class="text-muted">Email</span>
+            <span id="acc-email" class="text-muted">—</span>
+          </div>
+          <div class="d-flex justify-between">
+            <span class="text-muted">Role</span>
+            <span id="acc-role">—</span>
+          </div>
+          <div class="d-flex justify-between">
+            <span class="text-muted">Contributions</span>
+            <span id="acc-contribs">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- API Keys -->
+      <div class="card section">
+        <div class="d-flex justify-between align-center mb-2">
+          <div class="card-title" style="margin-bottom:0">API Keys</div>
+          <button class="btn btn-primary btn-sm" onclick="toggleCreateKey()">+ New Key</button>
+        </div>
+
+        <p class="text-muted text-sm mb-2">
+          API keys are used to obtain IP-bound JWT tokens for machine/app access.
+          Use <code>POST /api/v1/auth/token</code> with your key to get a token.
+        </p>
+
+        <div id="create-key-form" class="hidden" style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px">
+          <div class="form-label">Key label (e.g. "Home PC", "Raspberry Pi")</div>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="new-key-label" class="form-control" placeholder="Default" maxlength="100" style="flex:1">
+            <button class="btn btn-primary btn-sm" onclick="createKey()">Create</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleCreateKey()">Cancel</button>
+          </div>
+        </div>
+
+        <div id="new-key-reveal" class="hidden" style="margin-bottom:14px">
+          <div class="alert alert-success">
+            New key created. <strong>Copy it now</strong> — it will not be shown again.
+          </div>
+          <div class="key-display">
+            <code id="revealed-key"></code>
+            <button class="copy-btn" id="copy-revealed">Copy</button>
+          </div>
+        </div>
+
+        <div id="key-alert" class="alert hidden"></div>
+
+        <div id="keys-list">
+          <div class="text-muted text-sm" style="text-align:center;padding:16px">Loading…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="container">
+      <p>OpenTrafficDB · <a href="/swagger" target="_blank">API Docs</a> · <a href="/">Home</a></p>
+    </div>
+  </footer>
+
+  <script type="module">
+    import { getSession, logout, web, initNavbar, roleBadge, fmtDate, fmtDateTime, showAlert, copyToClipboard, esc } from '/js/app.js';
+    window.logout = logout;
+
+    const session = await getSession();
+    if (!session) { window.location.href = '/'; throw new Error(); }
+
+    initNavbar(session, 'profile');
+
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('content').classList.remove('hidden');
+
+    // Fill account info
+    document.getElementById('name-input').value     = session.name || '';
+    document.getElementById('acc-email').textContent = session.email;
+    document.getElementById('acc-role').innerHTML   = roleBadge(session.role);
+    document.getElementById('acc-contribs').textContent = session.totalContributions.toLocaleString();
+
+    // ── Save name ──────────────────────────────────────────────────────────────
+    async function saveName() {
+      const name    = document.getElementById('name-input').value.trim();
+      const alertEl = document.getElementById('name-alert');
+      const btn     = document.getElementById('save-name-btn');
+
+      if (!name) { showAlert(alertEl, 'Please enter a display name.'); return; }
+
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      alertEl.classList.add('hidden');
+
+      const res = await web('PUT', '/me', { name });
+      btn.disabled = false;
+      btn.textContent = 'Save';
+
+      if (!res || !res.ok) { showAlert(alertEl, res?.data?.error || 'Failed to save name.'); return; }
+      showAlert(alertEl, 'Display name updated.', 'success');
+    }
+    window.saveName = saveName;
+
+    document.getElementById('name-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') saveName();
+    });
+
+    // ── Keys ───────────────────────────────────────────────────────────────────
+    async function loadKeys() {
+      const res = await web('GET', '/me/keys');
+      const container = document.getElementById('keys-list');
+      if (!res?.ok) { container.innerHTML = `<p class="text-danger text-sm">Failed to load keys.</p>`; return; }
+      const data = res.data;
+      if (!data.length) {
+        container.innerHTML = `<p class="text-muted text-sm" style="text-align:center;padding:16px">No API keys yet. Create one above.</p>`;
+        return;
+      }
+
+      container.innerHTML = `<div class="table-wrap"><table>
+        <thead><tr>
+          <th>Label</th><th>Status</th><th>Created</th><th>Last Used</th><th></th>
+        </tr></thead>
+        <tbody>${data.map(k => `
+          <tr id="key-row-${k.id}">
+            <td>
+              <span id="label-text-${k.id}" style="font-weight:500">${esc(k.label)}</span>
+              <input id="label-input-${k.id}" class="form-control hidden" style="max-width:160px;padding:4px 8px;font-size:0.85rem" value="${esc(k.label)}" maxlength="100">
+            </td>
+            <td>${k.isActive ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Revoked</span>'}</td>
+            <td class="text-muted">${fmtDate(k.createdAt)}</td>
+            <td class="text-muted">${fmtDateTime(k.lastUsedAt)}</td>
+            <td>
+              <div style="display:flex;gap:6px;justify-content:flex-end">
+                ${k.isActive ? `
+                  <button class="btn btn-secondary btn-sm" id="rename-btn-${k.id}" onclick="startRename(${k.id})">Rename</button>
+                  <button class="btn btn-secondary btn-sm hidden" id="save-rename-btn-${k.id}" onclick="saveRename(${k.id})">Save</button>
+                  <button class="btn btn-secondary btn-sm hidden" id="cancel-rename-btn-${k.id}" onclick="cancelRename(${k.id})">Cancel</button>
+                  <button class="btn btn-danger btn-sm" onclick="revokeKey(${k.id}, '${esc(k.label)}')">Revoke</button>
+                ` : ''}
+              </div>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>`;
+    }
+
+    function toggleCreateKey() {
+      const form = document.getElementById('create-key-form');
+      const hidden = form.classList.contains('hidden');
+      form.classList.toggle('hidden', !hidden);
+      document.getElementById('new-key-reveal').classList.add('hidden');
+      if (hidden) document.getElementById('new-key-label').focus();
+      else document.getElementById('new-key-label').value = '';
+    }
+    window.toggleCreateKey = toggleCreateKey;
+
+    async function createKey() {
+      const label   = document.getElementById('new-key-label').value.trim() || 'Default';
+      const alertEl = document.getElementById('key-alert');
+      alertEl.classList.add('hidden');
+
+      const res = await web('POST', '/me/keys', { label });
+      if (!res?.ok) {
+        showAlert(alertEl, res?.data?.error || 'Failed to create key.');
+        return;
+      }
+
+      document.getElementById('create-key-form').classList.add('hidden');
+      document.getElementById('new-key-label').value = '';
+
+      const reveal  = document.getElementById('new-key-reveal');
+      const keyCode = document.getElementById('revealed-key');
+      const copyBtn = document.getElementById('copy-revealed');
+      keyCode.textContent = res.data.apiKey;
+      reveal.classList.remove('hidden');
+      copyBtn.onclick = () => copyToClipboard(res.data.apiKey, copyBtn);
+
+      loadKeys();
+    }
+    window.createKey = createKey;
+
+    document.getElementById('new-key-label').addEventListener('keydown', e => {
+      if (e.key === 'Enter') createKey();
+    });
+
+    async function revokeKey(id, label) {
+      if (!confirm(`Revoke key "${label}"? This cannot be undone.`)) return;
+      const res = await web('DELETE', `/me/keys/${id}`);
+      if (!res?.ok) { alert(res?.data?.error || 'Failed to revoke key.'); return; }
+      loadKeys();
+    }
+    window.revokeKey = revokeKey;
+
+    function startRename(id) {
+      document.getElementById(`label-text-${id}`).classList.add('hidden');
+      document.getElementById(`label-input-${id}`).classList.remove('hidden');
+      document.getElementById(`rename-btn-${id}`).classList.add('hidden');
+      document.getElementById(`save-rename-btn-${id}`).classList.remove('hidden');
+      document.getElementById(`cancel-rename-btn-${id}`).classList.remove('hidden');
+      document.getElementById(`label-input-${id}`).focus();
+    }
+    window.startRename = startRename;
+
+    function cancelRename(id) {
+      document.getElementById(`label-text-${id}`).classList.remove('hidden');
+      document.getElementById(`label-input-${id}`).classList.add('hidden');
+      document.getElementById(`rename-btn-${id}`).classList.remove('hidden');
+      document.getElementById(`save-rename-btn-${id}`).classList.add('hidden');
+      document.getElementById(`cancel-rename-btn-${id}`).classList.add('hidden');
+    }
+    window.cancelRename = cancelRename;
+
+    async function saveRename(id) {
+      const input = document.getElementById(`label-input-${id}`);
+      const label = input.value.trim();
+      if (!label) { alert('Label cannot be empty.'); return; }
+
+      const res = await web('PUT', `/me/keys/${id}/label`, { label });
+      if (!res?.ok) { alert(res?.data?.error || 'Failed to update label.'); return; }
+      loadKeys();
+    }
+    window.saveRename = saveRename;
+
+    loadKeys();
+  </script>
+</body>
+</html>

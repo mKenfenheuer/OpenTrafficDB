@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenTrafficDB – Community Traffic Speed Database</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container navbar-inner">
+      <a href="/" class="navbar-brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        OpenTrafficDB
+      </a>
+      <ul class="navbar-nav" id="navbar-links"></ul>
+    </div>
+  </nav>
+
+  <div class="container">
+    <!-- Hero -->
+    <section class="hero">
+      <div class="hero-badge">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
+        Open-source · Non-commercial
+      </div>
+      <h1>Community-driven<br><span>traffic speed data</span></h1>
+      <p>Submit anonymized GPS observations. Get Valhalla-compatible predicted traffic exports. Free for everyone.</p>
+      <div class="hero-actions">
+        <a href="/register.html" class="btn btn-primary">Create Account</a>
+        <a href="/swagger" class="btn btn-secondary" target="_blank">API Docs</a>
+      </div>
+    </section>
+
+    <!-- Verified / error banners -->
+    <div id="banner-verified" class="alert alert-success hidden container-sm" style="margin:0 auto 24px">
+      Email verified! Your account is now active — sign in below.
+    </div>
+    <div id="banner-invalid" class="alert alert-error hidden container-sm" style="margin:0 auto 24px">
+      Verification link is invalid or has expired. Please register again or contact support.
+    </div>
+
+    <!-- Sign-in card (shown when not logged in) -->
+    <div id="auth-panel" class="login-section container-sm hidden" style="margin:0 auto 60px">
+      <div class="login-tabs">
+        <button class="login-tab active" onclick="showTab('login')">Sign in</button>
+        <button class="login-tab" onclick="showTab('roles')">Roles</button>
+      </div>
+
+      <div id="tab-login">
+        <p class="text-muted text-sm mb-2">
+          Don't have an account? <a href="/register.html">Register here</a>.
+        </p>
+        <div id="login-alert" class="alert hidden"></div>
+        <div class="form-group">
+          <label class="form-label" for="email-input">Email</label>
+          <input type="email" id="email-input" class="form-control" placeholder="you@example.com" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="pass-input">Password</label>
+          <input type="password" id="pass-input" class="form-control" placeholder="Your password" autocomplete="current-password">
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="remember-me" style="accent-color:var(--accent)">
+          <label for="remember-me" style="font-size:0.85rem;color:var(--text-muted);cursor:pointer">Remember me (30 days)</label>
+        </div>
+        <button class="btn btn-primary btn-block" id="login-btn" onclick="doLogin()">Sign in</button>
+      </div>
+
+      <div id="tab-roles" class="hidden">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div>
+            <span class="badge badge-user">User</span>
+            <p class="text-sm text-muted mt-1">Default role after registration. Can submit observations and read live traffic.</p>
+          </div>
+          <div>
+            <span class="badge badge-contributor">Contributor</span>
+            <p class="text-sm text-muted mt-1">Auto-promoted after 100 valid observations. Higher rate limits.</p>
+          </div>
+          <div>
+            <span class="badge badge-admin">Admin</span>
+            <p class="text-sm text-muted mt-1">Manually assigned. Full access to user management, IP blocking, and service statistics.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Already logged in panel -->
+    <div id="logged-in-panel" class="hidden" style="text-align:center;margin-bottom:60px">
+      <p class="text-muted mb-2">You're signed in as <strong id="logged-in-name"></strong></p>
+      <a href="/dashboard.html" class="btn btn-primary">Go to Dashboard</a>
+      <button class="btn btn-secondary" onclick="logout()" style="margin-left:8px">Sign out</button>
+    </div>
+
+    <!-- How it works -->
+    <div style="margin-bottom:16px">
+      <h2 style="font-size:1.25rem;font-weight:700;margin-bottom:24px;text-align:center">How it works</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div><h4>Register</h4><p>Create a free account with your email and password. Verify your email to activate.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div><h4>Create an API key</h4><p>Log in and go to your profile to create one or more named API keys (e.g. per device).</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div><h4>Get a JWT</h4><p>Exchange your API key for a short-lived JWT. The token is bound to your IP for security.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div><h4>Submit & export</h4><p>POST GPS observations. After 100 valid ones you're a Contributor. Download Valhalla traffic CSV any time.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Features -->
+    <div class="features">
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+        <h3>Privacy first</h3>
+        <p>IPs and emails are SHA-256 hashed. Raw values are never stored. Observations are anonymized.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+        <h3>Live traffic</h3>
+        <p>Query real-time speeds within any bounding box. Observations from the last 60 minutes.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+        <h3>Valhalla export</h3>
+        <p>2016-bucket predicted traffic CSV, ready for <code>valhalla_add_predicted_traffic</code>.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg></div>
+        <h3>Contributor rank</h3>
+        <p>Submit 100+ valid observations to be auto-promoted to Contributor with higher rate limits.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+        <h3>Server-side matching</h3>
+        <p>Just submit lat/lon/speed — map-matching to Valhalla edges happens automatically.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+        <h3>Batch ingest</h3>
+        <p>Submit up to 100 observations in a single API call. Rate limits are per-IP and per-key.</p>
+      </div>
+    </div>
+
+    <!-- Quick start -->
+    <div class="card mb-3" style="margin-bottom:60px">
+      <div class="card-title">Quick start (machine access)</div>
+      <div class="code-block"><span class="code-comment"># 1. Register at /register.html, verify email, then create an API key at /profile.html</span>
+
+<span class="code-comment"># 2. Get a JWT (bound to your current IP)</span>
+<span class="code-url">curl -X POST /api/v1/auth/token</span> \
+  -H <span class="code-val">'Content-Type: application/json'</span> \
+  -d <span class="code-val">'{"apiKey":"&lt;your-api-key&gt;"}'</span>
+
+<span class="code-comment"># 3. Submit an observation</span>
+<span class="code-url">curl -X POST /api/v1/speed</span> \
+  -H <span class="code-val">'Authorization: Bearer &lt;token&gt;'</span> \
+  -H <span class="code-val">'Content-Type: application/json'</span> \
+  -d <span class="code-val">'{"latitude":48.8566,"longitude":2.3522,"speedMs":13.9,"tripId":"trip-1","timestamp":"2024-01-01T12:00:00Z"}'</span>
+
+<span class="code-comment"># 4. Export predicted traffic CSV for Valhalla</span>
+<span class="code-url">curl /api/v1/traffic/predicted/csv</span> \
+  -H <span class="code-val">'Authorization: Bearer &lt;token&gt;'</span> -o traffic.csv
+<span class="code-url">valhalla_add_predicted_traffic</span> --config valhalla.json -t traffic.csv</div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="container">
+      <p>OpenTrafficDB · Non-Commercial Community License · <a href="/swagger">API Docs</a> · <a href="https://github.com/valhalla/valhalla" target="_blank">Valhalla</a></p>
+    </div>
+  </footer>
+
+  <script type="module">
+    import { getSession, logout, initNavbar, showAlert, esc } from '/js/app.js';
+    window.logout = logout;
+
+    function showTab(name) {
+      document.querySelectorAll('.login-tab').forEach((t, i) => {
+        t.classList.toggle('active', (i === 0 && name === 'login') || (i === 1 && name === 'roles'));
+      });
+      document.getElementById('tab-login').classList.toggle('hidden', name !== 'login');
+      document.getElementById('tab-roles').classList.toggle('hidden', name !== 'roles');
+    }
+    window.showTab = showTab;
+
+    // Verification banners
+    const params = new URLSearchParams(location.search);
+    if (params.get('verified') === '1')
+      document.getElementById('banner-verified').classList.remove('hidden');
+    else if (params.get('verified') === 'invalid')
+      document.getElementById('banner-invalid').classList.remove('hidden');
+
+    async function doLogin() {
+      const email    = document.getElementById('email-input').value.trim();
+      const password = document.getElementById('pass-input').value;
+      const remember = document.getElementById('remember-me').checked;
+      const alertEl  = document.getElementById('login-alert');
+      const btn      = document.getElementById('login-btn');
+
+      if (!email || !password) { showAlert(alertEl, 'Please enter your email and password.'); return; }
+
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+      alertEl.classList.add('hidden');
+
+      const res = await fetch('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, rememberMe: remember }),
+        credentials: 'same-origin'
+      });
+      const data = await res.json().catch(() => ({}));
+
+      btn.disabled = false;
+      btn.textContent = 'Sign in';
+
+      if (!res.ok) { showAlert(alertEl, data?.error || 'Login failed.'); return; }
+      window.location.href = '/dashboard.html';
+    }
+    window.doLogin = doLogin;
+
+    document.getElementById('pass-input')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+
+    // Check session
+    const session = await getSession();
+    initNavbar(session);
+
+    if (session) {
+      document.getElementById('auth-panel').classList.add('hidden');
+      document.getElementById('logged-in-panel').classList.remove('hidden');
+      document.getElementById('logged-in-name').textContent = session.name || session.email;
+    } else {
+      document.getElementById('auth-panel').classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin – OpenTrafficDB</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container navbar-inner">
+      <a href="/" class="navbar-brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        OpenTrafficDB
+      </a>
+      <ul class="navbar-nav" id="navbar-links"></ul>
+    </div>
+  </nav>
+
+  <div class="container" style="padding-top:32px;padding-bottom:64px">
+    <div id="loading" style="text-align:center;padding:80px 0">
+      <div class="spinner"></div>
+    </div>
+
+    <div id="content" class="hidden">
+      <div class="page-header">
+        <h1>Admin Panel</h1>
+        <p class="text-muted">Service statistics, user management, and IP controls</p>
+      </div>
+
+      <!-- Stats -->
+      <div class="section">
+        <div class="section-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Statistics
+        </div>
+        <div class="stats-grid" id="stats-grid"></div>
+      </div>
+
+      <!-- Users -->
+      <div class="section">
+        <div class="section-title d-flex justify-between align-center">
+          <span style="display:flex;align-items:center;gap:8px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            Users
+          </span>
+          <button class="btn btn-secondary btn-sm" onclick="loadUsers()">Refresh</button>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th><th>Name</th><th>Role</th><th>Contributions</th>
+                  <th>Keys</th><th>Joined</th><th>Status</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody">
+                <tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Keys drawer -->
+      <div id="keys-drawer" class="hidden section">
+        <div class="section-title d-flex justify-between align-center">
+          <span id="keys-drawer-title">API Keys</span>
+          <button class="btn btn-secondary btn-sm" onclick="closeKeysDrawer()">Close</button>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>ID</th><th>Label</th><th>Created</th><th>Last used</th><th>Status</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="keys-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Blocked IPs -->
+      <div class="section">
+        <div class="section-title d-flex justify-between align-center">
+          <span style="display:flex;align-items:center;gap:8px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+            Blocked IPs
+          </span>
+          <button class="btn btn-secondary btn-sm" onclick="loadBlocked()">Refresh</button>
+        </div>
+
+        <div class="card mb-2">
+          <div class="card-title" style="font-size:0.85rem">Block an IP</div>
+          <div id="block-alert" class="alert hidden"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="text"           id="block-ip"      class="form-control" placeholder="IP address"  style="max-width:200px">
+            <input type="text"           id="block-reason"  class="form-control" placeholder="Reason"      style="flex:1;min-width:160px">
+            <input type="datetime-local" id="block-expires" class="form-control"                           style="max-width:200px">
+            <button class="btn btn-danger" onclick="blockIp()">Block</button>
+          </div>
+          <p class="text-sm text-muted mt-1">Leave expiry blank for a permanent block.</p>
+        </div>
+
+        <div class="card" style="padding:0;overflow:hidden">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th><th>IP Hash (16 chars)</th><th>Reason</th>
+                  <th>Type</th><th>Blocked at</th><th>Expires</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="blocked-tbody">
+                <tr><td colspan="7" class="text-muted" style="text-align:center;padding:24px">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="container">
+      <p>OpenTrafficDB Admin · <a href="/swagger" target="_blank">API Docs</a> · <a href="/dashboard.html">Dashboard</a></p>
+    </div>
+  </footer>
+
+  <script type="module">
+    import { getSession, logout, web, roleBadge, fmtDate, fmtDateTime, showAlert, esc } from '/js/app.js';
+    import { initNavbar } from '/js/app.js';
+    window.logout = logout;
+
+    const session = await getSession();
+    if (!session)              { window.location.href = '/';             throw new Error(); }
+    if (session.role !== 'Admin') { window.location.href = '/dashboard.html'; throw new Error(); }
+
+    initNavbar(session, 'admin');
+
+    // ── Stats ──────────────────────────────────────────────────────────────────
+
+    async function loadStats() {
+      const res = await web('GET', '/admin/stats');
+      if (!res?.ok) return;
+      const d = res.data;
+
+      document.getElementById('stats-grid').innerHTML = [
+        stat('Total observations', d.totalObservations.toLocaleString(), 'accent'),
+        stat('Last 24 hours',      d.observationsLast24h.toLocaleString(), 'success'),
+        stat('Total users',        d.totalUsers.toLocaleString()),
+        stat('Users',              d.userCount.toLocaleString()),
+        stat('Contributors',       d.contributorCount.toLocaleString(), 'contributor'),
+        stat('Admins',             d.adminCount.toLocaleString(), 'admin'),
+        stat('Active keys',        d.activeApiKeys.toLocaleString(), 'accent'),
+        stat('Aggregated edges',   d.aggregatedEdges.toLocaleString()),
+        stat('Blocked IPs',        d.blockedIps.toLocaleString(), d.blockedIps > 0 ? 'danger' : ''),
+      ].join('');
+
+      document.getElementById('loading').classList.add('hidden');
+      document.getElementById('content').classList.remove('hidden');
+    }
+
+    function stat(label, value, cls = '') {
+      return `<div class="stat-card"><div class="stat-label">${label}</div><div class="stat-value ${cls}">${value}</div></div>`;
+    }
+
+    // ── Users ──────────────────────────────────────────────────────────────────
+
+    window.loadUsers = async function () {
+      const tbody = document.getElementById('users-tbody');
+      tbody.innerHTML = empty(8, 'Loading…');
+      closeKeysDrawer();
+
+      const res = await web('GET', '/admin/users');
+      if (!res?.ok) { tbody.innerHTML = err(8, 'Failed to load users.'); return; }
+      const data = res.data;
+      if (!data.length) { tbody.innerHTML = empty(8, 'No users found.'); return; }
+
+      tbody.innerHTML = data.map(u => `
+        <tr id="user-row-${u.id}">
+          <td class="text-muted">#${u.id}</td>
+          <td style="font-weight:500">${esc(u.name) || '<span class="text-muted">(no name)</span>'}</td>
+          <td>${roleBadge(u.role)}</td>
+          <td>${u.totalContributions.toLocaleString()}</td>
+          <td>
+            <button class="btn btn-secondary btn-sm" onclick="showKeys(${u.id}, '${esc(u.name || u.id)}')">
+              ${u.keyCount} key${u.keyCount !== 1 ? 's' : ''}
+            </button>
+          </td>
+          <td class="text-muted">${fmtDate(u.createdAt)}</td>
+          <td>${u.isActive
+            ? '<span class="badge badge-active">Active</span>'
+            : '<span class="badge badge-inactive">Inactive</span>'}</td>
+          <td>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <select class="form-control" style="width:auto;padding:3px 8px;font-size:0.8rem" id="role-sel-${u.id}">
+                <option value="User"        ${u.role === 'User'        ? 'selected' : ''}>User</option>
+                <option value="Contributor" ${u.role === 'Contributor' ? 'selected' : ''}>Contributor</option>
+                <option value="Admin"       ${u.role === 'Admin'       ? 'selected' : ''}>Admin</option>
+              </select>
+              <button class="btn btn-secondary btn-sm" onclick="setRole(${u.id})">Set</button>
+              ${u.isActive
+                ? `<button class="btn btn-danger btn-sm" onclick="deactivateUser(${u.id})">Deactivate</button>`
+                : `<button class="btn btn-success btn-sm" onclick="activateUser(${u.id})">Activate</button>`}
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    };
+
+    window.setRole = async function (id) {
+      const role = document.getElementById(`role-sel-${id}`).value;
+      const res  = await web('PUT', `/admin/users/${id}/role`, { role });
+      if (!res?.ok) { alert(res?.data?.error || 'Failed to set role.'); return; }
+      loadUsers();
+    };
+
+    window.deactivateUser = async function (id) {
+      if (!confirm('Deactivate this account? They will not be able to log in.')) return;
+      const res = await web('DELETE', `/admin/users/${id}`);
+      if (!res?.ok) { alert(res?.data?.error || 'Failed.'); return; }
+      loadUsers();
+    };
+
+    window.activateUser = async function (id) {
+      const res = await web('POST', `/admin/users/${id}/activate`);
+      if (res?.ok) loadUsers();
+    };
+
+    // ── Keys drawer ────────────────────────────────────────────────────────────
+
+    window.showKeys = async function (userId, name) {
+      const drawer = document.getElementById('keys-drawer');
+      const tbody  = document.getElementById('keys-tbody');
+      document.getElementById('keys-drawer-title').textContent = `API Keys — ${name}`;
+      tbody.innerHTML = empty(6, 'Loading…');
+      drawer.classList.remove('hidden');
+      drawer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      const res = await web('GET', `/admin/users/${userId}/keys`);
+      if (!res?.ok) { tbody.innerHTML = err(6, 'Failed.'); return; }
+      const data = res.data;
+      if (!data.length) { tbody.innerHTML = empty(6, 'No keys.'); return; }
+
+      tbody.innerHTML = data.map(k => `
+        <tr>
+          <td class="text-muted">#${k.id}</td>
+          <td>${esc(k.label) || '—'}</td>
+          <td class="text-muted">${fmtDate(k.createdAt)}</td>
+          <td class="text-muted">${fmtDateTime(k.lastUsedAt)}</td>
+          <td>${k.isActive
+            ? '<span class="badge badge-active">Active</span>'
+            : '<span class="badge badge-inactive">Revoked</span>'}</td>
+          <td>${k.isActive
+            ? `<button class="btn btn-danger btn-sm" onclick="revokeKey(${k.id},${userId},'${esc(name)}')">Revoke</button>`
+            : '—'}</td>
+        </tr>
+      `).join('');
+    };
+
+    window.closeKeysDrawer = function () {
+      document.getElementById('keys-drawer').classList.add('hidden');
+    };
+
+    window.revokeKey = async function (keyId, userId, name) {
+      if (!confirm('Revoke this API key?')) return;
+      const res = await web('DELETE', `/admin/keys/${keyId}`);
+      if (res?.ok) showKeys(userId, name);
+    };
+
+    // ── Blocked IPs ────────────────────────────────────────────────────────────
+
+    window.loadBlocked = async function () {
+      const tbody = document.getElementById('blocked-tbody');
+      tbody.innerHTML = empty(7, 'Loading…');
+
+      const res = await web('GET', '/admin/blocked-ips');
+      if (!res?.ok) { tbody.innerHTML = err(7, 'Failed to load.'); return; }
+      const data = res.data;
+      if (!data.length) { tbody.innerHTML = empty(7, 'No blocked IPs.'); return; }
+
+      tbody.innerHTML = data.map(b => `
+        <tr>
+          <td class="text-muted">#${b.id}</td>
+          <td><code style="font-size:0.75rem;color:var(--text-muted)">${b.ipHash.substring(0,16)}…</code></td>
+          <td>${esc(b.reason)}</td>
+          <td>${b.isManual
+            ? '<span class="badge badge-admin">Manual</span>'
+            : '<span class="badge badge-user">Auto</span>'}</td>
+          <td class="text-muted">${fmtDateTime(b.blockedAt)}</td>
+          <td class="text-muted">${b.expiresAt ? fmtDateTime(b.expiresAt) : 'Permanent'}</td>
+          <td><button class="btn btn-secondary btn-sm" onclick="unblock(${b.id})">Unblock</button></td>
+        </tr>
+      `).join('');
+    };
+
+    window.blockIp = async function () {
+      const ip      = document.getElementById('block-ip').value.trim();
+      const reason  = document.getElementById('block-reason').value.trim();
+      const expires = document.getElementById('block-expires').value;
+      const alertEl = document.getElementById('block-alert');
+      if (!ip || !reason) { showAlert(alertEl, 'IP and reason are required.'); return; }
+      alertEl.classList.add('hidden');
+
+      const res = await web('POST', '/admin/block-ip', {
+        ip, reason, expiresAt: expires ? new Date(expires).toISOString() : null
+      });
+      if (!res?.ok) { showAlert(alertEl, res?.data?.error || 'Failed to block IP.'); return; }
+
+      document.getElementById('block-ip').value = '';
+      document.getElementById('block-reason').value = '';
+      document.getElementById('block-expires').value = '';
+      loadBlocked();
+    };
+
+    window.unblock = async function (id) {
+      const res = await web('DELETE', `/admin/blocked-ips/${id}`);
+      if (res?.ok) loadBlocked();
+    };
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    function err(cols, msg) {
+      return `<tr><td colspan="${cols}" class="text-danger" style="text-align:center;padding:16px">${msg}</td></tr>`;
+    }
+    function empty(cols, msg) {
+      return `<tr><td colspan="${cols}" class="text-muted" style="text-align:center;padding:24px">${msg}</td></tr>`;
+    }
+
+    Promise.all([loadStats(), loadUsers(), loadBlocked()]);
+  </script>
+</body>
+</html>

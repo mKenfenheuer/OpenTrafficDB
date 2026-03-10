@@ -34,7 +34,14 @@ public class JwtService(IConfiguration config)
     public string HashIp(string ip) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ip + _pepper))).ToLowerInvariant();
 
-    public (string token, DateTime expiresAt) GenerateJwt(ApiKey apiKey)
+    /// <summary>
+    /// Generate a JWT for a user authenticated via a specific API key.
+    /// The token is bound to the caller's IP address and becomes invalid if the IP changes.
+    /// </summary>
+    /// <param name="user">The authenticated user (sub claim = User.Id).</param>
+    /// <param name="apiKeyId">The key used to authenticate (for per-key rate limiting).</param>
+    /// <param name="ipHash">Pre-hashed IP of the caller.</param>
+    public (string token, DateTime expiresAt) GenerateJwt(User user, int apiKeyId, string ipHash)
     {
         var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_key));
         var credentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
@@ -42,11 +49,12 @@ public class JwtService(IConfiguration config)
 
         var claims = new[]
         {
-            new Claim(JwtRegisteredClaimNames.Sub, apiKey.Id.ToString()),
-            new Claim(JwtRegisteredClaimNames.Name, apiKey.Name),
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Name, user.Name),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new Claim("keyHash", apiKey.KeyHash),
-            new Claim("isAdmin", apiKey.IsAdmin ? "true" : "false"),
+            new Claim("role", user.Role.ToString()),
+            new Claim("keyId", apiKeyId.ToString()),
+            new Claim("ipHash", ipHash),
         };
 
         var token = new JwtSecurityToken(

@@ -1,21 +1,23 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OpenTrafficDB.Data;
+using OpenTrafficDB.Models;
 using OpenTrafficDB.Models.DTOs;
 using OpenTrafficDB.Services;
 
 namespace OpenTrafficDB.Controllers;
 
-/// <summary>
-/// Administrative endpoints. Requires an admin JWT (isAdmin claim = true).
-/// </summary>
+/// <summary>Administrative endpoints. Requires Admin role.</summary>
 [ApiController]
 [Route("api/v1/admin")]
 [Authorize(Policy = "AdminOnly")]
 [Produces("application/json")]
 public class AdminController(AppDbContext db, AbuseDetectionService abuseDetection, JwtService jwtService) : ControllerBase
 {
+    // ── Stats ─────────────────────────────────────────────────────────────────
+
     /// <summary>Get service-wide statistics.</summary>
     [HttpGet("stats")]
     [ProducesResponseType(typeof(AdminStatsResponse), StatusCodes.Status200OK)]
@@ -28,11 +30,136 @@ public class AdminController(AppDbContext db, AbuseDetectionService abuseDetecti
         {
             TotalObservations = await db.SpeedObservations.LongCountAsync(),
             ObservationsLast24h = await db.SpeedObservations.LongCountAsync(o => o.CreatedAt >= yesterday),
+            TotalUsers = await db.Users.CountAsync(),
+            UserCount = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.User),
+            ContributorCount = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.Contributor),
+            AdminCount = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.Admin),
             ActiveApiKeys = await db.ApiKeys.CountAsync(k => k.IsActive),
             AggregatedEdges = await db.RoadSpeedAggregates.Select(a => a.ValhallaEdgeId).Distinct().CountAsync(),
             BlockedIps = await db.BlockedIps.CountAsync(b => b.ExpiresAt == null || b.ExpiresAt > now)
         });
     }
+
+    // ── Users ─────────────────────────────────────────────────────────────────
+
+    /// <summary>List all user accounts.</summary>
+    [HttpGet("users")]
+    [ProducesResponseType(typeof(IEnumerable<AdminUserResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetUsers()
+    {
+        var users = await db.Users
+            .OrderByDescending(u => u.CreatedAt)
+            .Select(u => new AdminUserResponse
+            {
+                Id = u.Id,
+                Name = u.Name,
+                Role = u.Role.ToString(),
+                IsActive = u.IsActive,
+                TotalContributions = u.TotalContributions,
+                CreatedAt = u.CreatedAt,
+                KeyCount = u.ApiKeys.Count(k => k.IsActive)
+            })
+            .ToListAsync();
+
+        return Ok(users);
+    }
+
+    /// <summary>List all API keys for a specific user.</summary>
+    [HttpGet("users/{userId:int}/keys")]
+    [ProducesResponseType(typeof(IEnumerable<AdminKeyResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetUserKeys(int userId)
+    {
+        if (!await db.Users.AnyAsync(u => u.Id == userId)) return NotFound();
+
+        var keys = await db.ApiKeys
+            .Where(k => k.UserId == userId)
+            .OrderByDescending(k => k.CreatedAt)
+            .Select(k => new AdminKeyResponse
+            {
+                Id = k.Id,
+                Label = k.Label,
+                IsActive = k.IsActive,
+                CreatedAt = k.CreatedAt,
+                LastUsedAt = k.LastUsedAt
+            })
+            .ToListAsync();
+
+        return Ok(keys);
+    }
+
+    /// <summary>Change the role of a user. Admins cannot demote themselves.</summary>
+    [HttpPut("users/{userId:int}/role")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SetRole(int userId, [FromBody] SetRoleRequest request)
+    {
+        if (!Enum.TryParse<UserRole>(request.Role, ignoreCase: true, out var newRole))
+            return BadRequest(new { error = $"Invalid role '{request.Role}'. Valid values: User, Contributor, Admin." });
+
+        var user = await db.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+
+        var callerId = int.Parse(User.FindFirstValue("sub") ?? "0");
+        if (user.Id == callerId && user.Role == UserRole.Admin && newRole != UserRole.Admin)
+            return BadRequest(new { error = "Admins cannot demote themselves." });
+
+        user.Role = newRole;
+        await db.SaveChangesAsync();
+        return Ok(new { message = $"Role for '{user.Name}' set to {newRole}." });
+    }
+
+    /// <summary>Deactivate a user account (also prevents token issuance for all their keys).</summary>
+    [HttpDelete("users/{userId:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeactivateUser(int userId)
+    {
+        var callerId = int.Parse(User.FindFirstValue("sub") ?? "0");
+        if (userId == callerId)
+            return BadRequest(new { error = "You cannot deactivate your own account." });
+
+        var user = await db.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+
+        user.IsActive = false;
+        await db.SaveChangesAsync();
+        return Ok(new { message = $"Account for '{user.Name}' deactivated." });
+    }
+
+    /// <summary>Reactivate a previously deactivated user account.</summary>
+    [HttpPost("users/{userId:int}/activate")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ActivateUser(int userId)
+    {
+        var user = await db.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+
+        user.IsActive = true;
+        await db.SaveChangesAsync();
+        return Ok(new { message = $"Account for '{user.Name}' reactivated." });
+    }
+
+    // ── API Keys ──────────────────────────────────────────────────────────────
+
+    /// <summary>Deactivate a specific API key.</summary>
+    [HttpDelete("keys/{keyId:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeactivateKey(int keyId)
+    {
+        var key = await db.ApiKeys.Include(k => k.User).FirstOrDefaultAsync(k => k.Id == keyId);
+        if (key == null) return NotFound();
+
+        key.IsActive = false;
+        await db.SaveChangesAsync();
+        return Ok(new { message = $"Key '{key.Label}' for '{key.User.Name}' deactivated." });
+    }
+
+    // ── Blocked IPs ───────────────────────────────────────────────────────────
 
     /// <summary>List all blocked IP hashes (raw IPs are never stored).</summary>
     [HttpGet("blocked-ips")]
@@ -43,15 +170,7 @@ public class AdminController(AppDbContext db, AbuseDetectionService abuseDetecti
         var blocked = await db.BlockedIps
             .Where(b => b.ExpiresAt == null || b.ExpiresAt > now)
             .OrderByDescending(b => b.BlockedAt)
-            .Select(b => new
-            {
-                b.Id,
-                b.IpHash,
-                b.Reason,
-                b.IsManual,
-                b.BlockedAt,
-                b.ExpiresAt
-            })
+            .Select(b => new { b.Id, b.IpHash, b.Reason, b.IsManual, b.BlockedAt, b.ExpiresAt })
             .ToListAsync();
 
         return Ok(blocked);
@@ -84,41 +203,5 @@ public class AdminController(AppDbContext db, AbuseDetectionService abuseDetecti
 
         await abuseDetection.UnblockAsync(id);
         return Ok(new { message = "IP unblocked." });
-    }
-
-    /// <summary>List all registered API keys (hashed — raw keys are never stored).</summary>
-    [HttpGet("api-keys")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetApiKeys()
-    {
-        var keys = await db.ApiKeys
-            .OrderByDescending(k => k.CreatedAt)
-            .Select(k => new
-            {
-                k.Id,
-                k.Name,
-                k.IsActive,
-                k.IsAdmin,
-                k.CreatedAt,
-                k.LastUsedAt,
-                k.TotalContributions
-            })
-            .ToListAsync();
-
-        return Ok(keys);
-    }
-
-    /// <summary>Deactivate an API key.</summary>
-    [HttpDelete("api-keys/{id:int}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> DeactivateKey(int id)
-    {
-        var key = await db.ApiKeys.FindAsync(id);
-        if (key == null) return NotFound();
-
-        key.IsActive = false;
-        await db.SaveChangesAsync();
-        return Ok(new { message = $"API key for '{key.Name}' deactivated." });
     }
 }

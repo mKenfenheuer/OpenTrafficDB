@@ -60,7 +60,37 @@ public class AdminStatsResponse
 {
     public long TotalObservations { get; set; }
     public long ObservationsLast24h { get; set; }
+    public int TotalUsers { get; set; }
+    public int UserCount { get; set; }
+    public int ContributorCount { get; set; }
+    public int AdminCount { get; set; }
     public int ActiveApiKeys { get; set; }
     public int AggregatedEdges { get; set; }
     public int BlockedIps { get; set; }
+}
+
+public class AdminUserResponse
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
+    public long TotalContributions { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public int KeyCount { get; set; }
+}
+
+public class AdminKeyResponse
+{
+    public int Id { get; set; }
+    public string Label { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? LastUsedAt { get; set; }
+}
+
+public class SetRoleRequest
+{
+    [Required]
+    public string Role { get; set; } = string.Empty;
 }

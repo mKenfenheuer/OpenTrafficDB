@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OpenTrafficDB.Models.DTOs;
@@ -11,7 +10,7 @@ namespace OpenTrafficDB.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/v1/traffic")]
-[Authorize]
+[Authorize(AuthenticationSchemes = ApiKeyAuthenticationHandler.SchemeName)]
 [Produces("application/json")]
 public class TrafficController(
     TrafficAggregationService aggregation,
@@ -31,8 +30,8 @@ public class TrafficController(
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> GetPredictedCsv(CancellationToken ct)
     {
-        var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        var keyId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+        var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var keyId = User.FindFirstValue("keyId") ?? string.Empty;
 
         if (!abuseDetection.CheckReadRate(ip, keyId))
             return StatusCode(429, new { error = "Rate limit exceeded for data export." });
@@ -55,8 +54,8 @@ public class TrafficController(
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> GetLiveSpeeds([FromQuery] LiveTrafficQuery query, CancellationToken ct)
     {
-        var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        var keyId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+        var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var keyId = User.FindFirstValue("keyId") ?? string.Empty;
 
         if (!abuseDetection.CheckReadRate(ip, keyId))
             return StatusCode(429, new { error = "Rate limit exceeded." });
