@@ -66,6 +66,18 @@ namespace OpenTrafficDB.Migrations
                 columns: new[] { "OsmWayId", "OsmStartNodeId", "OsmEndNodeId" },
                 filter: "\"OsmWayId\" IS NOT NULL");
 
+            // Remove duplicate rows that would violate the new unique constraint,
+            // keeping the row with the highest SampleCount for each key.
+            migrationBuilder.Sql("""
+                DELETE FROM "EdgeSpeedAggregates" e
+                WHERE "Id" NOT IN (
+                    SELECT DISTINCT ON ("OsmWayId", "OsmStartNodeId", "OsmEndNodeId", "DayOfWeek", "FiveMinuteBucket")
+                        "Id"
+                    FROM "EdgeSpeedAggregates"
+                    ORDER BY "OsmWayId", "OsmStartNodeId", "OsmEndNodeId", "DayOfWeek", "FiveMinuteBucket", "SampleCount" DESC
+                );
+                """);
+
             migrationBuilder.CreateIndex(
                 name: "IX_EdgeSpeedAggregates_OsmWayId_OsmStartNodeId_OsmEndNodeId_Da~",
                 table: "EdgeSpeedAggregates",
