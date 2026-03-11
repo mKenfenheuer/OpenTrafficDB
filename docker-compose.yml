@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: opentraffic
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
-      - /mnt/data/opentraffic/postgres:/var/lib/postgresql/data
+      - /mnt/opentraffic/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U opentraffic -d opentrafficdb"]
       interval: 5s
@@ -18,7 +18,7 @@ services:
     image: ghcr.io/valhalla/valhalla-scripted:latest
     restart: unless-stopped
     volumes:
-      - /mnt/data/opentraffic/valhalla:/custom_files
+      - /mnt/opentraffic/valhalla:/custom_files
     environment:
       tile_building_blocked: "0"
     ports:
