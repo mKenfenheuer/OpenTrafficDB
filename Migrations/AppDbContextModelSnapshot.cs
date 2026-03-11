@@ -113,11 +113,14 @@ namespace OpenTrafficDB.Migrations
                     b.Property<int>("FiveMinuteBucket")
                         .HasColumnType("integer");
 
-                    b.Property<bool>("IsForward")
-                        .HasColumnType("boolean");
-
                     b.Property<DateTime>("LastUpdated")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("OsmEndNodeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("OsmStartNodeId")
+                        .HasColumnType("bigint");
 
                     b.Property<long>("OsmWayId")
                         .HasColumnType("bigint");
@@ -128,15 +131,9 @@ namespace OpenTrafficDB.Migrations
                     b.Property<double>("SumSpeedKmh")
                         .HasColumnType("double precision");
 
-                    b.Property<long?>("ValhallaEdgeId")
-                        .HasColumnType("bigint");
-
                     b.HasKey("Id");
 
-                    b.HasIndex("ValhallaEdgeId")
-                        .HasFilter("\"ValhallaEdgeId\" IS NOT NULL");
-
-                    b.HasIndex("OsmWayId", "IsForward", "DayOfWeek", "FiveMinuteBucket")
+                    b.HasIndex("OsmWayId", "OsmStartNodeId", "OsmEndNodeId", "DayOfWeek", "FiveMinuteBucket")
                         .IsUnique();
 
                     b.ToTable("EdgeSpeedAggregates");
@@ -208,14 +205,17 @@ namespace OpenTrafficDB.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<bool?>("IsForward")
-                        .HasColumnType("boolean");
-
                     b.Property<double>("Latitude")
                         .HasColumnType("double precision");
 
                     b.Property<double>("Longitude")
                         .HasColumnType("double precision");
+
+                    b.Property<long?>("OsmEndNodeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("OsmStartNodeId")
+                        .HasColumnType("bigint");
 
                     b.Property<long?>("OsmWayId")
                         .HasColumnType("bigint");
@@ -237,14 +237,14 @@ namespace OpenTrafficDB.Migrations
                     b.HasIndex("H3CellIndex")
                         .HasFilter("\"H3CellIndex\" IS NOT NULL");
 
-                    b.HasIndex("OsmWayId")
-                        .HasFilter("\"OsmWayId\" IS NOT NULL");
-
                     b.HasIndex("Timestamp");
 
                     b.HasIndex("TripId");
 
                     b.HasIndex("Latitude", "Longitude");
+
+                    b.HasIndex("OsmWayId", "OsmStartNodeId", "OsmEndNodeId")
+                        .HasFilter("\"OsmWayId\" IS NOT NULL");
 
                     b.ToTable("SpeedObservations");
                 });

@@ -18,8 +18,11 @@ public class LiveSpeedPoint
     /// <summary>Stable OSM way identifier; null until map-matched</summary>
     public long? OsmWayId { get; set; }
 
-    /// <summary>True = forward direction (heading 0–179°); null until map-matched</summary>
-    public bool? IsForward { get; set; }
+    /// <summary>OSM node ID at start of the matched directed edge; null until map-matched</summary>
+    public long? OsmStartNodeId { get; set; }
+
+    /// <summary>OSM node ID at end of the matched directed edge; null until map-matched</summary>
+    public long? OsmEndNodeId { get; set; }
 
     public DateTime Timestamp { get; set; }
 }

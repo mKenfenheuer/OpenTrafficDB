@@ -10,12 +10,12 @@ using OpenTrafficDB.Models;
 namespace OpenTrafficDB.Services;
 
 /// <summary>
-/// Performs server-side map matching of GPS observations to OSM way references
+/// Performs server-side map matching of GPS observations to OSM road segments
 /// using the Valhalla /trace_attributes API.
 ///
-/// Stable edge identity: OsmWayId + IsForward (heading-derived direction).
-/// ValhallaEdgeId is also captured and cached for Valhalla CSV export, but is
-/// not used as the primary key because it changes when Valhalla tiles are rebuilt.
+/// Stable edge identity: (OsmWayId, OsmStartNodeId, OsmEndNodeId).
+/// These three values uniquely identify a directed road segment in OSM and
+/// remain stable across Valhalla tile rebuilds.
 /// </summary>
 public class ValhallaMapMatchingService(
     IHttpClientFactory httpClientFactory,
@@ -24,18 +24,16 @@ public class ValhallaMapMatchingService(
 {
     private readonly string _valhallaBaseUrl = config["Valhalla:BaseUrl"] ?? "http://localhost:8002";
 
-    /// <summary>
-    /// Result of matching a single GPS point to a road edge.
-    /// </summary>
+    /// <summary>Result of matching a single GPS point to an OSM road segment.</summary>
     public record MatchResult(
         long OsmWayId,
-        bool IsForward,
-        long ValhallaEdgeId,
+        long OsmStartNodeId,
+        long OsmEndNodeId,
         long H3CellIndex);
 
     /// <summary>
-    /// Match a GPS trace (list of observations for one trip) to OSM edges.
-    /// Returns a dictionary mapping observation index to its MatchResult.
+    /// Match a GPS trace to OSM edges via Valhalla trace_attributes.
+    /// Returns a map from observation index to its MatchResult.
     /// </summary>
     public async Task<Dictionary<int, MatchResult>> MatchTraceAsync(
         IReadOnlyList<(double Lat, double Lon, DateTime Time)> data,
@@ -44,15 +42,12 @@ public class ValhallaMapMatchingService(
         var points = data.ToList();
         if (points.Count == 0) return [];
 
-        // Valhalla requires at least 2 shape points
         if (points.Count == 1)
             points = [points[0], points[0]];
 
-        var encodedPolyline = EncodePolyline6(points);
-
         var request = new
         {
-            encoded_polyline = encodedPolyline,
+            encoded_polyline = EncodePolyline6(points),
             costing = "auto",
             shape_match = "map_snap",
             trace_options = new { search_radius = 25 },
@@ -60,9 +55,9 @@ public class ValhallaMapMatchingService(
             {
                 attributes = new[]
                 {
-                    "edge.id",
                     "edge.way_id",
-                    "edge.begin_heading",
+                    "edge.begin_osm_node_id",
+                    "edge.end_osm_node_id",
                     "matched.point",
                     "matched.edge_index"
                 },
@@ -82,15 +77,12 @@ public class ValhallaMapMatchingService(
 
             if (!response.IsSuccessStatusCode)
             {
-                logger.LogWarning("Valhalla trace_attributes returned {Status}", response.StatusCode);
                 var errBody = await response.Content.ReadAsStringAsync(ct);
-                logger.LogWarning("Valhalla trace_attributes body: {Body}", errBody);
+                logger.LogWarning("Valhalla trace_attributes {Status}: {Body}", response.StatusCode, errBody);
                 return [];
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);
-
-            logger.LogInformation($"Valhalla response: {body}");
             var result = JsonSerializer.Deserialize<TraceAttributesResponse>(body);
 
             if (result?.MatchedPoints == null || result.Edges == null) return [];
@@ -100,17 +92,17 @@ public class ValhallaMapMatchingService(
             {
                 var mp = result.MatchedPoints[i];
                 if (mp.EdgeIndex is null || mp.Lat is null || mp.Lon is null) continue;
-                var edge = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
-                if (edge?.WayId is null || edge.Id is null) continue;
 
-                var isForward = (edge.BeginHeading ?? 0) < 180;
+                var edge = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
+                if (edge?.WayId is null || edge.StartNodeId == 0 || edge.EndNodeId == 0) continue;
+
                 var h3 = H3Index.FromLatLng(new LatLng(mp.Lat.Value, mp.Lon.Value), 9);
 
                 results[i] = new MatchResult(
-                    OsmWayId: edge.WayId.Value,
-                    IsForward: isForward,
-                    ValhallaEdgeId: edge.Id.Value,
-                    H3CellIndex: (long)(ulong)h3);
+                    OsmWayId:      edge.WayId.Value,
+                    OsmStartNodeId: edge.StartNodeId,
+                    OsmEndNodeId:   edge.EndNodeId,
+                    H3CellIndex:   (long)(ulong)h3);
             }
             return results;
         }
@@ -123,11 +115,10 @@ public class ValhallaMapMatchingService(
 
     /// <summary>
     /// Match unmatched observations in the database.
-    /// Groups by TripId, sends each trip trace to Valhalla, updates OSM fields and H3 index.
+    /// Groups by TripId, sends each trip trace to Valhalla, writes OSM node IDs and H3 index.
     /// </summary>
     public async Task ProcessUnmatchedAsync(AppDbContext db, CancellationToken ct = default)
     {
-        // Fetch observations not yet map-matched (OsmWayId not set), recent first, capped at 5000
         var unmatched = await db.SpeedObservations
             .Where(o => o.OsmWayId == null)
             .OrderBy(o => o.Timestamp)
@@ -136,22 +127,22 @@ public class ValhallaMapMatchingService(
 
         if (unmatched.Count == 0) return;
 
-        var byTrip = unmatched.GroupBy(o => o.TripId);
         int updatedCount = 0;
 
-        foreach (var trip in byTrip)
+        foreach (var trip in unmatched.GroupBy(o => o.TripId))
         {
             var sorted = trip.OrderBy(o => o.Timestamp).ToList();
-            var points = sorted.Select(o => (o.Latitude, o.Longitude, o.Timestamp)).ToList();
-            var matchMap = await MatchTraceAsync(points, ct);
+            var matchMap = await MatchTraceAsync(
+                sorted.Select(o => (o.Latitude, o.Longitude, o.Timestamp)).ToList(), ct);
 
             foreach (var (idx, match) in matchMap)
             {
                 if (idx >= sorted.Count) continue;
                 var obs = sorted[idx];
-                obs.OsmWayId      = match.OsmWayId;
-                obs.IsForward     = match.IsForward;
-                obs.H3CellIndex   = match.H3CellIndex;
+                obs.OsmWayId       = match.OsmWayId;
+                obs.OsmStartNodeId = match.OsmStartNodeId;
+                obs.OsmEndNodeId   = match.OsmEndNodeId;
+                obs.H3CellIndex    = match.H3CellIndex;
                 updatedCount++;
             }
         }
@@ -163,7 +154,7 @@ public class ValhallaMapMatchingService(
         }
     }
 
-    // Encodes a sequence of lat/lon pairs using Google Polyline encoding at precision 6.
+    // Google Polyline encoding at precision 6.
     private static string EncodePolyline6(IEnumerable<(double Lat, double Lon, DateTime Time)> coords)
     {
         var sb = new StringBuilder();
@@ -204,15 +195,14 @@ public class ValhallaMapMatchingService(
 
     private class EdgeResult
     {
-        [JsonPropertyName("id")]
-        public long? Id { get; set; }
-
         [JsonPropertyName("way_id")]
         public long? WayId { get; set; }
 
-        /// <summary>Heading at the start of the edge in degrees (0–359)</summary>
-        [JsonPropertyName("begin_heading")]
-        public double? BeginHeading { get; set; }
+        [JsonPropertyName("begin_osm_node_id")]
+        public long StartNodeId { get; set; }
+
+        [JsonPropertyName("end_osm_node_id")]
+        public long EndNodeId { get; set; }
     }
 
     private class MatchedPoint

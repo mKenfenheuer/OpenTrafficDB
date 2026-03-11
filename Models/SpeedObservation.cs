@@ -28,23 +28,18 @@ public class SpeedObservation
     /// <summary>Anonymized trip identifier hashed trip id by the user</summary>
     public string TripId { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Stable OSM way identifier. Populated after server-side map matching.
-    /// Replaces the unstable Valhalla GraphId as the primary edge reference.
-    /// </summary>
+    /// <summary>Stable OSM way identifier. Populated after server-side map matching.</summary>
     public long? OsmWayId { get; set; }
 
-    /// <summary>
-    /// True = edge traversed in the heading-forward direction (bearing 0–179°);
-    /// False = reverse direction (180–359°). Derived from Valhalla begin_heading
-    /// to separate opposing traffic flows on the same OSM way.
-    /// Null until map-matched.
-    /// </summary>
-    public bool? IsForward { get; set; }
+    /// <summary>OSM node ID at the start of the matched directed edge.</summary>
+    public long? OsmStartNodeId { get; set; }
+
+    /// <summary>OSM node ID at the end of the matched directed edge.</summary>
+    public long? OsmEndNodeId { get; set; }
 
     /// <summary>
     /// H3 cell index at resolution 9 (~174 m hexagons) for spatial aggregation.
-    /// Computed from Latitude/Longitude on ingest; stored as signed long (raw ulong bits).
+    /// Stored as signed long (raw ulong bits). Computed from Lat/Lon on map-match.
     /// </summary>
     public long? H3CellIndex { get; set; }
 

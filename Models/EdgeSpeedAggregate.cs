@@ -2,11 +2,10 @@ namespace OpenTrafficDB.Models;
 
 /// <summary>
 /// Pre-aggregated speed data per OSM directed edge per 5-minute time bucket.
-/// Key: (OsmWayId, IsForward, DayOfWeek, FiveMinuteBucket).
-/// ValhallaEdgeId is cached here for Valhalla CSV export; it can become stale
-/// when Valhalla's tile data is rebuilt but the OSM key remains stable.
 ///
-/// BucketIndex = dayOfWeek * 288 + minuteOfDay / 5  (range 0–2015)
+/// Stable key: (OsmWayId, OsmStartNodeId, OsmEndNodeId, DayOfWeek, FiveMinuteBucket).
+/// The start/end OSM node IDs uniquely identify the directed segment and remain
+/// stable across Valhalla tile rebuilds.
 /// </summary>
 public class EdgeSpeedAggregate
 {
@@ -15,8 +14,11 @@ public class EdgeSpeedAggregate
     /// <summary>Stable OSM way identifier</summary>
     public long OsmWayId { get; set; }
 
-    /// <summary>True = heading 0–179° (forward); False = heading 180–359° (reverse)</summary>
-    public bool IsForward { get; set; }
+    /// <summary>OSM node ID at the start of this directed edge</summary>
+    public long OsmStartNodeId { get; set; }
+
+    /// <summary>OSM node ID at the end of this directed edge</summary>
+    public long OsmEndNodeId { get; set; }
 
     /// <summary>0 = Sunday … 6 = Saturday (matches C# DayOfWeek)</summary>
     public int DayOfWeek { get; set; }
@@ -28,12 +30,6 @@ public class EdgeSpeedAggregate
     public double SumSpeedKmh { get; set; }
 
     public int SampleCount { get; set; }
-
-    /// <summary>
-    /// Cached Valhalla GraphId for this edge — used when generating Valhalla
-    /// predicted-traffic CSV. May be null or stale after a Valhalla map rebuild.
-    /// </summary>
-    public long? ValhallaEdgeId { get; set; }
 
     public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
 }
