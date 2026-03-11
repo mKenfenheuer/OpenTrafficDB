@@ -89,6 +89,8 @@ public class ValhallaMapMatchingService(
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);
+
+            logger.LogInformation($"Valhalla response: {body}");
             var result = JsonSerializer.Deserialize<TraceAttributesResponse>(body);
 
             if (result?.MatchedPoints == null || result.Edges == null) return [];
@@ -98,7 +100,7 @@ public class ValhallaMapMatchingService(
             {
                 var mp = result.MatchedPoints[i];
                 if (mp.EdgeIndex is null || mp.Lat is null || mp.Lon is null) continue;
-                var edge = result.Edges.ElementAtOrDefault(mp.EdgeIndex.Value);
+                var edge = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
                 if (edge?.WayId is null || edge.Id is null) continue;
 
                 var isForward = (edge.BeginHeading ?? 0) < 180;
@@ -216,7 +218,7 @@ public class ValhallaMapMatchingService(
     private class MatchedPoint
     {
         [JsonPropertyName("edge_index")]
-        public int? EdgeIndex { get; set; }
+        public long? EdgeIndex { get; set; }
 
         [JsonPropertyName("lat")]
         public double? Lat { get; set; }
