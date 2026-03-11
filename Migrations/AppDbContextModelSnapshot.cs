@@ -205,6 +205,9 @@ namespace OpenTrafficDB.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<bool>("IsAggregated")
+                        .HasColumnType("boolean");
+
                     b.Property<double>("Latitude")
                         .HasColumnType("double precision");
 
@@ -240,6 +243,8 @@ namespace OpenTrafficDB.Migrations
                     b.HasIndex("Timestamp");
 
                     b.HasIndex("TripId");
+
+                    b.HasIndex("IsAggregated", "CreatedAt");
 
                     b.HasIndex("Latitude", "Longitude");
 

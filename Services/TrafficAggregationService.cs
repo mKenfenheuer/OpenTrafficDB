@@ -13,123 +13,130 @@ public class TrafficAggregationService(AppDbContext db)
     private static int ToFiveMinuteBucket(DateTime utc)
         => (utc.Hour * 60 + utc.Minute) / 5;
 
+    // Observations are kept for at least this long so the live endpoint can still see them.
+    private static readonly TimeSpan LiveRetention = TimeSpan.FromHours(1);
+    // Unmatched observations older than this are unresolvable and can be dropped.
+    private static readonly TimeSpan UnmatchedRetention = TimeSpan.FromHours(24);
+
     // ── Hybrid aggregation ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// Recompute both edge-level and H3-level aggregates from all matched observations.
-    /// Called by the background service every 5 minutes.
+    /// Incremental aggregation: process only newly matched (not yet aggregated) observations,
+    /// fold their data into EdgeSpeedAggregate and H3SpeedAggregate, mark them aggregated,
+    /// then delete observations that are no longer needed:
+    ///   - Aggregated observations older than the live retention window (1 h)
+    ///   - Unmatched observations older than 24 h (cannot be map-matched)
     ///
     /// Edge key: (OsmWayId, OsmStartNodeId, OsmEndNodeId, DayOfWeek, FiveMinuteBucket)
     /// H3 key:   (H3CellIndex, DayOfWeek, FiveMinuteBucket)
     /// </summary>
     public async Task ReaggregateAsync(CancellationToken ct = default)
     {
-        var matched = await db.SpeedObservations
-            .Where(o => o.OsmWayId != null && o.OsmStartNodeId != null && o.H3CellIndex != null)
-            .Select(o => new
-            {
-                o.OsmWayId,
-                o.OsmStartNodeId,
-                o.OsmEndNodeId,
-                o.H3CellIndex,
-                o.Timestamp,
-                o.SpeedMs
-            })
+        // ── 1. Load only unprocessed matched observations ────────────────────
+        var newlyMatched = await db.SpeedObservations
+            .Where(o => !o.IsAggregated && o.OsmWayId != null && o.OsmStartNodeId != null && o.H3CellIndex != null)
             .ToListAsync(ct);
 
-        if (matched.Count == 0) return;
-
-        // ── Edge aggregation ─────────────────────────────────────────────────
-        var edgeBuckets = new Dictionary<(long WayId, long StartNode, long EndNode, int Dow, int Bucket),
-                                         (double Sum, int Count)>();
-
-        // ── H3 aggregation ───────────────────────────────────────────────────
-        var h3Buckets = new Dictionary<(long Cell, int Dow, int Bucket),
-                                       (double Sum, int Count)>();
-
-        foreach (var obs in matched)
+        if (newlyMatched.Count > 0)
         {
-            var ts     = obs.Timestamp.ToUniversalTime();
-            var dow    = (int)ts.DayOfWeek;
-            var bucket = ToFiveMinuteBucket(ts);
-            var kmh    = obs.SpeedMs * 3.6;
+            var edgeBuckets = new Dictionary<(long WayId, long StartNode, long EndNode, int Dow, int Bucket), (double Sum, int Count)>();
+            var h3Buckets   = new Dictionary<(long Cell, int Dow, int Bucket), (double Sum, int Count)>();
 
-            var eKey = (obs.OsmWayId!.Value, obs.OsmStartNodeId!.Value, obs.OsmEndNodeId ?? 0L, dow, bucket);
-            edgeBuckets[eKey] = edgeBuckets.TryGetValue(eKey, out var ea)
-                ? (ea.Sum + kmh, ea.Count + 1)
-                : (kmh, 1);
-
-            var hKey = (obs.H3CellIndex!.Value, dow, bucket);
-            h3Buckets[hKey] = h3Buckets.TryGetValue(hKey, out var ha)
-                ? (ha.Sum + kmh, ha.Count + 1)
-                : (kmh, 1);
-        }
-
-        var now = DateTime.UtcNow;
-
-        // ── Upsert edge aggregates ───────────────────────────────────────────
-        foreach (var (key, (sum, count)) in edgeBuckets)
-        {
-            var (wayId, startNode, endNode, dow, bucket) = key;
-            var existing = await db.EdgeSpeedAggregates
-                .FirstOrDefaultAsync(a => a.OsmWayId == wayId
-                    && a.OsmStartNodeId == startNode
-                    && a.OsmEndNodeId == endNode
-                    && a.DayOfWeek == dow
-                    && a.FiveMinuteBucket == bucket, ct);
-
-            if (existing is null)
+            foreach (var obs in newlyMatched)
             {
-                db.EdgeSpeedAggregates.Add(new EdgeSpeedAggregate
+                var ts     = obs.Timestamp.ToUniversalTime();
+                var dow    = (int)ts.DayOfWeek;
+                var bucket = ToFiveMinuteBucket(ts);
+                var kmh    = obs.SpeedMs * 3.6;
+
+                var eKey = (obs.OsmWayId!.Value, obs.OsmStartNodeId!.Value, obs.OsmEndNodeId ?? 0L, dow, bucket);
+                edgeBuckets[eKey] = edgeBuckets.TryGetValue(eKey, out var ea)
+                    ? (ea.Sum + kmh, ea.Count + 1) : (kmh, 1);
+
+                var hKey = (obs.H3CellIndex!.Value, dow, bucket);
+                h3Buckets[hKey] = h3Buckets.TryGetValue(hKey, out var ha)
+                    ? (ha.Sum + kmh, ha.Count + 1) : (kmh, 1);
+            }
+
+            var now = DateTime.UtcNow;
+
+            // ── 2. Increment edge aggregates (add new data to running sums) ──
+            foreach (var (key, (sum, count)) in edgeBuckets)
+            {
+                var (wayId, startNode, endNode, dow, bucket) = key;
+                var existing = await db.EdgeSpeedAggregates
+                    .FirstOrDefaultAsync(a => a.OsmWayId == wayId
+                        && a.OsmStartNodeId == startNode
+                        && a.OsmEndNodeId == endNode
+                        && a.DayOfWeek == dow
+                        && a.FiveMinuteBucket == bucket, ct);
+
+                if (existing is null)
                 {
-                    OsmWayId         = wayId,
-                    OsmStartNodeId   = startNode,
-                    OsmEndNodeId     = endNode,
-                    DayOfWeek        = dow,
-                    FiveMinuteBucket = bucket,
-                    SumSpeedKmh      = sum,
-                    SampleCount      = count,
-                    LastUpdated      = now
-                });
-            }
-            else
-            {
-                existing.SumSpeedKmh = sum;
-                existing.SampleCount = count;
-                existing.LastUpdated = now;
-            }
-        }
-
-        // ── Upsert H3 aggregates ─────────────────────────────────────────────
-        foreach (var (key, (sum, count)) in h3Buckets)
-        {
-            var (cell, dow, bucket) = key;
-            var existing = await db.H3SpeedAggregates
-                .FirstOrDefaultAsync(a => a.H3CellIndex == cell
-                    && a.DayOfWeek == dow
-                    && a.FiveMinuteBucket == bucket, ct);
-
-            if (existing is null)
-            {
-                db.H3SpeedAggregates.Add(new H3SpeedAggregate
+                    db.EdgeSpeedAggregates.Add(new EdgeSpeedAggregate
+                    {
+                        OsmWayId         = wayId,
+                        OsmStartNodeId   = startNode,
+                        OsmEndNodeId     = endNode,
+                        DayOfWeek        = dow,
+                        FiveMinuteBucket = bucket,
+                        SumSpeedKmh      = sum,
+                        SampleCount      = count,
+                        LastUpdated      = now
+                    });
+                }
+                else
                 {
-                    H3CellIndex      = cell,
-                    DayOfWeek        = dow,
-                    FiveMinuteBucket = bucket,
-                    SumSpeedKmh      = sum,
-                    SampleCount      = count,
-                    LastUpdated      = now
-                });
+                    existing.SumSpeedKmh += sum;   // increment, not replace
+                    existing.SampleCount += count;
+                    existing.LastUpdated  = now;
+                }
             }
-            else
+
+            // ── 3. Increment H3 aggregates ───────────────────────────────────
+            foreach (var (key, (sum, count)) in h3Buckets)
             {
-                existing.SumSpeedKmh = sum;
-                existing.SampleCount = count;
-                existing.LastUpdated = now;
+                var (cell, dow, bucket) = key;
+                var existing = await db.H3SpeedAggregates
+                    .FirstOrDefaultAsync(a => a.H3CellIndex == cell
+                        && a.DayOfWeek == dow
+                        && a.FiveMinuteBucket == bucket, ct);
+
+                if (existing is null)
+                {
+                    db.H3SpeedAggregates.Add(new H3SpeedAggregate
+                    {
+                        H3CellIndex      = cell,
+                        DayOfWeek        = dow,
+                        FiveMinuteBucket = bucket,
+                        SumSpeedKmh      = sum,
+                        SampleCount      = count,
+                        LastUpdated      = now
+                    });
+                }
+                else
+                {
+                    existing.SumSpeedKmh += sum;
+                    existing.SampleCount += count;
+                    existing.LastUpdated  = now;
+                }
             }
+
+            // ── 4. Mark observations as aggregated ───────────────────────────
+            foreach (var obs in newlyMatched)
+                obs.IsAggregated = true;
+
+            await db.SaveChangesAsync(ct);
         }
 
-        await db.SaveChangesAsync(ct);
+        // ── 5. Delete observations outside the retention windows ─────────────
+        var liveWindow      = DateTime.UtcNow - LiveRetention;
+        var unmatchedCutoff = DateTime.UtcNow - UnmatchedRetention;
+
+        await db.SpeedObservations
+            .Where(o => (o.IsAggregated && o.CreatedAt < liveWindow)
+                     || (o.OsmWayId == null && o.CreatedAt < unmatchedCutoff))
+            .ExecuteDeleteAsync(ct);
     }
 
     // ── Live traffic (rolling 30-minute window) ─────────────────────────────────
@@ -192,6 +199,33 @@ public class TrafficAggregationService(AppDbContext db)
             var avgKmh = g.Average(o => o.SpeedMs) * 3.6;
             await writer.WriteLineAsync(
                 $"{g.Key.Item1},{g.Key.Item2},{g.Key.Item3},{avgKmh:F1},{g.Count()}");
+        }
+    }
+
+    /// <summary>
+    /// Historic edge traffic CSV from pre-aggregated 5-minute buckets.
+    /// One row per (edge, time_slot). time = day_of_week * 288 + minute_of_day / 5, range 0–2015.
+    /// Format: osm_way_id,start_node_id,end_node_id,speed,time
+    ///   speed in km/h (rounded to 1 decimal); only slots with observed data are emitted.
+    /// </summary>
+    public async Task WriteHistoricEdgeCsvAsync(Stream output, CancellationToken ct = default)
+    {
+        var aggregates = await db.EdgeSpeedAggregates
+            .OrderBy(a => a.OsmWayId)
+            .ThenBy(a => a.OsmStartNodeId)
+            .ThenBy(a => a.OsmEndNodeId)
+            .ThenBy(a => a.DayOfWeek)
+            .ThenBy(a => a.FiveMinuteBucket)
+            .ToListAsync(ct);
+
+        await using var writer = new StreamWriter(output, Encoding.UTF8, leaveOpen: true);
+        await writer.WriteLineAsync("osm_way_id,start_node_id,end_node_id,speed,time");
+
+        foreach (var a in aggregates)
+        {
+            var speed = a.SampleCount > 0 ? a.SumSpeedKmh / a.SampleCount : 0;
+            var time  = a.DayOfWeek * 288 + a.FiveMinuteBucket;
+            await writer.WriteLineAsync($"{a.OsmWayId},{a.OsmStartNodeId},{a.OsmEndNodeId},{speed:F1},{time}");
         }
     }
 

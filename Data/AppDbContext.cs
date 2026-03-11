@@ -52,6 +52,8 @@ public class AppDbContext : DbContext
             e.HasIndex(o => o.H3CellIndex).HasFilter("\"H3CellIndex\" IS NOT NULL");
             e.HasIndex(o => o.TripId);
             e.HasIndex(o => o.ApiKeyId);
+            // For aggregation cleanup queries
+            e.HasIndex(o => new { o.IsAggregated, o.CreatedAt });
         });
 
         modelBuilder.Entity<BlockedIp>(e =>

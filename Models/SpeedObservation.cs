@@ -43,6 +43,12 @@ public class SpeedObservation
     /// </summary>
     public long? H3CellIndex { get; set; }
 
+    /// <summary>
+    /// True once this observation has been folded into EdgeSpeedAggregate and H3SpeedAggregate.
+    /// Aggregated observations outside the live window (>1 h) are deleted by the background service.
+    /// </summary>
+    public bool IsAggregated { get; set; }
+
     /// <summary>SHA-256 + pepper of contributor IP — never store raw IP</summary>
     public string IpHash { get; set; } = string.Empty;
 
