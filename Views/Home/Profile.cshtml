@@ -256,7 +256,7 @@
             <td class="text-muted">${fmtDate(k.createdAt)}</td>
             <td class="text-muted">${fmtDateTime(k.lastUsedAt)}</td>
             <td>
-              <div style="display:flex;gap:6px;justify-content:flex-end">
+              <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
                 ${k.isActive ? `
                   <button class="btn btn-secondary btn-sm" id="rename-btn-${k.id}" onclick="startRename(${k.id})">Rename</button>
                   <button class="btn btn-secondary btn-sm hidden" id="save-rename-btn-${k.id}" onclick="saveRename(${k.id})">Save</button>

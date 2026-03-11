@@ -19,7 +19,7 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { font-size: 16px; }
+html { font-size: 16px; overflow-x: hidden; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
@@ -35,8 +35,8 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* ── Layout ─────────────────────────────────────────── */
-.container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
-.container-sm { max-width: 640px; margin: 0 auto; padding: 0 24px; }
+.container { max-width: 1100px; margin: 0 auto; padding: 0 24px; min-width: 0; }
+.container-sm { max-width: 640px; margin: 0 auto; padding: 0 24px; min-width: 0; }
 
 /* ── Navbar ─────────────────────────────────────────── */
 .navbar {
@@ -418,6 +418,21 @@ tr:hover td { background: var(--surface2); }
   .dash-grid { grid-template-columns: 1fr; }
 }
 
+/* ── Prevent grid items from overflowing their tracks ───── */
+/* Same min-width:0 trick as on .container (flex item).      */
+/* CSS grid items also default to min-width:auto, so a wide  */
+/* code-block (white-space:pre) inside a 1fr track pushes    */
+/* the track — and the page — wider than the viewport.       */
+.dash-grid > *,
+.features > *,
+.steps > *,
+.stats-grid > * {
+  min-width: 0;
+}
+
+/* ── Responsive section-title rows ───────────────────────── */
+.section-title { flex-wrap: wrap; }
+
 /* ── Role progress card ─────────────────────────────────── */
 .role-badge-lg {
   display: inline-flex;
@@ -506,6 +521,9 @@ footer a:hover { color: var(--text); }
 }
 .docs-nav-toggle:hover { color: var(--text); }
 
+/* Docs cards clip their content so code-block/table-wrap overflow-x:auto works correctly */
+.docs-layout .card { overflow-x: hidden; }
+
 @media (max-width: 640px) {
   /* Show hamburger */
   .navbar-toggle { display: block; }
@@ -545,7 +563,7 @@ footer a:hover { color: var(--text); }
   }
 
   /* Reduce container padding on small screens */
-  .container, .container-sm { padding: 0 16px; }
+  .container, .container-sm { padding: 0 16px; max-width: 100%; }
 
   /* Hero */
   .hero { padding: 48px 0 32px; }
@@ -561,13 +579,10 @@ footer a:hover { color: var(--text); }
   .page-header { padding: 20px 0 16px; }
   .page-header h1 { font-size: 1.25rem; }
 
-  /* Stats grid min size */
-  .stats-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
-
   /* Stat value size */
   .stat-value { font-size: 1.6rem; }
 
-  /* Code block horizontal scroll */
+  /* Code block font size on small screens */
   .code-block { font-size: 0.75rem; }
 
   /* Footer links wrap */
@@ -587,6 +602,17 @@ footer a:hover { color: var(--text); }
 
   /* Admin block-ip form */
   #block-ip, #block-expires { max-width: 100% !important; }
+  #block-reason { min-width: 0 !important; flex: 1 1 100% !important; }
+
+  /* Tables: tighter on small screens */
+  th { padding: 8px 8px; font-size: 0.72rem; }
+  td { padding: 8px 8px; font-size: 0.82rem; }
+
+  /* Section-title action rows: stack on very small screens */
+  .section-title.d-flex { gap: 8px 12px; }
+
+  /* Stats grid: 2 columns on small screens */
+  .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
 }
 
 @media (max-width: 768px) {
@@ -594,6 +620,10 @@ footer a:hover { color: var(--text); }
   .docs-layout {
     flex-direction: column !important;
     gap: 16px !important;
+    /* align-items:flex-start is set inline (keeps sidebar from stretching on desktop).
+       In column mode items must stretch to full width, otherwise flex-start makes them
+       shrink to content-width — letting wide code-blocks overflow the page. */
+    align-items: stretch !important;
   }
   .docs-sidebar {
     width: 100% !important;
@@ -605,4 +635,7 @@ footer a:hover { color: var(--text); }
   .docs-sidebar-links.open { display: flex; }
   .docs-sidebar-extra { display: none !important; }
   .docs-sidebar-links.open ~ .docs-sidebar-extra { display: block !important; }
+
+  /* Docs tables scroll within their wrapper */
+  .docs-layout .card table { min-width: max-content; }
 }

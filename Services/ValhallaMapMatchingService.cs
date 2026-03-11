@@ -27,7 +27,7 @@ public class ValhallaMapMatchingService(
         IReadOnlyList<(double Lat, double Lon, DateTime Time)> data,
         CancellationToken ct = default)
     {
-        var points = new List<(double Lat, double Lon, DateTime Time)>(data);
+        var points = new List<dynamic>(data.Select(p => new { p.Lat, p.Lon, p.Time}));
         if (points.Count == 0) return [];
 
         var baseTime = points[0].Time;
@@ -35,16 +35,12 @@ public class ValhallaMapMatchingService(
         {
             points.Add(points[0]);
         }
-        var shape = points.Select((p, i) => new
-        {
-            lat = p.Lat,
-            lon = p.Lon,
-            time = (int)(p.Time - baseTime).TotalSeconds
-        }).ToList();
+
+        var encodedPolyline = EncodePolyline6(points);
 
         var request = new
         {
-            shape,
+            encoded_polyline = encodedPolyline,
             costing = "auto",
             shape_match = "map_snap",
             trace_options = new
@@ -53,7 +49,7 @@ public class ValhallaMapMatchingService(
             },
             filters = new
             {
-                attributes = new[] { "edge.id", "matched.point_index" },
+                attributes = new[] { "edge.id","edge.speed","edge.vehicle_type","matched.point", "matched.edge_index" },
                 action = "include"
             }
         };
@@ -82,12 +78,13 @@ public class ValhallaMapMatchingService(
             if (result?.MatchedPoints == null || result.Edges == null) return [];
 
             var edgeMap = new Dictionary<int, long>();
-            foreach (var mp in result.MatchedPoints)
+            for (int i = 0; i < result.MatchedPoints.Count; i++)
             {
+                var mp = result.MatchedPoints[i];
                 if (mp.EdgeIndex is null) continue;
                 var edge = result.Edges.ElementAtOrDefault(mp.EdgeIndex.Value);
                 if (edge?.Id is not null)
-                    edgeMap[mp.PointIndex] = edge.Id.Value;
+                    edgeMap[i] = edge.Id.Value;
             }
             return edgeMap;
         }
@@ -140,6 +137,35 @@ public class ValhallaMapMatchingService(
         }
     }
 
+    // Encodes a sequence of lat/lon pairs using Google Polyline encoding at precision 6.
+    // Adapted from https://github.com/DennisOSRM/Project-OSRM-Web OSRM.RoutingGeometry.js
+    private static string EncodePolyline6(IEnumerable<dynamic> coords)
+    {
+        var sb = new StringBuilder();
+        int prevLat = 0, prevLon = 0;
+        foreach (var coord in coords)
+        {
+            int iLat = (int)Math.Round(coord.Lat * 1e6);
+            int iLon = (int)Math.Round(coord.Lon * 1e6);
+            EncodeValue(sb, iLat - prevLat);
+            EncodeValue(sb, iLon - prevLon);
+            prevLat = iLat;
+            prevLon = iLon;
+        }
+        return sb.ToString();
+
+        static void EncodeValue(StringBuilder sb, int value)
+        {
+            int v = value < 0 ? ~(value << 1) : value << 1;
+            while (v >= 0x20)
+            {
+                sb.Append((char)(((v & 0x1f) | 0x20) + 63));
+                v >>= 5;
+            }
+            sb.Append((char)(v + 63));
+        }
+    }
+
     // --- Valhalla response DTOs ---
 
     private class TraceAttributesResponse
@@ -159,9 +185,6 @@ public class ValhallaMapMatchingService(
 
     private class MatchedPoint
     {
-        [JsonPropertyName("point_index")]
-        public int PointIndex { get; set; }
-
         [JsonPropertyName("edge_index")]
         public int? EdgeIndex { get; set; }
     }
