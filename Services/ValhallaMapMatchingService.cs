@@ -91,7 +91,7 @@ public class ValhallaMapMatchingService(
             for (int i = 0; i < result.MatchedPoints.Count; i++)
             {
                 var mp = result.MatchedPoints[i];
-                if (mp.EdgeIndex is null || mp.Lat is null || mp.Lon is null) continue;
+                if (mp.Type != "matched" || mp.EdgeIndex is null or ulong.MaxValue || mp.Lat is null || mp.Lon is null) continue;
 
                 var edge = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
                 if (edge?.WayId is null || edge.StartNodeId == 0 || edge.EndNodeId == 0) continue;
@@ -207,8 +207,13 @@ public class ValhallaMapMatchingService(
 
     private class MatchedPoint
     {
+        /// <summary>ulong.MaxValue (18446744073709551615) = Valhalla sentinel for "no edge matched"</summary>
         [JsonPropertyName("edge_index")]
-        public long? EdgeIndex { get; set; }
+        public ulong? EdgeIndex { get; set; }
+
+        /// <summary>"matched" | "interpolated" | "unmatched"</summary>
+        [JsonPropertyName("type")]
+        public string? Type { get; set; }
 
         [JsonPropertyName("lat")]
         public double? Lat { get; set; }
