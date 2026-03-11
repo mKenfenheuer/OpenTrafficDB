@@ -19,9 +19,10 @@ public class TrafficController(
 {
     /// <summary>
     /// Export predicted traffic speeds in Valhalla CSV format (single flat file).
+    /// Only edges with a cached Valhalla GraphId are included.
     /// Format: edge_id,freeflow_speed,constrained_speed
-    ///   edge_id is the Valhalla GraphId string "level/tile_id/id"
-    ///   freeflow_speed = typical night-time speed (km/h)
+    ///   edge_id = "level/tile_id/id"
+    ///   freeflow_speed   = typical night-time speed (km/h)
     ///   constrained_speed = typical day-time speed (km/h)
     /// </summary>
     [HttpGet("predicted/csv")]
@@ -49,10 +50,7 @@ public class TrafficController(
     ///   tar -xf traffic.tar -C /path/to/traffic_tiles/
     ///   valhalla_add_predicted_traffic --config valhalla.json -t /path/to/traffic_tiles/
     ///
-    /// Archive structure mirrors the Valhalla tile hierarchy:
-    ///   {level}/{tile_id/1000:D3}/{tile_id%1000:D3}.csv
-    ///   e.g.  1/047/701.csv  for tile_id 47701 at hierarchy level 1
-    ///
+    /// Archive structure: {level}/{tile_dir:D3}/{tile_file:D3}.csv
     /// Each CSV row: edge_id,freeflow_speed,constrained_speed
     /// </summary>
     [HttpGet("predicted/tar")]
@@ -76,8 +74,7 @@ public class TrafficController(
 
     /// <summary>
     /// Get recent speed observations within a geographic bounding box for live traffic display.
-    /// Returns GPS-level speed points; use with Valhalla's live traffic overlay.
-    /// Maximum bounding box: 1° × 1° (~111 km × 111 km). Maximum age: 60 minutes.
+    /// Returns GPS-level speed points. Maximum bounding box: 1° × 1°. Maximum age: 60 minutes.
     /// </summary>
     [HttpGet("live")]
     [ProducesResponseType(typeof(LiveTrafficResponse), StatusCodes.Status200OK)]
@@ -99,5 +96,57 @@ public class TrafficController(
 
         var result = await aggregation.GetLiveSpeedsAsync(query, ct);
         return Ok(result);
+    }
+
+    /// <summary>
+    /// Live edge-level traffic statistics as CSV (rolling 30-minute window).
+    /// Aggregates observations by OSM directed edge (way_id + direction).
+    /// Format: osm_way_id,is_forward,avg_speed_kmh,sample_count
+    ///   is_forward: 1 = heading 0–179°, 0 = heading 180–359°
+    /// Useful for routing engines and map overlays that operate on road segments.
+    /// </summary>
+    [HttpGet("live/edge/csv")]
+    [Produces("text/csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> GetLiveEdgeCsv(CancellationToken ct)
+    {
+        var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var keyId = User.FindFirstValue("keyId") ?? string.Empty;
+
+        if (!abuseDetection.CheckReadRate(ip, keyId))
+            return StatusCode(429, new { error = "Rate limit exceeded." });
+
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"live_edge_traffic.csv\"";
+
+        await aggregation.WriteLiveEdgeCsvAsync(Response.Body, ct);
+        return new EmptyResult();
+    }
+
+    /// <summary>
+    /// Live H3-grid traffic statistics as CSV (rolling 30-minute window, resolution 9 ~174 m).
+    /// Aggregates observations by H3 hexagonal cell for spatial analytics.
+    /// Format: h3_index,avg_speed_kmh,sample_count
+    ///   h3_index: H3 cell id as lowercase hex string (e.g. 89283082803ffff)
+    /// Useful for heatmaps and grid-based congestion analysis.
+    /// </summary>
+    [HttpGet("live/h3/csv")]
+    [Produces("text/csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> GetLiveH3Csv(CancellationToken ct)
+    {
+        var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var keyId = User.FindFirstValue("keyId") ?? string.Empty;
+
+        if (!abuseDetection.CheckReadRate(ip, keyId))
+            return StatusCode(429, new { error = "Rate limit exceeded." });
+
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"live_h3_traffic.csv\"";
+
+        await aggregation.WriteLiveH3CsvAsync(Response.Body, ct);
+        return new EmptyResult();
     }
 }

@@ -10,11 +10,17 @@ public class LiveSpeedPoint
     /// <summary>Speed in m/s</summary>
     public double SpeedMs { get; set; }
 
-    /// <summary>Speed in km/h (Valhalla unit)</summary>
+    /// <summary>Speed in km/h</summary>
     public double SpeedKmh { get; set; }
 
     public float? Heading { get; set; }
-    public long? ValhallaEdgeId { get; set; }
+
+    /// <summary>Stable OSM way identifier; null until map-matched</summary>
+    public long? OsmWayId { get; set; }
+
+    /// <summary>True = forward direction (heading 0–179°); null until map-matched</summary>
+    public bool? IsForward { get; set; }
+
     public DateTime Timestamp { get; set; }
 }
 

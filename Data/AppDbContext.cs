@@ -17,9 +17,8 @@ public class AppDbContext : DbContext
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<SpeedObservation> SpeedObservations => Set<SpeedObservation>();
     public DbSet<BlockedIp> BlockedIps => Set<BlockedIp>();
-    public DbSet<RoadSpeedAggregate> RoadSpeedAggregates => Set<RoadSpeedAggregate>();
-
-    
+    public DbSet<EdgeSpeedAggregate> EdgeSpeedAggregates => Set<EdgeSpeedAggregate>();
+    public DbSet<H3SpeedAggregate> H3SpeedAggregates => Set<H3SpeedAggregate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -46,7 +45,10 @@ public class AppDbContext : DbContext
             // Primary query pattern: recency + bbox
             e.HasIndex(o => o.Timestamp);
             e.HasIndex(o => new { o.Latitude, o.Longitude });
-            e.HasIndex(o => o.ValhallaEdgeId).HasFilter("\"ValhallaEdgeId\" IS NOT NULL");
+            // OSM edge reference — filters unmatched rows
+            e.HasIndex(o => o.OsmWayId).HasFilter("\"OsmWayId\" IS NOT NULL");
+            // H3 spatial index
+            e.HasIndex(o => o.H3CellIndex).HasFilter("\"H3CellIndex\" IS NOT NULL");
             e.HasIndex(o => o.TripId);
             e.HasIndex(o => o.ApiKeyId);
         });
@@ -56,10 +58,18 @@ public class AppDbContext : DbContext
             e.HasIndex(b => b.IpHash).IsUnique();
         });
 
-        modelBuilder.Entity<RoadSpeedAggregate>(e =>
+        modelBuilder.Entity<EdgeSpeedAggregate>(e =>
         {
-            e.HasIndex(a => new { a.ValhallaEdgeId, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
-            e.HasIndex(a => a.ValhallaEdgeId);
+            // Unique business key: OSM directed edge + time bucket
+            e.HasIndex(a => new { a.OsmWayId, a.IsForward, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
+            // Secondary index for Valhalla CSV export (lookup by cached edge id)
+            e.HasIndex(a => a.ValhallaEdgeId).HasFilter("\"ValhallaEdgeId\" IS NOT NULL");
+        });
+
+        modelBuilder.Entity<H3SpeedAggregate>(e =>
+        {
+            e.HasIndex(a => new { a.H3CellIndex, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
+            e.HasIndex(a => a.H3CellIndex);
         });
     }
 }
