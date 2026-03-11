@@ -55,6 +55,7 @@ public class ValhallaMapMatchingService(
             {
                 attributes = new[]
                 {
+                    "matched.type",
                     "edge.way_id",
                     "edge.begin_osm_node_id",
                     "edge.end_osm_node_id",
