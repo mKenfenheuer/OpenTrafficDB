@@ -41,15 +41,6 @@ deploy_production:
   script:
     - mkdir -p /mnt/opentraffic/valhalla
     - mkdir -p /mnt/opentraffic/postgres
-    - |
-      if [ ! -f /mnt/data/opentraffic/valhalla/map.osm.pbf ]; then
-        echo "Downloading Germany OSM PBF..."
-        wget -q --show-progress \
-          -O /mnt/data/opentraffic/valhalla/map.osm.pbf \
-          https://download.geofabrik.de/europe/germany-latest.osm.pbf
-      else
-        echo "map.osm.pbf already present, skipping download."
-      fi
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - export APP_IMAGE=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
     - docker compose pull api
