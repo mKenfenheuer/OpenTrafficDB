@@ -39,8 +39,8 @@ deploy_production:
     - linux
     - no-gpu
   script:
-    - mkdir -p /mnt/data/opentraffic/valhalla
-    - mkdir -p /mnt/data/opentraffic/postgres
+    - mkdir -p /mnt/opentraffic/valhalla
+    - mkdir -p /mnt/opentraffic/postgres
     - |
       if [ ! -f /mnt/data/opentraffic/valhalla/map.osm.pbf ]; then
         echo "Downloading Germany OSM PBF..."
