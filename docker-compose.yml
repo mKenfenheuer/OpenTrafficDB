@@ -15,7 +15,7 @@ services:
       retries: 10
 
   valhalla:
-    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    image: ghcr.io/valhalla/valhalla-scripted:latest
     restart: unless-stopped
     volumes:
       - /mnt/data/opentraffic/valhalla:/custom_files
