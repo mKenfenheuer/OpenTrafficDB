@@ -35,7 +35,7 @@ services:
     image: wiktorn/overpass-api
     restart: unless-stopped
     environment:
-      OVERPASS_META: "yes"
+      OVERPASS_META: "no"
       OVERPASS_MODE: clone
       OVERPASS_DIFF_URL: https://planet.openstreetmap.org/replication/minute/
     volumes:
