@@ -18,11 +18,20 @@ public class LiveSpeedPoint
     /// <summary>Stable OSM way identifier; null until map-matched</summary>
     public long? OsmWayId { get; set; }
 
-    /// <summary>OSM node ID at start of the matched directed edge; null until map-matched</summary>
-    public long? OsmStartNodeId { get; set; }
+    /// <summary>Max allowed speed in km/h for this edge; null if not available.</summary>
+    public double? SpeedLimitKmh { get; set; }
 
-    /// <summary>OSM node ID at end of the matched directed edge; null until map-matched</summary>
-    public long? OsmEndNodeId { get; set; }
+    /// <summary>
+    /// Fraction of max speed lost to traffic (0 = free flow, 1 = standing).
+    /// Null when SpeedLimitKmh is unavailable.
+    /// </summary>
+    public double? DelayFactor { get; set; }
+
+    /// <summary>
+    /// Traffic jam severity estimate (0 = no jam, ~0.7 = stop-and-go, 1 = standing traffic).
+    /// Null when SpeedLimitKmh is unavailable.
+    /// </summary>
+    public double? JamEstimate { get; set; }
 
     public DateTime Timestamp { get; set; }
 }
@@ -53,6 +62,7 @@ public class LiveTrafficQuery
     public int MaxAgeMinutes { get; set; } = 15;
 }
 
+
 public class BlockIpRequest
 {
     [Required]
@@ -74,7 +84,7 @@ public class AdminStatsResponse
     public int ContributorCount { get; set; }
     public int AdminCount { get; set; }
     public int ActiveApiKeys { get; set; }
-    public int AggregatedEdges { get; set; }
+    public int AggregatedWays { get; set; }
     public int BlockedIps { get; set; }
 }
 

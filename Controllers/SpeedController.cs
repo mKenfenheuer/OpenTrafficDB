@@ -22,7 +22,7 @@ public class SpeedController(
     private int ContributorThreshold =>
         int.TryParse(config["Security:ContributorThreshold"], out var t) ? t : 100;
 
-    /// <summary>Submit a single speed observation. Map-matching to Valhalla edges is handled server-side.</summary>
+    /// <summary>Submit a single speed observation. Map-matching to OSM ways is handled server-side.</summary>
     [HttpPost]
     [ProducesResponseType(typeof(SubmitSpeedResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

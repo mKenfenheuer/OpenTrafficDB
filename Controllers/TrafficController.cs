@@ -43,15 +43,16 @@ public class TrafficController(
     }
 
     /// <summary>
-    /// Live edge-level traffic statistics as CSV (rolling 30-minute window).
-    /// Aggregates observations by OSM directed edge (way_id + start/end node IDs).
-    /// Format: osm_way_id,start_node_id,end_node_id,avg_speed_kmh,sample_count
+    /// Current per-way traffic as CSV: live observations (last 30 min) take priority;
+    /// ways without live data fall back to the historic baseline for the matching
+    /// day-of-week / 5-minute time slot, giving full road-network coverage.
+    /// Format: osm_way_id,speed_kmh,speed_limit_kmh,delay_factor,jam_estimate,source,live_samples,historic_samples
     /// </summary>
-    [HttpGet("live/edge/csv")]
+    [HttpGet("current/csv")]
     [Produces("text/csv")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<IActionResult> GetLiveEdgeCsv(CancellationToken ct)
+    public async Task<IActionResult> GetCurrentWayCsv(CancellationToken ct)
     {
         var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var keyId = User.FindFirstValue("keyId") ?? string.Empty;
@@ -60,24 +61,22 @@ public class TrafficController(
             return StatusCode(429, new { error = "Rate limit exceeded." });
 
         Response.ContentType = "text/csv";
-        Response.Headers["Content-Disposition"] = "attachment; filename=\"live_edge_traffic.csv\"";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"current_way_traffic.csv\"";
 
-        await aggregation.WriteLiveEdgeCsvAsync(Response.Body, ct);
+        await aggregation.WriteCurrentWayCsvAsync(Response.Body, ct);
         return new EmptyResult();
     }
 
     /// <summary>
-    /// Historic edge traffic as CSV from pre-aggregated 5-minute buckets (full week).
-    /// One row per (edge, time_slot) — only slots with observed data are emitted.
-    /// time = day_of_week * 288 + minute_of_day / 5, range 0–2015 (Sunday midnight = 0).
-    /// Format: osm_way_id,start_node_id,end_node_id,speed,time
-    ///   speed in km/h.
+    /// Live way-level traffic statistics as CSV (rolling 30-minute window).
+    /// Aggregates observations by OSM way ID.
+    /// Format: osm_way_id,avg_speed_kmh,sample_count
     /// </summary>
-    [HttpGet("historic/edge/csv")]
+    [HttpGet("live/way/csv")]
     [Produces("text/csv")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<IActionResult> GetHistoricEdgeCsv(CancellationToken ct)
+    public async Task<IActionResult> GetLiveWayCsv(CancellationToken ct)
     {
         var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var keyId = User.FindFirstValue("keyId") ?? string.Empty;
@@ -86,9 +85,60 @@ public class TrafficController(
             return StatusCode(429, new { error = "Rate limit exceeded." });
 
         Response.ContentType = "text/csv";
-        Response.Headers["Content-Disposition"] = "attachment; filename=\"historic_edge_traffic.csv\"";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"live_way_traffic.csv\"";
 
-        await aggregation.WriteHistoricEdgeCsvAsync(Response.Body, ct);
+        await aggregation.WriteLiveWayCsvAsync(Response.Body, ct);
+        return new EmptyResult();
+    }
+
+    /// <summary>
+    /// Historic way traffic as CSV from pre-aggregated 5-minute buckets (full week).
+    /// One row per (way, time_slot) — only slots with observed data are emitted.
+    /// time = day_of_week * 288 + minute_of_day / 5, range 0–2015 (Sunday midnight = 0).
+    /// Format: osm_way_id,speed,time
+    ///   speed in km/h.
+    /// </summary>
+    [HttpGet("historic/way/csv")]
+    [Produces("text/csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> GetHistoricWayCsv(CancellationToken ct)
+    {
+        var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var keyId = User.FindFirstValue("keyId") ?? string.Empty;
+
+        if (!abuseDetection.CheckReadRate(ip, keyId))
+            return StatusCode(429, new { error = "Rate limit exceeded." });
+
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"historic_way_traffic.csv\"";
+
+        await aggregation.WriteHistoricWayCsvAsync(Response.Body, ct);
+        return new EmptyResult();
+    }
+
+    /// <summary>
+    /// Historic H3-grid traffic CSV from pre-aggregated 5-minute buckets (full week).
+    /// One row per (h3_index, time_slot). time = day_of_week * 288 + minute_of_day / 5, range 0–2015.
+    /// Format: h3_index,speed,time
+    ///   h3_index: H3 cell id as lowercase hex string; speed in km/h.
+    /// </summary>
+    [HttpGet("historic/h3/csv")]
+    [Produces("text/csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> GetHistoricH3Csv(CancellationToken ct)
+    {
+        var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var keyId = User.FindFirstValue("keyId") ?? string.Empty;
+
+        if (!abuseDetection.CheckReadRate(ip, keyId))
+            return StatusCode(429, new { error = "Rate limit exceeded." });
+
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"historic_h3_traffic.csv\"";
+
+        await aggregation.WriteHistoricH3CsvAsync(Response.Body, ct);
         return new EmptyResult();
     }
 

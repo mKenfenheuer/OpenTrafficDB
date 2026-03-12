@@ -17,7 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<SpeedObservation> SpeedObservations => Set<SpeedObservation>();
     public DbSet<BlockedIp> BlockedIps => Set<BlockedIp>();
-    public DbSet<EdgeSpeedAggregate> EdgeSpeedAggregates => Set<EdgeSpeedAggregate>();
+    public DbSet<WaySpeedAggregate> WaySpeedAggregates => Set<WaySpeedAggregate>();
     public DbSet<H3SpeedAggregate> H3SpeedAggregates => Set<H3SpeedAggregate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -45,9 +45,8 @@ public class AppDbContext : DbContext
             // Primary query pattern: recency + bbox
             e.HasIndex(o => o.Timestamp);
             e.HasIndex(o => new { o.Latitude, o.Longitude });
-            // OSM edge reference — filters unmatched rows
-            e.HasIndex(o => new { o.OsmWayId, o.OsmStartNodeId, o.OsmEndNodeId })
-             .HasFilter("\"OsmWayId\" IS NOT NULL");
+            // OSM way reference — filters unmatched rows
+            e.HasIndex(o => o.OsmWayId).HasFilter("\"OsmWayId\" IS NOT NULL");
             // H3 spatial index
             e.HasIndex(o => o.H3CellIndex).HasFilter("\"H3CellIndex\" IS NOT NULL");
             e.HasIndex(o => o.TripId);
@@ -61,10 +60,10 @@ public class AppDbContext : DbContext
             e.HasIndex(b => b.IpHash).IsUnique();
         });
 
-        modelBuilder.Entity<EdgeSpeedAggregate>(e =>
+        modelBuilder.Entity<WaySpeedAggregate>(e =>
         {
-            // Unique business key: OSM directed edge (way + start/end nodes) + time bucket
-            e.HasIndex(a => new { a.OsmWayId, a.OsmStartNodeId, a.OsmEndNodeId, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
+            // Unique business key: OSM way + time bucket
+            e.HasIndex(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
         });
 
         modelBuilder.Entity<H3SpeedAggregate>(e =>

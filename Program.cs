@@ -78,7 +78,7 @@ public class Program
                     **OpenTrafficDB** is a community-driven traffic speed database.
 
                     Contributors submit anonymized GPS speed observations which are
-                    server-side map-matched to Valhalla edge IDs and aggregated into
+                    server-side map-matched to OSM way IDs and aggregated into
                     Valhalla-compatible predicted traffic exports.
 
                     **Machine authentication flow:**

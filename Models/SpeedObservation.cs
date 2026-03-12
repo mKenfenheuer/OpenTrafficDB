@@ -31,11 +31,8 @@ public class SpeedObservation
     /// <summary>Stable OSM way identifier. Populated after server-side map matching.</summary>
     public long? OsmWayId { get; set; }
 
-    /// <summary>OSM node ID at the start of the matched directed edge.</summary>
-    public long? OsmStartNodeId { get; set; }
-
-    /// <summary>OSM node ID at the end of the matched directed edge.</summary>
-    public long? OsmEndNodeId { get; set; }
+    /// <summary>Max allowed speed in km/h for the matched edge. Populated after map matching.</summary>
+    public double? SpeedLimitKmh { get; set; }
 
     /// <summary>
     /// H3 cell index at resolution 9 (~174 m hexagons) for spatial aggregation.
@@ -44,7 +41,7 @@ public class SpeedObservation
     public long? H3CellIndex { get; set; }
 
     /// <summary>
-    /// True once this observation has been folded into EdgeSpeedAggregate and H3SpeedAggregate.
+    /// True once this observation has been folded into WaySpeedAggregate and H3SpeedAggregate.
     /// Aggregated observations outside the live window (>1 h) are deleted by the background service.
     /// </summary>
     public bool IsAggregated { get; set; }

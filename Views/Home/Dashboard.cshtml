@@ -38,8 +38,8 @@
                 <div class="stat-value contributor" id="gs-contributors">—</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">Aggregated Edges</div>
-                <div class="stat-value" id="gs-edges">—</div>
+                <div class="stat-label">Aggregated Ways</div>
+                <div class="stat-value" id="gs-ways">—</div>
             </div>
         </div>
     </div>
@@ -164,7 +164,7 @@
             document.getElementById('gs-24h').textContent = s.observationsLast24h.toLocaleString();
             document.getElementById('gs-users').textContent = s.totalUsers.toLocaleString();
             document.getElementById('gs-contributors').textContent = s.contributorCount.toLocaleString();
-            document.getElementById('gs-edges').textContent = s.aggregatedEdges.toLocaleString();
+            document.getElementById('gs-ways').textContent = s.aggregatedWays.toLocaleString();
         }
     </script>
 }

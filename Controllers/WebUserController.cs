@@ -164,7 +164,7 @@ public class WebUserController(
             ObservationsLast24h = await db.SpeedObservations.LongCountAsync(o => o.CreatedAt >= yesterday),
             TotalUsers          = await db.Users.CountAsync(u => u.IsActive),
             ContributorCount    = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.Contributor),
-            AggregatedEdges     = await db.EdgeSpeedAggregates.Select(a => a.OsmWayId).Distinct().CountAsync()
+            AggregatedWays     = await db.WaySpeedAggregates.Select(a => a.OsmWayId).Distinct().CountAsync()
         });
     }
 

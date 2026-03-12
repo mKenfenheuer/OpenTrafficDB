@@ -12,10 +12,10 @@
     <p class="text-muted text-sm" style="line-height:1.8">
         OpenTrafficDB uses a server-side <a href="https://github.com/valhalla/valhalla" target="_blank" rel="noopener">Valhalla</a>
         instance for map matching. When you submit a GPS observation (lat/lon/speed), the server
-        automatically matches it to the nearest road edge — you never need to compute or provide Valhalla edge IDs yourself.
+        automatically matches it to the nearest road way — you never need to compute or provide OSM way IDs yourself.
     </p>
     <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
-        Aggregated speeds are stored per Valhalla edge and time bucket. This data can be exported as a
+        Aggregated speeds are stored per OSM way and time bucket. This data can be exported as a
         predicted traffic CSV and loaded directly into your own Valhalla instance.
     </p>
 </div>
@@ -41,14 +41,14 @@
             <div style="width:28px;height:28px;border-radius:50%;background:rgba(47,129,247,0.15);color:var(--accent);font-size:0.8rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">3</div>
             <div>
                 <div style="font-size:0.875rem;font-weight:600;color:var(--text)">Map matching via Valhalla</div>
-                <div class="text-muted text-sm" style="margin-top:2px">Server calls the local Valhalla instance's <code>trace_attributes</code> endpoint to identify the road edge</div>
+                <div class="text-muted text-sm" style="margin-top:2px">Server calls the local Valhalla instance's <code>trace_attributes</code> endpoint to identify the road way</div>
             </div>
         </div>
         <div style="display:flex;gap:16px;align-items:flex-start">
             <div style="width:28px;height:28px;border-radius:50%;background:rgba(47,129,247,0.15);color:var(--accent);font-size:0.8rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">4</div>
             <div>
                 <div style="font-size:0.875rem;font-weight:600;color:var(--text)">Storage and aggregation</div>
-                <div class="text-muted text-sm" style="margin-top:2px">Observation stored with Valhalla edge ID. A background job aggregates observations into per-edge, per-bucket average speeds.</div>
+                <div class="text-muted text-sm" style="margin-top:2px">Observation stored with OSM way ID. A background job aggregates observations into per-way, per-bucket average speeds.</div>
             </div>
         </div>
     </div>
@@ -76,7 +76,7 @@
     <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
         The file uses Valhalla's standard format:
     </p>
-    <div class="code-block"><span class="code-comment"># edgeId,bucket0,bucket1,...,bucket2015</span>
+    <div class="code-block"><span class="code-comment"># wayId,bucket0,bucket1,...,bucket2015</span>
 123456789,72,71,71,72,73,...</div>
 </div>
 
@@ -102,7 +102,7 @@
         <li>Valhalla 3.x or later with predicted traffic support compiled in</li>
         <li>Your Valhalla tiles must cover the same geographic region as the observations</li>
         <li>The <code>valhalla_add_predicted_traffic</code> binary must be on your <code>PATH</code></li>
-        <li>Edge IDs in the CSV correspond to the Valhalla graph tiles — they are not transferable between different tile builds</li>
+        <li>Way IDs in the CSV correspond to the Valhalla graph tiles — they are not transferable between different tile builds</li>
     </ul>
     <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
         See the <a href="https://valhalla.github.io/valhalla/meili/" target="_blank" rel="noopener">Valhalla documentation</a>

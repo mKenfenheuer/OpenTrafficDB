@@ -13,7 +13,7 @@ namespace OpenTrafficDB.Services;
 /// Performs server-side map matching of GPS observations to OSM road segments
 /// using the Valhalla /trace_attributes API.
 ///
-/// Stable edge identity: (OsmWayId, OsmStartNodeId, OsmEndNodeId).
+/// Stable way identity: (OsmWayId, OsmStartNodeId, OsmEndNodeId).
 /// These three values uniquely identify a directed road segment in OSM and
 /// remain stable across Valhalla tile rebuilds.
 /// </summary>
@@ -24,15 +24,17 @@ public class ValhallaMapMatchingService(
 {
     private readonly string _valhallaBaseUrl = config["Valhalla:BaseUrl"] ?? "http://localhost:8002";
 
+    private static readonly Action<ILogger, int, Exception?> _logMapMatched =
+        LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
+
     /// <summary>Result of matching a single GPS point to an OSM road segment.</summary>
     public record MatchResult(
         long OsmWayId,
-        long OsmStartNodeId,
-        long OsmEndNodeId,
-        long H3CellIndex);
+        long H3CellIndex,
+        double? SpeedLimitKmh);
 
     /// <summary>
-    /// Match a GPS trace to OSM edges via Valhalla trace_attributes.
+    /// Match a GPS trace to OSM ways via Valhalla trace_attributes.
     /// Returns a map from observation index to its MatchResult.
     /// </summary>
     public async Task<Dictionary<int, MatchResult>> MatchTraceAsync(
@@ -57,8 +59,7 @@ public class ValhallaMapMatchingService(
                 {
                     "matched.type",
                     "edge.way_id",
-                    "edge.begin_osm_node_id",
-                    "edge.end_osm_node_id",
+                    "edge.speed",
                     "matched.point",
                     "matched.edge_index"
                 },
@@ -94,16 +95,15 @@ public class ValhallaMapMatchingService(
                 var mp = result.MatchedPoints[i];
                 if (mp.Type != "matched" || mp.EdgeIndex is null or ulong.MaxValue || mp.Lat is null || mp.Lon is null) continue;
 
-                var edge = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
-                if (edge?.WayId is null || edge.StartNodeId == 0 || edge.EndNodeId == 0) continue;
+                var way = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
+                if (way?.WayId is null) continue;
 
                 var h3 = H3Index.FromLatLng(new LatLng(mp.Lat.Value, mp.Lon.Value), 9);
 
                 results[i] = new MatchResult(
-                    OsmWayId:      edge.WayId.Value,
-                    OsmStartNodeId: edge.StartNodeId,
-                    OsmEndNodeId:   edge.EndNodeId,
-                    H3CellIndex:   (long)(ulong)h3);
+                    OsmWayId:       way.WayId.Value,
+                    H3CellIndex:    (long)(ulong)h3,
+                    SpeedLimitKmh:  way.Speed);
             }
             return results;
         }
@@ -120,8 +120,9 @@ public class ValhallaMapMatchingService(
     /// </summary>
     public async Task ProcessUnmatchedAsync(AppDbContext db, CancellationToken ct = default)
     {
+        // Load only observations that are unmatched and not already marked aggregated (stale unmatched).
         var unmatched = await db.SpeedObservations
-            .Where(o => o.OsmWayId == null)
+            .Where(o => o.OsmWayId == null && !o.IsAggregated)
             .OrderBy(o => o.Timestamp)
             .Take(5000)
             .ToListAsync(ct);
@@ -129,6 +130,7 @@ public class ValhallaMapMatchingService(
         if (unmatched.Count == 0) return;
 
         int updatedCount = 0;
+        var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
 
         foreach (var trip in unmatched.GroupBy(o => o.TripId))
         {
@@ -141,18 +143,22 @@ public class ValhallaMapMatchingService(
                 if (idx >= sorted.Count) continue;
                 var obs = sorted[idx];
                 obs.OsmWayId       = match.OsmWayId;
-                obs.OsmStartNodeId = match.OsmStartNodeId;
-                obs.OsmEndNodeId   = match.OsmEndNodeId;
                 obs.H3CellIndex    = match.H3CellIndex;
+                obs.SpeedLimitKmh  = match.SpeedLimitKmh;
                 updatedCount++;
+            }
+
+            // Mark observations that Valhalla could not match and are older than 5 minutes
+            // as aggregated so they are cleaned up by ReaggregateAsync and not retried endlessly.
+            foreach (var obs in sorted)
+            {
+                if (obs.OsmWayId == null && obs.CreatedAt < staleCutoff)
+                    obs.IsAggregated = true;
             }
         }
 
-        if (updatedCount > 0)
-        {
-            await db.SaveChangesAsync(ct);
-            logger.LogInformation("Map-matched {Count} observations to OSM edges.", updatedCount);
-        }
+        await db.SaveChangesAsync(ct);
+        _logMapMatched(logger, updatedCount, null);
     }
 
     // Google Polyline encoding at precision 6.
@@ -199,16 +205,14 @@ public class ValhallaMapMatchingService(
         [JsonPropertyName("way_id")]
         public long? WayId { get; set; }
 
-        [JsonPropertyName("begin_osm_node_id")]
-        public long StartNodeId { get; set; }
-
-        [JsonPropertyName("end_osm_node_id")]
-        public long EndNodeId { get; set; }
+        /// <summary>Max allowed speed in km/h for this edge, as reported by Valhalla.</summary>
+        [JsonPropertyName("speed")]
+        public double? Speed { get; set; }
     }
 
     private class MatchedPoint
     {
-        /// <summary>ulong.MaxValue (18446744073709551615) = Valhalla sentinel for "no edge matched"</summary>
+        /// <summary>ulong.MaxValue (18446744073709551615) = Valhalla sentinel for "no way matched"</summary>
         [JsonPropertyName("edge_index")]
         public ulong? EdgeIndex { get; set; }
 

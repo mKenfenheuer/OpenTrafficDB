@@ -99,46 +99,6 @@ namespace OpenTrafficDB.Migrations
                     b.ToTable("BlockedIps");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Models.EdgeSpeedAggregate", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<int>("DayOfWeek")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("FiveMinuteBucket")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("LastUpdated")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<long>("OsmEndNodeId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("OsmStartNodeId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("OsmWayId")
-                        .HasColumnType("bigint");
-
-                    b.Property<int>("SampleCount")
-                        .HasColumnType("integer");
-
-                    b.Property<double>("SumSpeedKmh")
-                        .HasColumnType("double precision");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OsmWayId", "OsmStartNodeId", "OsmEndNodeId", "DayOfWeek", "FiveMinuteBucket")
-                        .IsUnique();
-
-                    b.ToTable("EdgeSpeedAggregates");
-                });
-
             modelBuilder.Entity("OpenTrafficDB.Models.H3SpeedAggregate", b =>
                 {
                     b.Property<long>("Id")
@@ -214,14 +174,11 @@ namespace OpenTrafficDB.Migrations
                     b.Property<double>("Longitude")
                         .HasColumnType("double precision");
 
-                    b.Property<long?>("OsmEndNodeId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("OsmStartNodeId")
-                        .HasColumnType("bigint");
-
                     b.Property<long?>("OsmWayId")
                         .HasColumnType("bigint");
+
+                    b.Property<double?>("SpeedLimitKmh")
+                        .HasColumnType("double precision");
 
                     b.Property<double>("SpeedMs")
                         .HasColumnType("double precision");
@@ -240,6 +197,9 @@ namespace OpenTrafficDB.Migrations
                     b.HasIndex("H3CellIndex")
                         .HasFilter("\"H3CellIndex\" IS NOT NULL");
 
+                    b.HasIndex("OsmWayId")
+                        .HasFilter("\"OsmWayId\" IS NOT NULL");
+
                     b.HasIndex("Timestamp");
 
                     b.HasIndex("TripId");
@@ -247,9 +207,6 @@ namespace OpenTrafficDB.Migrations
                     b.HasIndex("IsAggregated", "CreatedAt");
 
                     b.HasIndex("Latitude", "Longitude");
-
-                    b.HasIndex("OsmWayId", "OsmStartNodeId", "OsmEndNodeId")
-                        .HasFilter("\"OsmWayId\" IS NOT NULL");
 
                     b.ToTable("SpeedObservations");
                 });
@@ -319,6 +276,43 @@ namespace OpenTrafficDB.Migrations
                         .HasFilter("\"VerificationToken\" IS NOT NULL");
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("OpenTrafficDB.Models.WaySpeedAggregate", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("DayOfWeek")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("FiveMinuteBucket")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("LastUpdated")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("OsmWayId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("SampleCount")
+                        .HasColumnType("integer");
+
+                    b.Property<double?>("SpeedLimitKmh")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("SumSpeedKmh")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OsmWayId", "DayOfWeek", "FiveMinuteBucket")
+                        .IsUnique();
+
+                    b.ToTable("WaySpeedAggregates");
                 });
 
             modelBuilder.Entity("OpenTrafficDB.Models.ApiKey", b =>

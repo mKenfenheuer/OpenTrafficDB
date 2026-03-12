@@ -1,24 +1,15 @@
 namespace OpenTrafficDB.Models;
 
 /// <summary>
-/// Pre-aggregated speed data per OSM directed edge per 5-minute time bucket.
-///
-/// Stable key: (OsmWayId, OsmStartNodeId, OsmEndNodeId, DayOfWeek, FiveMinuteBucket).
-/// The start/end OSM node IDs uniquely identify the directed segment and remain
-/// stable across Valhalla tile rebuilds.
+/// Pre-aggregated speed data per OSM way per 5-minute time bucket.
+/// Key: (OsmWayId, DayOfWeek, FiveMinuteBucket)
 /// </summary>
-public class EdgeSpeedAggregate
+public class WaySpeedAggregate
 {
     public long Id { get; set; }
 
     /// <summary>Stable OSM way identifier</summary>
     public long OsmWayId { get; set; }
-
-    /// <summary>OSM node ID at the start of this directed edge</summary>
-    public long OsmStartNodeId { get; set; }
-
-    /// <summary>OSM node ID at the end of this directed edge</summary>
-    public long OsmEndNodeId { get; set; }
 
     /// <summary>0 = Sunday … 6 = Saturday (matches C# DayOfWeek)</summary>
     public int DayOfWeek { get; set; }
@@ -30,6 +21,9 @@ public class EdgeSpeedAggregate
     public double SumSpeedKmh { get; set; }
 
     public int SampleCount { get; set; }
+
+    /// <summary>Max allowed speed in km/h from Valhalla edge data. Updated on each aggregation pass.</summary>
+    public double? SpeedLimitKmh { get; set; }
 
     public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
 }

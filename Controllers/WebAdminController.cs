@@ -40,7 +40,7 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
             ContributorCount    = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.Contributor),
             AdminCount          = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.Admin),
             ActiveApiKeys       = await db.ApiKeys.CountAsync(k => k.IsActive),
-            AggregatedEdges     = await db.EdgeSpeedAggregates.Select(a => a.OsmWayId).Distinct().CountAsync(),
+            AggregatedWays     = await db.WaySpeedAggregates.Select(a => a.OsmWayId).Distinct().CountAsync(),
             BlockedIps          = await db.BlockedIps.CountAsync(b => b.ExpiresAt == null || b.ExpiresAt > now)
         });
     }

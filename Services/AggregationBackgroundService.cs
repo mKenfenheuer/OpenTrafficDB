@@ -4,7 +4,7 @@ namespace OpenTrafficDB.Services;
 
 /// <summary>
 /// Background service that runs every 5 minutes:
-/// 1. Map-matches unmatched GPS observations to Valhalla edge IDs.
+/// 1. Map-matches unmatched GPS observations to OSM way IDs.
 /// 2. Re-aggregates all matched observations into RoadSpeedAggregates.
 /// </summary>
 public class AggregationBackgroundService(

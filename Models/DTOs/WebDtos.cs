@@ -102,5 +102,5 @@ public class WebStatsResponse
     public long ObservationsLast24h  { get; set; }
     public int  TotalUsers           { get; set; }
     public int  ContributorCount     { get; set; }
-    public int  AggregatedEdges      { get; set; }
+    public int  AggregatedWays      { get; set; }
 }
