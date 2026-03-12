@@ -55,7 +55,7 @@ services:
         Host=postgres;Port=5432;Database=opentrafficdb;
         Username=opentraffic;Password=${POSTGRES_PASSWORD:-changeme}
       Valhalla__BaseUrl: http://localhost:8096
-      Overpass__BaseUrl: https://overpass-api.de
+      Overpass__BaseUrl: http://localhost:8097
     depends_on:
       postgres:
         condition: service_healthy
