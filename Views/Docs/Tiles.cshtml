@@ -1,0 +1,208 @@
+@{
+    Layout = "~/Views/Docs/_DocsLayout.cshtml";
+    ViewData["Title"] = "Vector Tiles";
+    ViewData["DocsPage"] = "tiles";
+}
+
+<h1 style="font-size:1.75rem;font-weight:800;margin-bottom:8px">Vector Tiles</h1>
+<p class="text-muted" style="margin-bottom:32px">Embed live and historic traffic overlays in any map application using the Mapbox Vector Tile (MVT) endpoint.</p>
+
+<div class="card section">
+    <div class="card-title">Overview</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        The tile endpoint serves <a href="https://docs.mapbox.com/vector-tiles/specification/" target="_blank" rel="noopener">Mapbox Vector Tiles</a>
+        (protobuf, gzip-compressed) in standard XYZ/Slippy-map coordinates.
+        Tiles are <strong style="color:var(--text)">public</strong> — no authentication is required to fetch them.
+        They can be consumed by any MVT-compatible library such as MapLibre GL JS, Mapbox GL JS, Leaflet (via plugin), or QGIS.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Endpoint</div>
+    <div class="code-block"><span class="code-comment">GET /tiles/traffic/current/{z}/{x}/{y}</span></div>
+    <table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:0.82rem">
+        <thead>
+            <tr style="border-bottom:1px solid var(--border)">
+                <th style="text-align:left;padding:6px 10px;color:var(--text-muted);font-weight:600">Parameter</th>
+                <th style="text-align:left;padding:6px 10px;color:var(--text-muted);font-weight:600">Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>z</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Zoom level (0–22). Recommended range: 8–16.</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>x</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Tile column (0 to 2<sup>z</sup>−1).</td>
+            </tr>
+            <tr>
+                <td style="padding:8px 10px"><code>y</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Tile row, Y=0 at north (standard slippy-map convention).</td>
+            </tr>
+        </tbody>
+    </table>
+    <p class="text-muted text-sm" style="margin-top:12px;line-height:1.8">
+        Response headers: <code>Content-Encoding: gzip</code> · <code>Content-Type: application/vnd.mapbox-vector-tile</code> · <code>Cache-Control: public, max-age=60</code>
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Tile Layer: <code>traffic</code></div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Each tile contains a single layer named <code>traffic</code>. Features are <strong style="color:var(--text)">LineStrings</strong> representing OSM road ways with the following properties:
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+        <thead>
+            <tr style="border-bottom:1px solid var(--border)">
+                <th style="text-align:left;padding:6px 10px;color:var(--text-muted);font-weight:600">Property</th>
+                <th style="text-align:left;padding:6px 10px;color:var(--text-muted);font-weight:600">Type</th>
+                <th style="text-align:left;padding:6px 10px;color:var(--text-muted);font-weight:600">Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>osm_way_id</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number</td>
+                <td style="padding:8px 10px;color:var(--text-muted)">OSM way identifier</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>speed_kmh</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number</td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Observed average speed in km/h</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>speed_limit_kmh</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number?</td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Speed limit in km/h; null if unknown</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>delay_factor</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number?</td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Fraction of speed limit lost to traffic: 0 = free flow, 1 = standing. Null when no speed limit is known.</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>jam_estimate</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number?</td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Congestion severity: 0 = free flow, ~0.7 = stop-and-go, 1 = standing traffic. Null when no speed limit is known.</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>source</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">String</td>
+                <td style="padding:8px 10px;color:var(--text-muted)"><code>"live"</code> (last 30 min) or <code>"historic"</code> (matching day/time bucket baseline)</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>live_samples</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number</td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number of live observations contributing to this way</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 10px"><code>historic_samples</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number</td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number of historic aggregated observations</td>
+            </tr>
+            <tr>
+                <td style="padding:8px 10px"><code>osm_max_speed</code></td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Number?</td>
+                <td style="padding:8px 10px;color:var(--text-muted)">Speed limit parsed from OSM <code>maxspeed</code> tag in km/h; null if not available</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card section">
+    <div class="card-title">Speed & Data Priority</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        For each road way in a tile, data is selected in priority order:
+    </p>
+    <ol class="text-muted text-sm" style="line-height:2;margin:8px 0 0 20px">
+        <li><strong style="color:var(--text)">Live</strong> — observations from the last 30 minutes take priority. <code>source = "live"</code></li>
+        <li><strong style="color:var(--text)">Historic baseline</strong> — if no live data exists, the pre-aggregated 5-minute bucket that matches the current day-of-week and time-of-day is used. <code>source = "historic"</code></li>
+    </ol>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+        Ways with neither live nor historic data are not included in the tile.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">MapLibre GL JS Example</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">Add the traffic overlay to an existing MapLibre map:</p>
+    <div class="code-block"><span class="code-comment">// Add traffic tile source</span>
+map.addSource('traffic', {
+  type: 'vector',
+  tiles: ['https://opentrafficdb.example.com/tiles/traffic/current/{z}/{x}/{y}'],
+  minzoom: 8,
+  maxzoom: 16
+});
+
+<span class="code-comment">// Colour roads by congestion level</span>
+map.addLayer({
+  id: 'traffic-lines',
+  type: 'line',
+  source: 'traffic',
+  'source-layer': 'traffic',
+  paint: {
+    'line-width': ['interpolate', ['linear'], ['zoom'], 8, 2, 14, 5],
+    'line-color': [
+      'case',
+      ['has', 'jam_estimate'],
+      ['interpolate', ['linear'], ['get', 'jam_estimate'],
+        0.0, '#3fb950',   <span class="code-comment">// free flow — green</span>
+        0.4, '#d29922',   <span class="code-comment">// slowing   — yellow</span>
+        0.7, '#f85149'    <span class="code-comment">// congested — red</span>
+      ],
+      '#8b949e'           <span class="code-comment">// no speed-limit data</span>
+    ]
+  }
+});</div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Leaflet Example</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Use <a href="https://github.com/mapbox/leaflet-mapbox-gl" target="_blank" rel="noopener">leaflet-mapbox-gl</a> or
+        <a href="https://github.com/nickarner/leaflet-vectorgrid" target="_blank" rel="noopener">Leaflet.VectorGrid</a> to consume MVT in Leaflet:
+    </p>
+    <div class="code-block">L.vectorGrid.protobuf(
+  'https://opentrafficdb.example.com/tiles/traffic/current/{z}/{x}/{y}',
+  {
+    vectorTileLayerStyles: {
+      traffic: function(props) {
+        const jam = props.jam_estimate;
+        const color = jam == null  ? '#8b949e'
+                    : jam &lt; 0.35  ? '#3fb950'
+                    : jam &lt; 0.70  ? '#d29922'
+                    :                '#f85149';
+        return { color, weight: 3, opacity: 0.85 };
+      }
+    }
+  }
+).addTo(map);</div>
+</div>
+
+<div class="card section">
+    <div class="card-title">QGIS / Desktop GIS</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        Add as a <strong style="color:var(--text)">Vector Tile Layer</strong> in QGIS (Layer → Add Layer → Add Vector Tile Layer):
+    </p>
+    <div class="code-block">URL: https://opentrafficdb.example.com/tiles/traffic/current/{z}/{x}/{y}
+Min zoom: 8
+Max zoom: 16</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        Style the <code>traffic</code> layer using the <code>jam_estimate</code> or <code>speed_kmh</code> attribute with a graduated colour ramp.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Caching</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        Tiles are served with <code>Cache-Control: public, max-age=60</code>. For live traffic dashboards, refresh the tile source every 60 seconds by appending a cache-busting query parameter:
+    </p>
+    <div class="code-block"><span class="code-comment">// Refresh source every 60 s</span>
+setInterval(() => {
+  const src = map.getSource('traffic');
+  if (src) src.setTiles([
+    `https://opentrafficdb.example.com/tiles/traffic/current/{z}/{x}/{y}?t=${Date.now()}`
+  ]);
+}, 60_000);</div>
+</div>

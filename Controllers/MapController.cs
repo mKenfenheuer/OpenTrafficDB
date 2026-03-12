@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace OpenTrafficDB.Controllers;
 
+[ApiExplorerSettings(IgnoreApi = true)]
 public class MapController : Controller
 {
     /// <summary>Live traffic overlay map.</summary>

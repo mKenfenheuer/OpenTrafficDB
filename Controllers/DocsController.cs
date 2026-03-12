@@ -41,4 +41,12 @@ public class DocsController : Controller
         ViewData["DocsPage"] = "examples";
         return View();
     }
+
+    [HttpGet("tiles")]
+    [AllowAnonymous]
+    public IActionResult Tiles()
+    {
+        ViewData["DocsPage"] = "tiles";
+        return View();
+    }
 }
