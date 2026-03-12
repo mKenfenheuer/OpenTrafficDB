@@ -63,6 +63,16 @@ public class LiveTrafficQuery
 }
 
 
+/// <summary>Current traffic data for a single OSM way, used by tile generation.</summary>
+public record WayTrafficData(
+    double  SpeedKmh,
+    double? SpeedLimitKmh,
+    double? DelayFactor,
+    double? JamEstimate,
+    string  Source,
+    int     LiveSamples,
+    int     HistoricSamples);
+
 public class BlockIpRequest
 {
     [Required]

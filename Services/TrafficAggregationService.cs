@@ -355,6 +355,76 @@ public class TrafficAggregationService(AppDbContext db)
     }
 
     /// <summary>
+    /// Returns current traffic data keyed by OSM way ID for a specific set of ways.
+    /// Live observations (last 30 min) take priority over the historic baseline.
+    /// Used by tile generation.
+    /// </summary>
+    public async Task<Dictionary<long, WayTrafficData>> GetCurrentWayTrafficAsync(
+        IEnumerable<long> wayIds,
+        CancellationToken ct = default)
+    {
+        var ids = wayIds.ToList();
+        if (ids.Count == 0) return [];
+
+        var now    = DateTime.UtcNow;
+        var dow    = (int)now.DayOfWeek;
+        var bucket = ToFiveMinuteBucket(now);
+        var cutoff = now.AddMinutes(-30);
+
+        var historic = await db.WaySpeedAggregates
+            .Where(a => ids.Contains(a.OsmWayId) && a.DayOfWeek == dow && a.FiveMinuteBucket == bucket)
+            .ToListAsync(ct);
+
+        var liveRaw = await db.SpeedObservations
+            .Where(o => o.Timestamp >= cutoff && o.OsmWayId != null && ids.Contains(o.OsmWayId!.Value))
+            .Select(o => new { o.OsmWayId, SpeedKmh = o.SpeedMs * 3.6, o.SpeedLimitKmh })
+            .ToListAsync(ct);
+
+        var liveByWay = liveRaw
+            .GroupBy(o => o.OsmWayId!.Value)
+            .ToDictionary(
+                g => g.Key,
+                g => (
+                    AvgKmh:     g.Average(x => x.SpeedKmh),
+                    Count:      g.Count(),
+                    SpeedLimit: g.FirstOrDefault(x => x.SpeedLimitKmh != null)?.SpeedLimitKmh
+                ));
+
+        var historicByWay = historic.ToDictionary(a => a.OsmWayId);
+        var allIds = historicByWay.Keys.Union(liveByWay.Keys);
+
+        var result = new Dictionary<long, WayTrafficData>();
+        foreach (var wayId in allIds)
+        {
+            var hasLive     = liveByWay.TryGetValue(wayId, out var live);
+            var hasHistoric = historicByWay.TryGetValue(wayId, out var hist);
+
+            double speedKmh;
+            string source;
+            int liveSamples     = hasLive ? live.Count : 0;
+            int historicSamples = hasHistoric && hist!.SampleCount > 0 ? hist.SampleCount : 0;
+
+            if (hasLive)  { speedKmh = live.AvgKmh;                       source = "live"; }
+            else          { speedKmh = hist!.SumSpeedKmh / hist.SampleCount; source = "historic"; }
+
+            speedKmh = Math.Round(speedKmh, 1);
+            var speedLimit = (hasLive ? live.SpeedLimit : null)
+                          ?? (hasHistoric ? hist!.SpeedLimitKmh : null);
+
+            double? delayFactor = null, jamEstimate = null;
+            if (speedLimit is > 0)
+            {
+                var delay = Math.Clamp(1.0 - speedKmh / speedLimit.Value, 0.0, 1.0);
+                delayFactor = Math.Round(delay, 3);
+                jamEstimate = Math.Round(ComputeJam(delay), 3);
+            }
+
+            result[wayId] = new WayTrafficData(speedKmh, speedLimit, delayFactor, jamEstimate, source, liveSamples, historicSamples);
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Live H3-grid traffic CSV (rolling 30-minute window, resolution 9 ~174 m).
     /// Format: h3_index,avg_speed_kmh,sample_count
     ///   h3_index as lowercase hex string (e.g. 89283082803ffff)

@@ -33,6 +33,7 @@ public class Program
         builder.Services.AddScoped<TrafficAggregationService>();
         builder.Services.AddScoped<ValhallaMapMatchingService>();
         builder.Services.AddScoped<WayGeometryService>();
+        builder.Services.AddScoped<TrafficTileService>();
         builder.Services.AddHostedService<AggregationBackgroundService>();
         builder.Services.AddHostedService<WayGeometryBackgroundService>();
 
