@@ -63,6 +63,7 @@ public class TrafficAggregationService(AppDbContext db)
                 .ToHashSet();
 
             Dictionary<(long WayId, int Dow, int Bucket), double> existingAvgByKey = [];
+            Dictionary<(long WayId, int Dow, int Bucket), double?> existingLimitByKey = [];
             if (roadWorksWayIds.Count > 0)
             {
                 var existing = await db.WaySpeedAggregates
@@ -71,6 +72,9 @@ public class TrafficAggregationService(AppDbContext db)
                 existingAvgByKey = existing.ToDictionary(
                     a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket),
                     a => a.SumSpeedKmh / a.SampleCount);
+                existingLimitByKey = existing.ToDictionary(
+                    a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket),
+                    a => a.SpeedLimitKmh);
             }
 
             var wayBuckets = new Dictionary<(long WayId, int Dow, int Bucket), (double Sum, int Count, double? SpeedLimit)>();
@@ -90,6 +94,10 @@ public class TrafficAggregationService(AppDbContext db)
                     var threshold = obs.SpeedLimitKmh.Value * 0.7;
                     var existingKey = (obs.OsmWayId!.Value, dow, bucket);
                     var currentAvg = existingAvgByKey.GetValueOrDefault(existingKey, double.MaxValue);
+                    var currentSpeedLimit = existingLimitByKey.GetValueOrDefault(existingKey);
+                    if(currentSpeedLimit != null)
+                        if(currentSpeedLimit < obs.SpeedLimitKmh)
+                            threshold = currentSpeedLimit.Value * 0.7;
                     if (currentAvg >= threshold)
                         kmh = threshold;
                 }
