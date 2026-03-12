@@ -51,6 +51,14 @@ public class ValhallaMapMatchingService(
         {
             encoded_polyline = EncodePolyline6(points),
             costing = "auto",
+            costing_options = new
+            {
+                auto = new
+                {
+                    // Strongly discourage routing through private-access roads during map matching
+                    private_access_penalty = 10000
+                }
+            },
             shape_match = "map_snap",
             trace_options = new { search_radius = 25 },
             filters = new
@@ -60,6 +68,8 @@ public class ValhallaMapMatchingService(
                     "matched.type",
                     "edge.way_id",
                     "edge.speed",
+                    "edge.use",
+                    "edge.road_class",
                     "matched.point",
                     "matched.edge_index"
                 },
@@ -97,7 +107,7 @@ public class ValhallaMapMatchingService(
                 if ((mp.Type != "matched" && mp.Type != "interpolated") || mp.EdgeIndex is null or ulong.MaxValue || mp.Lat is null || mp.Lon is null) continue;
 
                 var way = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
-                if (way?.WayId is null) continue;
+                if (way?.WayId is null || way.IsExcluded) continue;
 
                 var h3 = H3Index.FromLatLng(new LatLng(mp.Lat.Value, mp.Lon.Value), 9);
 
@@ -235,6 +245,33 @@ public class ValhallaMapMatchingService(
         /// <summary>Max allowed speed in km/h for this edge, as reported by Valhalla.</summary>
         [JsonPropertyName("speed")]
         public double? Speed { get; set; }
+
+        /// <summary>
+        /// Valhalla road-use classification (e.g. "driveway", "parking_aisle", "road", ...).
+        /// Driveways and other non-public road uses are excluded from map matching results.
+        /// </summary>
+        [JsonPropertyName("use")]
+        public string? Use { get; set; }
+
+        /// <summary>
+        /// Valhalla road class (e.g. "motorway", "primary", "residential", "service_other", ...).
+        /// </summary>
+        [JsonPropertyName("road_class")]
+        public string? RoadClass { get; set; }
+
+        // Valhalla use values to exclude: driveways, parking aisles, emergency/drive-through access.
+        private static readonly HashSet<string> _excludedUses = ["driveway", "parking_aisle", "emergency_access", "drive_through_road"];
+
+        // Only these road classes represent publicly-drivable through-roads.
+        private static readonly HashSet<string> _allowedRoadClasses =
+        [
+            "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential"
+        ];
+
+        [JsonIgnore]
+        public bool IsExcluded =>
+            (Use is not null && _excludedUses.Contains(Use)) ||
+            (RoadClass is not null && !_allowedRoadClasses.Contains(RoadClass));
     }
 
     private class MatchedPoint

@@ -33,6 +33,13 @@ public class SpeedObservationRequest
     /// <summary>Anonymized trip UUID — must not contain user-identifiable information</summary>
     [Required]
     public string TripId { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>
+    /// Set to true when road works are present at this location.
+    /// The server will report a speed capped at 70% of the speed limit for this way,
+    /// unless the current aggregate is already below that threshold.
+    /// </summary>
+    public bool RoadWorks { get; set; }
 }
 
 public class SubmitSpeedResponse

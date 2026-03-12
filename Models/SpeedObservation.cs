@@ -46,6 +46,13 @@ public class SpeedObservation
     /// </summary>
     public bool IsAggregated { get; set; }
 
+    /// <summary>
+    /// Set by the contributor to indicate active road works at this location.
+    /// When true, the aggregation engine will use 70% of the speed limit as the
+    /// effective speed, unless the current aggregate is already below that threshold.
+    /// </summary>
+    public bool RoadWorks { get; set; }
+
     /// <summary>SHA-256 + pepper of contributor IP — never store raw IP</summary>
     public string IpHash { get; set; } = string.Empty;
 

@@ -55,6 +55,24 @@ public class TrafficAggregationService(AppDbContext db)
 
         if (newlyMatched.Count > 0)
         {
+            // Pre-load existing way aggregates for all ways that have road-works observations,
+            // so we can check whether the current aggregate is already below the 70% threshold.
+            var roadWorksWayIds = newlyMatched
+                .Where(o => o.RoadWorks && o.SpeedLimitKmh > 0)
+                .Select(o => o.OsmWayId!.Value)
+                .ToHashSet();
+
+            Dictionary<(long WayId, int Dow, int Bucket), double> existingAvgByKey = [];
+            if (roadWorksWayIds.Count > 0)
+            {
+                var existing = await db.WaySpeedAggregates
+                    .Where(a => roadWorksWayIds.Contains(a.OsmWayId) && a.SampleCount > 0)
+                    .ToListAsync(ct);
+                existingAvgByKey = existing.ToDictionary(
+                    a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket),
+                    a => a.SumSpeedKmh / a.SampleCount);
+            }
+
             var wayBuckets = new Dictionary<(long WayId, int Dow, int Bucket), (double Sum, int Count, double? SpeedLimit)>();
             var h3Buckets   = new Dictionary<(long Cell, int Dow, int Bucket), (double Sum, int Count)>();
 
@@ -64,6 +82,17 @@ public class TrafficAggregationService(AppDbContext db)
                 var dow    = (int)ts.DayOfWeek;
                 var bucket = ToFiveMinuteBucket(ts);
                 var kmh    = obs.SpeedMs * 3.6;
+
+                // Road works: cap speed at 70% of the limit, but only when the current
+                // aggregate is not already below that threshold (avoid inflating slow traffic).
+                if (obs.RoadWorks && obs.SpeedLimitKmh > 0)
+                {
+                    var threshold = obs.SpeedLimitKmh.Value * 0.7;
+                    var existingKey = (obs.OsmWayId!.Value, dow, bucket);
+                    var currentAvg = existingAvgByKey.GetValueOrDefault(existingKey, double.MaxValue);
+                    if (currentAvg >= threshold)
+                        kmh = threshold;
+                }
 
                 var eKey = (obs.OsmWayId!.Value, dow, bucket);
                 wayBuckets[eKey] = wayBuckets.TryGetValue(eKey, out var ea)

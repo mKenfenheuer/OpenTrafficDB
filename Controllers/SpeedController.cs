@@ -119,6 +119,7 @@ public class SpeedController(
             AltitudeMeters = req.AltitudeMeters,
             GpsAccuracyMeters = req.GpsAccuracyMeters,
             TripId = crypto.HashTripId(apiKeyId + req.TripId),
+            RoadWorks = req.RoadWorks,
             IpHash = ipHash,
             CreatedAt = DateTime.UtcNow
         };
