@@ -69,7 +69,7 @@ public class ValhallaMapMatchingService(
 
         var json = JsonSerializer.Serialize(request);
         var client = httpClientFactory.CreateClient("valhalla");
-        client.Timeout = TimeSpan.MaxValue;
+        client.Timeout = Timeout.InfiniteTimeSpan;
 
         try
         {
