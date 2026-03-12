@@ -74,13 +74,17 @@ Content-Type: application/json</span>
 </div>
 
 <div class="card section">
-    <div class="card-title">Step 6 — Export Traffic Data</div>
+    <div class="card-title">Step 6 — Use Traffic Data</div>
     <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
-        Download a Valhalla-compatible predicted traffic CSV at any time:
+        Consume aggregated traffic data as Mapbox Vector Tiles for map overlays, or download a Valhalla-compatible predicted traffic CSV for routing:
     </p>
-    <div class="code-block"><span class="code-url">GET /api/v1/traffic/predicted/csv</span>
+    <div class="code-block"><span class="code-comment"># MVT tiles (public, no auth)</span>
+<span class="code-url">GET /tiles/traffic/current/{z}/{x}/{y}</span>
+
+<span class="code-comment"># Valhalla predicted traffic CSV</span>
+<span class="code-url">GET /api/v1/traffic/predicted/csv</span>
 <span class="code-key">Authorization: Bearer &lt;your-api-key&gt;</span></div>
     <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
-        See the <a href="/docs/valhalla">Valhalla Integration</a> page for instructions on importing the CSV into your routing engine.
+        See <a href="/docs/tiles">Vector Tiles</a> for map integration examples, or <a href="/docs/valhalla">Valhalla Integration</a> for importing the CSV into your routing engine.
     </p>
 </div>

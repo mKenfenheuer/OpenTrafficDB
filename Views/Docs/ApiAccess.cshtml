@@ -14,7 +14,7 @@
     </p>
     <div class="code-block">Authorization: Bearer &lt;your-api-key&gt;</div>
     <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
-        Create and manage API keys on your <a href="/Home/Profile">Profile</a> page. Each key is shown only once and stored as a hash — keep it safe. You can create multiple keys (e.g. one per device) and revoke them individually.
+        Create and manage API keys on your <a href="/profile">Profile</a> page. Each key is shown only once and stored as a hash — keep it safe. You can create multiple keys (e.g. one per device) and revoke them individually.
     </p>
 </div>
 
@@ -41,9 +41,9 @@
 
     <div>
         <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">POST /api/v1/speed/batch</div>
-        <p class="text-muted text-sm" style="line-height:1.8">Submit up to 100 observations in one request. Not rate-limited. Invalid observations are rejected individually; valid ones are still accepted.</p>
+        <p class="text-muted text-sm" style="line-height:1.8">Submit up to 100,000 observations in one request. Not rate-limited. Invalid observations are rejected individually; valid ones are still accepted.</p>
         <div class="code-block"><span class="code-val">{
-    "observations": [ ... ]  <span class="code-comment">// 1–100 SpeedObservationRequest objects</span>
+    "observations": [ ... ]  <span class="code-comment">// 1–100,000 SpeedObservationRequest objects</span>
 }</span></div>
         <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
             Returns: <code>{"accepted": 98, "rejected": 2, "errors": ["[trip xyz]: ..."]}</code>
@@ -83,18 +83,10 @@
     </div>
 
     <div>
-        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /api/v1/traffic/predicted/tar</div>
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">GET /tiles/traffic/current/{z}/{x}/{y}</div>
         <p class="text-muted text-sm" style="line-height:1.8">
-            Download a <code>traffic.tar</code> archive pre-organised in Valhalla's tile folder hierarchy. Rate-limited.
-            The archive mirrors Valhalla's tile structure (<code>{level}/{tile_id/1000:D3}/{tile_id%1000:D3}.csv</code>),
-            so it can be extracted directly and passed to <code>valhalla_add_predicted_traffic</code> without
-            any post-processing:
-        </p>
-        <div class="code-block"><span class="code-comment"># extract, then import</span>
-tar -xf traffic.tar -C /path/to/traffic_tiles/
-valhalla_add_predicted_traffic --config valhalla.json -t /path/to/traffic_tiles/</div>
-        <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
-            Use this endpoint instead of <code>/csv</code> when your Valhalla build expects per-tile files rather than a single flat CSV.
+            Mapbox Vector Tile (MVT) endpoint for embedding live and historic traffic overlays in map applications. Public — no authentication required.
+            See <a href="/docs/tiles">Vector Tiles</a> for full documentation.
         </p>
     </div>
 </div>
