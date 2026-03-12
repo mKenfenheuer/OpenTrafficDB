@@ -161,33 +161,8 @@ public class ValhallaMapMatchingService(
         _logMapMatched(logger, updatedCount, null);
     }
 
-    // Google Polyline encoding at precision 6.
-    private static string EncodePolyline6(IEnumerable<(double Lat, double Lon, DateTime Time)> coords)
-    {
-        var sb = new StringBuilder();
-        int prevLat = 0, prevLon = 0;
-        foreach (var (lat, lon, _) in coords)
-        {
-            int iLat = (int)Math.Round(lat * 1e6);
-            int iLon = (int)Math.Round(lon * 1e6);
-            EncodeValue(sb, iLat - prevLat);
-            EncodeValue(sb, iLon - prevLon);
-            prevLat = iLat;
-            prevLon = iLon;
-        }
-        return sb.ToString();
-
-        static void EncodeValue(StringBuilder sb, int value)
-        {
-            int v = value < 0 ? ~(value << 1) : value << 1;
-            while (v >= 0x20)
-            {
-                sb.Append((char)(((v & 0x1f) | 0x20) + 63));
-                v >>= 5;
-            }
-            sb.Append((char)(v + 63));
-        }
-    }
+    private static string EncodePolyline6(IEnumerable<(double Lat, double Lon, DateTime Time)> coords) =>
+        PolylineEncoder.Encode(coords.Select(c => (c.Lat, c.Lon)));
 
     // --- Valhalla response DTOs ---
 

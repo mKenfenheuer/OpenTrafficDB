@@ -278,6 +278,54 @@ namespace OpenTrafficDB.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("OpenTrafficDB.Models.WayGeometry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("EncodedPolyline")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("FetchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("MaxLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("MaxLon")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MaxSpeedKmh")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("MinLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("MinLon")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("NodeCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("OsmWayId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OsmWayId")
+                        .IsUnique();
+
+                    b.HasIndex("MinLat", "MaxLat");
+
+                    b.HasIndex("MinLon", "MaxLon");
+
+                    b.ToTable("WayGeometries");
+                });
+
             modelBuilder.Entity("OpenTrafficDB.Models.WaySpeedAggregate", b =>
                 {
                     b.Property<long>("Id")

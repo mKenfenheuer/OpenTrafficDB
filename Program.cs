@@ -32,12 +32,21 @@ public class Program
         builder.Services.AddScoped<SpeedValidationService>();
         builder.Services.AddScoped<TrafficAggregationService>();
         builder.Services.AddScoped<ValhallaMapMatchingService>();
+        builder.Services.AddScoped<WayGeometryService>();
         builder.Services.AddHostedService<AggregationBackgroundService>();
+        builder.Services.AddHostedService<WayGeometryBackgroundService>();
 
         // HTTP client for Valhalla map matching
         builder.Services.AddHttpClient("valhalla", client =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
+        });
+
+        // HTTP client for Overpass API (way geometry fetching)
+        builder.Services.AddHttpClient("overpass", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(60);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenTrafficDB/1.0");
         });
 
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)

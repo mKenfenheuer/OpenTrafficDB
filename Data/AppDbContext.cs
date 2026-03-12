@@ -19,6 +19,7 @@ public class AppDbContext : DbContext
     public DbSet<BlockedIp> BlockedIps => Set<BlockedIp>();
     public DbSet<WaySpeedAggregate> WaySpeedAggregates => Set<WaySpeedAggregate>();
     public DbSet<H3SpeedAggregate> H3SpeedAggregates => Set<H3SpeedAggregate>();
+    public DbSet<WayGeometry> WayGeometries => Set<WayGeometry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -70,6 +71,15 @@ public class AppDbContext : DbContext
         {
             e.HasIndex(a => new { a.H3CellIndex, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
             e.HasIndex(a => a.H3CellIndex);
+        });
+
+        modelBuilder.Entity<WayGeometry>(e =>
+        {
+            // Fast lookup by OSM way ID (primary access pattern for tile generation)
+            e.HasIndex(g => g.OsmWayId).IsUnique();
+            // Spatial pre-filter: bbox overlap queries
+            e.HasIndex(g => new { g.MinLat, g.MaxLat });
+            e.HasIndex(g => new { g.MinLon, g.MaxLon });
         });
     }
 }

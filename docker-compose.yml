@@ -54,6 +54,7 @@ services:
         Host=postgres;Port=5432;Database=opentrafficdb;
         Username=opentraffic;Password=${POSTGRES_PASSWORD:-changeme}
       Valhalla__BaseUrl: https://valhalla1.openstreetmap.de
+      Overpass__BaseUrl: https://overpass-api.de
     depends_on:
       postgres:
         condition: service_healthy
