@@ -125,7 +125,6 @@ public class ValhallaMapMatchingService(
         var unmatched = await db.SpeedObservations
             .Where(o => o.OsmWayId == null && !o.IsAggregated)
             .OrderBy(o => o.Timestamp)
-            .Take(5000)
             .ToListAsync(ct);
 
         if (unmatched.Count == 0) return;

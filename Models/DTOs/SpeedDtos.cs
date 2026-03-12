@@ -44,8 +44,8 @@ public class SubmitSpeedResponse
 
 public class BatchSpeedRequest
 {
-    /// <summary>Up to 100 observations per batch</summary>
-    [Required, MinLength(1), MaxLength(100)]
+    /// <summary>Up to 100,000 observations per batch</summary>
+    [Required, MinLength(1), MaxLength(100_000)]
     public List<SpeedObservationRequest> Observations { get; set; } = [];
 }
 
