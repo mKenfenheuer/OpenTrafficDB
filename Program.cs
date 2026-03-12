@@ -37,18 +37,20 @@ public class Program
         builder.Services.AddHostedService<AggregationBackgroundService>();
         builder.Services.AddHostedService<WayGeometryBackgroundService>();
 
+        builder.Services.AddTransient<RateLimitRetryHandler>();
+
         // HTTP client for Valhalla map matching
         builder.Services.AddHttpClient("valhalla", client =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
-        });
+        }).AddHttpMessageHandler<RateLimitRetryHandler>();
 
         // HTTP client for Overpass API (way geometry fetching)
         builder.Services.AddHttpClient("overpass", client =>
         {
             client.Timeout = TimeSpan.FromSeconds(60);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenTrafficDB/1.0");
-        });
+        }).AddHttpMessageHandler<RateLimitRetryHandler>();
 
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
                 .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationHandler.SchemeName, options => { })
