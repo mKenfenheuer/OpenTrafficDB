@@ -21,6 +21,7 @@ services:
       - /mnt/opentraffic/valhalla:/custom_files
     environment:
       tile_building_blocked: "0"
+      tile_urls: https://download.geofabrik.de/europe/germany-latest.osm.pbf
     ports:
       - "0.0.0.0:8096:8002"
     healthcheck:
@@ -38,7 +39,7 @@ services:
       OVERPASS_MODE: clone
       OVERPASS_DIFF_URL: https://planet.openstreetmap.org/replication/minute/
     volumes:
-      - /mnt/opentrafficdb/overpass:/db
+      - /mnt/opentraffic/overpass:/db
     ports:
       - "0.0.0.0:8097:80"
 
