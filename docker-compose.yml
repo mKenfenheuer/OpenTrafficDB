@@ -30,6 +30,18 @@ services:
       retries: 12
       start_period: 60s
 
+  overpass:
+    image: wiktorn/overpass-api
+    restart: unless-stopped
+    environment:
+      OVERPASS_META: "yes"
+      OVERPASS_MODE: clone
+      OVERPASS_DIFF_URL: https://planet.openstreetmap.org/replication/minute/
+    volumes:
+      - /mnt/opentrafficdb/overpass:/db
+    ports:
+      - "0.0.0.0:8097:80"
+
   api:
     image: ${APP_IMAGE:-opentrafficdb:latest}
     build: .
