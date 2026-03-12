@@ -69,6 +69,7 @@ public class ValhallaMapMatchingService(
 
         var json = JsonSerializer.Serialize(request);
         var client = httpClientFactory.CreateClient("valhalla");
+        client.Timeout = TimeSpan.MaxValue;
 
         try
         {
@@ -93,7 +94,7 @@ public class ValhallaMapMatchingService(
             for (int i = 0; i < result.MatchedPoints.Count; i++)
             {
                 var mp = result.MatchedPoints[i];
-                if (mp.Type != "matched" || mp.EdgeIndex is null or ulong.MaxValue || mp.Lat is null || mp.Lon is null) continue;
+                if ((mp.Type != "matched" && mp.Type != "interpolated") || mp.EdgeIndex is null or ulong.MaxValue || mp.Lat is null || mp.Lon is null) continue;
 
                 var way = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
                 if (way?.WayId is null) continue;

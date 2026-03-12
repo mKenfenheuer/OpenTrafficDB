@@ -8,7 +8,7 @@ public class RateLimitRetryHandler(ILogger<RateLimitRetryHandler> logger) : Dele
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        retry:
+    retry:
         var response = await base.SendAsync(request, ct);
         if (response.StatusCode != System.Net.HttpStatusCode.TooManyRequests)
             return response;
@@ -16,8 +16,19 @@ public class RateLimitRetryHandler(ILogger<RateLimitRetryHandler> logger) : Dele
         var delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromMinutes(1);
         logger.LogWarning("429 from {Url} — retrying after {Seconds}s", request.RequestUri, delay.TotalSeconds);
 
-        response.Dispose();
-        await Task.Delay(delay, ct);
-        goto retry;
+        try
+        {
+            await Task.Delay(delay, ct);
+        }
+        catch (Exception ex)
+        {
+
+        }
+        if (!ct.IsCancellationRequested)
+        {
+            response.Dispose();
+            goto retry;
+        }
+        return response;
     }
 }
