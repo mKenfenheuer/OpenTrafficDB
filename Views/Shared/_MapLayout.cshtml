@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>@ViewData["Title"] – OpenTrafficDB</title>
+    <link rel="stylesheet" href="/css/style.css">
+    @RenderSection("Head", required: false)
+</head>
+
+<body style="overflow:hidden">
+    <nav class="navbar">
+        <div class="container navbar-inner">
+            <a href="/" class="navbar-brand">OpenTrafficDB</a>
+            <button class="navbar-toggle" id="nav-toggle" aria-label="Toggle navigation" onclick="toggleNav()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <ul class="navbar-nav" id="navbar-links">
+                @RenderSection("Navbar", required: false)
+                <li><a href="/map/traffic">Map</a></li>
+                <li><a href="/docs">Docs</a></li>
+                <li><a href="/swagger" target="_blank">API</a></li>
+                @if (User.Identity?.IsAuthenticated == true) {
+                    <li><a href="/Home/Dashboard">Dashboard</a></li>
+                    <li><a href="/Home/Profile">Profile</a></li>
+                }
+                @if (User.Claims.Any(c => c.Type == "role" && c.Value == "Admin")) {
+                    <li><a href="/Home/Admin">Admin</a></li>
+                }
+                @if (User.Identity?.IsAuthenticated == true) {
+                    <li><button class="btn btn-secondary btn-sm" onclick="logout()">Sign Out</button></li>
+                } else {
+                    <li><a class="btn btn-secondary btn-sm" href="/Home/Login">Sign In</a></li>
+                }
+            </ul>
+        </div>
+    </nav>
+
+    @RenderBody()
+
+    @RenderSection("Scripts", required: false)
+    <script>
+        if (typeof window.logout === 'undefined') {
+            window.logout = async function() {
+                await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+                window.location.href = '/';
+            };
+        }
+        function toggleNav() {
+            document.getElementById('navbar-links').classList.toggle('open');
+        }
+        document.addEventListener('click', function(e) {
+            var nav = document.getElementById('navbar-links');
+            var toggle = document.getElementById('nav-toggle');
+            if (nav && nav.classList.contains('open') && !nav.contains(e.target) && !toggle.contains(e.target))
+                nav.classList.remove('open');
+        });
+    </script>
+</body>
+</html>

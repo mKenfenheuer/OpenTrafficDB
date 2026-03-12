@@ -43,10 +43,16 @@ public class TileController(TrafficTileService tileService) : ControllerBase
         if (x < 0 || x >= maxCoord || y < 0 || y >= maxCoord)
             return BadRequest(new { error = $"Tile coordinates out of range for zoom {z}." });
 
-        var tileBytes = await tileService.BuildTileAsync(z, x, y, ct);
-
-        Response.Headers["Content-Encoding"] = "gzip";
-        Response.Headers["Cache-Control"]    = "public, max-age=60";
-        return File(tileBytes, "application/vnd.mapbox-vector-tile");
+        try
+        {
+            var tileBytes = await tileService.BuildTileAsync(z, x, y, ct);
+            Response.Headers["Content-Encoding"] = "gzip";
+            Response.Headers["Cache-Control"]    = "public, max-age=60";
+            return File(tileBytes, "application/vnd.mapbox-vector-tile");
+        }
+        catch (OperationCanceledException)
+        {
+            return NoContent();
+        }
     }
 }

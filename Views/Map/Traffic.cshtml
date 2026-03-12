@@ -1,0 +1,254 @@
+@{
+    Layout = "_MapLayout";
+    ViewData["Title"] = "Traffic Map";
+}
+
+@section Head {
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+    <style>
+        #map {
+            position: absolute;
+            top: 56px; /* navbar height */
+            left: 0;
+            right: 0;
+            bottom: 0;
+        }
+
+        /* ── Legend ──────────────────────────────────────────── */
+        #legend {
+            position: absolute;
+            bottom: 24px;
+            right: 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 14px 16px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            z-index: 10;
+            min-width: 160px;
+        }
+        #legend h4 {
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 10px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .legend-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        .legend-swatch {
+            width: 28px;
+            height: 4px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        #legend-status {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+            flex-shrink: 0;
+        }
+        #status-dot.stale { background: var(--warning); }
+
+        /* ── Feature tooltip ─────────────────────────────────── */
+        .traffic-popup .maplibregl-popup-content {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 14px;
+            color: var(--text);
+            font-size: 0.82rem;
+            min-width: 160px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        }
+        .traffic-popup .maplibregl-popup-tip { display: none; }
+        .popup-row { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 3px; }
+        .popup-label { color: var(--text-muted); }
+        .popup-val   { font-weight: 600; }
+        .popup-source {
+            margin-top: 8px;
+            padding-top: 6px;
+            border-top: 1px solid var(--border);
+            color: var(--text-muted);
+            font-size: 0.75rem;
+        }
+    </style>
+}
+
+<div id="map"></div>
+
+<div id="legend">
+    <h4>Traffic</h4>
+    <div class="legend-row"><div class="legend-swatch" style="background:#3fb950"></div><span>Free flow</span></div>
+    <div class="legend-row"><div class="legend-swatch" style="background:#d29922"></div><span>Slow</span></div>
+    <div class="legend-row"><div class="legend-swatch" style="background:#f85149"></div><span>Congested</span></div>
+    <div class="legend-row"><div class="legend-swatch" style="background:#8b949e"></div><span>No limit data</span></div>
+    <div id="legend-status">
+        <div id="status-dot"></div>
+        <span id="status-text">Loading…</span>
+    </div>
+</div>
+
+@section Scripts {
+<script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+<script>
+(function () {
+    const STYLE_URL  = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=YOUR_MAPTILER_API_KEY';
+    const TILE_BASE  = window.location.origin + '/tiles/traffic/current/{z}/{x}/{y}';
+    const REFRESH_MS = 60_000;
+
+    let map, popup, refreshTimer, lastUpdated;
+
+    // ── Initialise map ────────────────────────────────────────
+    map = new maplibregl.Map({
+        container: 'map',
+        style:     STYLE_URL,
+        center:    [10.0, 51.3],  // centre on Germany by default
+        zoom:      6,
+        attributionControl: { compact: true }
+    });
+
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    map.addControl(new maplibregl.GeolocateControl({
+        positionOptions:   { enableHighAccuracy: true },
+        trackUserLocation: false
+    }), 'top-right');
+
+    // ── Traffic layer management ─────────────────────────────
+
+    function tileUrl() {
+        return TILE_BASE + '?t=' + Date.now();
+    }
+
+    function addTrafficLayer() {
+        const url = tileUrl();
+
+        // Remove old layer/source if present
+        if (map.getLayer('traffic-lines'))  map.removeLayer('traffic-lines');
+        if (map.getSource('traffic'))       map.removeSource('traffic');
+
+        map.addSource('traffic', {
+            type:  'vector',
+            tiles: [url],
+            minzoom: 8,
+            maxzoom: 16
+        });
+
+        map.addLayer({
+            id:     'traffic-lines',
+            type:   'line',
+            source: 'traffic',
+            'source-layer': 'traffic',
+            layout: {
+                'line-cap':  'round',
+                'line-join': 'round'
+            },
+            paint: {
+                // Width scales with zoom
+                'line-width': [
+                    'interpolate', ['linear'], ['zoom'],
+                    8,  2,
+                    12, 4,
+                    16, 7
+                ],
+                // Colour by jam_estimate when available, grey otherwise
+                'line-color': [
+                    'case',
+                    ['has', 'jam_estimate'],
+                    [
+                        'interpolate', ['linear'],
+                        ['get', 'jam_estimate'],
+                        0.0,  '#3fb950',   // free flow — green
+                        0.35, '#d29922',   // slowing   — yellow
+                        0.70, '#f85149'    // congested — red
+                    ],
+                    '#8b949e'  // no speed-limit data — muted grey
+                ],
+                'line-opacity': 0.85
+            }
+        });
+
+        lastUpdated = new Date();
+        setStatus('Updated ' + lastUpdated.toLocaleTimeString());
+    }
+
+    map.on('load', function () {
+        addTrafficLayer();
+        refreshTimer = setInterval(function () {
+            addTrafficLayer();
+        }, REFRESH_MS);
+    });
+
+    // ── Countdown in status bar ──────────────────────────────
+    setInterval(function () {
+        if (!lastUpdated) return;
+        const age = Math.round((Date.now() - lastUpdated.getTime()) / 1000);
+        const dot = document.getElementById('status-dot');
+        if (age > REFRESH_MS / 1000 + 5) {
+            dot.classList.add('stale');
+            setStatus('Stale (' + age + 's ago)');
+        } else {
+            dot.classList.remove('stale');
+            const next = Math.max(0, Math.round(REFRESH_MS / 1000 - age));
+            setStatus('Refresh in ' + next + 's');
+        }
+    }, 1000);
+
+    function setStatus(msg) {
+        document.getElementById('status-text').textContent = msg;
+    }
+
+    // ── Hover cursor ─────────────────────────────────────────
+    map.on('mouseenter', 'traffic-lines', function () {
+        map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'traffic-lines', function () {
+        map.getCanvas().style.cursor = '';
+    });
+
+    // ── Click popup ──────────────────────────────────────────
+    popup = new maplibregl.Popup({ className: 'traffic-popup', closeButton: true, maxWidth: '240px' });
+
+    map.on('click', 'traffic-lines', function (e) {
+        const f   = e.features[0];
+        const p   = f.properties;
+        const fmt = (v, unit) => v != null ? (+v).toFixed(1) + (unit || '') : '—';
+        const pct = (v) => v != null ? Math.round(+v * 100) + '%' : '—';
+
+        const html = `
+            <div>
+                <div class="popup-row"><span class="popup-label">Speed</span><span class="popup-val">${fmt(p.speed_kmh, ' km/h')}</span></div>
+                <div class="popup-row"><span class="popup-label">Limit</span><span class="popup-val">${p.speed_limit_kmh != null ? fmt(p.speed_limit_kmh, ' km/h') : (p.osm_max_speed != null ? fmt(p.osm_max_speed, ' km/h') : '—')}</span></div>
+                <div class="popup-row"><span class="popup-label">Delay</span><span class="popup-val">${pct(p.delay_factor)}</span></div>
+                <div class="popup-row"><span class="popup-label">Congestion</span><span class="popup-val">${pct(p.jam_estimate)}</span></div>
+                <div class="popup-row"><span class="popup-label">Way ID</span><span class="popup-val">${p.osm_way_id}</span></div>
+                <div class="popup-source">
+                    Source: <strong>${p.source}</strong>
+                    · Live: ${p.live_samples ?? 0}
+                    · Historic: ${p.historic_samples ?? 0}
+                </div>
+            </div>`;
+
+        popup.setLngLat(e.lngLat).setHTML(html).addTo(map);
+    });
+
+}());
+</script>
+}
