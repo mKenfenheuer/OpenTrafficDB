@@ -1,0 +1,241 @@
+@{
+    Layout = "_MapLayout";
+    ViewData["Title"] = "Polyline Debug";
+}
+
+@section Head {
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+    <style>
+        #toolbar {
+            position: absolute;
+            top: calc(56px + 12px);
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 10px 14px;
+            box-shadow: 0 4px 20px rgba(0,0,0,.5);
+            width: min(700px, calc(100vw - 32px));
+        }
+
+        #polyline-input {
+            flex: 1;
+            padding: 6px 10px;
+            border-radius: var(--radius);
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: monospace;
+            font-size: .82rem;
+            min-width: 0;
+        }
+        #polyline-input:focus { outline: none; border-color: var(--accent); }
+
+        #precision-select {
+            padding: 6px 8px;
+            border-radius: var(--radius);
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-size: .82rem;
+            flex-shrink: 0;
+        }
+
+        #plot-btn {
+            padding: 6px 16px;
+            border-radius: var(--radius);
+            border: none;
+            cursor: pointer;
+            background: var(--accent);
+            color: #fff;
+            font-size: .82rem;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        #plot-btn:hover { filter: brightness(1.15); }
+
+        #status-badge {
+            font-size: .75rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        #map {
+            position: absolute;
+            top: 56px;
+            left: 0; right: 0; bottom: 0;
+        }
+    </style>
+}
+
+<div id="toolbar">
+    <input id="polyline-input" type="text" placeholder="Paste encoded polyline…" spellcheck="false" autocomplete="off" />
+    <select id="precision-select">
+        <option value="5" selected>P5 (Google)</option>
+        <option value="6">P6 (Valhalla)</option>
+    </select>
+    <button id="plot-btn">Plot</button>
+    <span id="status-badge"></span>
+</div>
+
+<div id="map"></div>
+
+@section Scripts {
+<script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+<script>
+(function () {
+    const STYLE_URL = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=YOUR_MAPTILER_API_KEY';
+
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: STYLE_URL,
+        center: [10.0, 51.3],
+        zoom: 6,
+        attributionControl: { compact: true }
+    });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+
+    // ── Polyline decoder (precision 5 or 6) ────────────────────────────────
+    function decodePolyline(encoded, precision) {
+        const factor = Math.pow(10, precision);
+        const pts = [];
+        let i = 0, lat = 0, lng = 0;
+        while (i < encoded.length) {
+            let s = 0, r = 0, b;
+            do { b = encoded.charCodeAt(i++) - 63; r |= (b & 0x1f) << s; s += 5; } while (b >= 0x20);
+            lat += (r & 1) ? ~(r >> 1) : (r >> 1);
+            s = 0; r = 0;
+            do { b = encoded.charCodeAt(i++) - 63; r |= (b & 0x1f) << s; s += 5; } while (b >= 0x20);
+            lng += (r & 1) ? ~(r >> 1) : (r >> 1);
+            pts.push([lng / factor, lat / factor]); // GeoJSON = [lon, lat]
+        }
+        return pts;
+    }
+
+    // ── Plot ───────────────────────────────────────────────────────────────
+    function plot() {
+        const encoded  = document.getElementById('polyline-input').value.trim();
+        const precision = parseInt(document.getElementById('precision-select').value, 10);
+        const badge    = document.getElementById('status-badge');
+
+        if (!encoded) { badge.textContent = 'Paste a polyline first.'; return; }
+
+        let coords;
+        try {
+            coords = decodePolyline(encoded, precision);
+        } catch (e) {
+            badge.textContent = 'Decode error: ' + e.message;
+            return;
+        }
+
+        if (coords.length === 0) { badge.textContent = 'No points decoded.'; return; }
+
+        const geojson = {
+            type: 'FeatureCollection',
+            features: [
+                {
+                    type: 'Feature',
+                    geometry: { type: 'LineString', coordinates: coords }
+                },
+                ...coords.map((c, idx) => ({
+                    type: 'Feature',
+                    properties: {
+                        idx,
+                        label: `#${idx}\n${c[1].toFixed(5)}, ${c[0].toFixed(5)}`,
+                        color: idx === 0 ? '#3fb950' : idx === coords.length - 1 ? '#f85149' : '#2f81f7'
+                    },
+                    geometry: { type: 'Point', coordinates: c }
+                }))
+            ]
+        };
+
+        if (map.getLayer('pl-line'))   map.removeLayer('pl-line');
+        if (map.getLayer('pl-points')) map.removeLayer('pl-points');
+        if (map.getSource('pl'))       map.removeSource('pl');
+
+        map.addSource('pl', { type: 'geojson', data: geojson });
+
+        map.addLayer({
+            id: 'pl-line', type: 'line', source: 'pl',
+            filter: ['==', '$type', 'LineString'],
+            paint: { 'line-color': '#2f81f7', 'line-width': 3, 'line-opacity': 0.9 }
+        });
+
+        map.addLayer({
+            id: 'pl-points', type: 'circle', source: 'pl',
+            filter: ['==', '$type', 'Point'],
+            paint: {
+                'circle-radius': 5,
+                'circle-color': ['get', 'color'],
+                'circle-stroke-width': 1.5,
+                'circle-stroke-color': '#0d1117'
+            }
+        });
+
+        // Hover tooltip
+        const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false,
+            offset: 8, className: 'debug-popup' });
+
+        map.on('mouseenter', 'pl-points', e => {
+            map.getCanvas().style.cursor = 'crosshair';
+            const [lon, lat] = e.features[0].geometry.coordinates;
+            const { idx } = e.features[0].properties;
+            popup.setLngLat([lon, lat])
+                 .setHTML(`<strong>#${idx}</strong><br>${lat.toFixed(6)}, ${lon.toFixed(6)}`)
+                 .addTo(map);
+        });
+        map.on('mouseleave', 'pl-points', () => {
+            map.getCanvas().style.cursor = '';
+            popup.remove();
+        });
+
+        // Fit bounds
+        const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
+        map.fitBounds(
+            [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
+            { padding: 80, maxZoom: 16 }
+        );
+
+        badge.textContent = `${coords.length} points`;
+
+        // Update URL hash so the link is shareable
+        history.replaceState(null, '', '#' + encodeURIComponent(encoded) + '&p=' + precision);
+    }
+
+    document.getElementById('plot-btn').addEventListener('click', plot);
+    document.getElementById('polyline-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') plot();
+    });
+
+    // Restore from URL hash
+    map.on('load', () => {
+        const hash = decodeURIComponent(location.hash.slice(1));
+        if (!hash) return;
+        const [enc, pParam] = hash.split('&p=');
+        if (enc) {
+            document.getElementById('polyline-input').value = enc;
+            if (pParam) document.getElementById('precision-select').value = pParam;
+            plot();
+        }
+    });
+}());
+</script>
+<style>
+    .debug-popup .maplibregl-popup-content {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 8px 12px;
+        color: var(--text);
+        font-size: .8rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,.5);
+    }
+    .debug-popup .maplibregl-popup-tip { display: none; }
+</style>
+}
