@@ -77,6 +77,7 @@ public class WayGeometryService(
         var query = $"[out:json];way(id:{idList});out geom;";
 
         var client = httpClientFactory.CreateClient("overpass");
+        client.Timeout = Timeout.InfiniteTimeSpan;
 
         HttpResponseMessage response;
         try

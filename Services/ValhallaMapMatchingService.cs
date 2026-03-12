@@ -135,17 +135,22 @@ public class ValhallaMapMatchingService(
         foreach (var trip in unmatched.GroupBy(o => o.TripId))
         {
             var sorted = trip.OrderBy(o => o.Timestamp).ToList();
-            var matchMap = await MatchTraceAsync(
-                sorted.Select(o => (o.Latitude, o.Longitude, o.Timestamp)).ToList(), ct);
+            var segments = SplitTrace(sorted);
 
-            foreach (var (idx, match) in matchMap)
+            foreach (var segment in segments)
             {
-                if (idx >= sorted.Count) continue;
-                var obs = sorted[idx];
-                obs.OsmWayId       = match.OsmWayId;
-                obs.H3CellIndex    = match.H3CellIndex;
-                obs.SpeedLimitKmh  = match.SpeedLimitKmh;
-                updatedCount++;
+                var matchMap = await MatchTraceAsync(
+                    segment.Select(o => (o.Latitude, o.Longitude, o.Timestamp)).ToList(), ct);
+
+                foreach (var (idx, match) in matchMap)
+                {
+                    if (idx >= segment.Count) continue;
+                    var obs = segment[idx];
+                    obs.OsmWayId      = match.OsmWayId;
+                    obs.H3CellIndex   = match.H3CellIndex;
+                    obs.SpeedLimitKmh = match.SpeedLimitKmh;
+                    updatedCount++;
+                }
             }
 
             // Mark observations that Valhalla could not match and are older than 5 minutes
@@ -159,6 +164,53 @@ public class ValhallaMapMatchingService(
 
         await db.SaveChangesAsync(ct);
         _logMapMatched(logger, updatedCount, null);
+    }
+
+    /// <summary>
+    /// Splits a sorted observation list into sub-segments suitable for Valhalla map matching.
+    /// A new segment starts when:
+    ///   - the distance between consecutive points exceeds 500 m, or
+    ///   - the accumulated path length exceeds 20,000 m.
+    /// </summary>
+    private static List<List<SpeedObservation>> SplitTrace(List<SpeedObservation> sorted)
+    {
+        const double maxSegmentMeters = 20_000;
+        const double maxGapMeters     =    500;
+
+        var segments  = new List<List<SpeedObservation>>();
+        var current   = new List<SpeedObservation> ([sorted[0]]);
+        double length = 0;
+
+        for (int i = 1; i < sorted.Count; i++)
+        {
+            var prev = sorted[i - 1];
+            var pt   = sorted[i];
+            double d = HaversineMeters(prev.Latitude, prev.Longitude, pt.Latitude, pt.Longitude);
+
+            if (d > maxGapMeters || length + d > maxSegmentMeters)
+            {
+                segments.Add(current);
+                current = new List<SpeedObservation>();
+                length  = 0;
+            }
+
+            current.Add(pt);
+            length += d;
+        }
+
+        segments.Add(current);
+        return segments;
+    }
+
+    private static double HaversineMeters(double lat1, double lon1, double lat2, double lon2)
+    {
+        const double R = 6_371_000;
+        double dLat = (lat2 - lat1) * Math.PI / 180;
+        double dLon = (lon2 - lon1) * Math.PI / 180;
+        double a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2)
+                 + Math.Cos(lat1 * Math.PI / 180) * Math.Cos(lat2 * Math.PI / 180)
+                 * Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+        return R * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
     }
 
     private static string EncodePolyline6(IEnumerable<(double Lat, double Lon, DateTime Time)> coords) =>
