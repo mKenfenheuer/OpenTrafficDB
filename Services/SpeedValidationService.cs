@@ -45,7 +45,7 @@ public class SpeedValidationService(IConfiguration config)
         // Timestamp drift
         var drift = Math.Abs((DateTime.UtcNow - req.Timestamp.ToUniversalTime()).TotalSeconds);
         if (drift > _maxDriftSeconds)
-            errors.Add($"Timestamp is {drift:F0}s from server time. Maximum drift is {_maxDriftSeconds}s. Ensure device clock is synced.");
+            errors.Add($"Timestamp is {drift:F0}s from server time. Maximum drift is {_maxDriftSeconds}s. Ensure device clock is synced. {req.Timestamp} and clock {DateTime.UtcNow}");
 
         // TripId must not be empty
         if (req.TripId == string.Empty)
