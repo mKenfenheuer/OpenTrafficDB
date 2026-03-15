@@ -366,6 +366,46 @@ namespace OpenTrafficDB.Migrations
                     b.ToTable("WaySpeedAggregates");
                 });
 
+            modelBuilder.Entity("OpenTrafficDB.Models.WaySpeedSummary", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<double?>("ConstrainedSpeed")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("FreeflowSpeed")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime>("LastUpdated")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("OsmWayId")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("P50Speed")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("P95Speed")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("SpeedLimitKmh")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("TotalSamples")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OsmWayId")
+                        .IsUnique();
+
+                    b.ToTable("WaySpeedSummaries");
+                });
+
             modelBuilder.Entity("OpenTrafficDB.Models.ApiKey", b =>
                 {
                     b.HasOne("OpenTrafficDB.Models.User", "User")

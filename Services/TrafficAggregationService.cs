@@ -16,7 +16,7 @@ public class TrafficAggregationService(AppDbContext db)
     ///   0.6  → 0.7  (stop-and-go onset)
     ///   0.85 → 1.0  (standing traffic)
     /// </summary>
-    private static double ComputeJam(double delay) => delay switch
+    public static double ComputeJam(double delay) => delay switch
     {
         <= 0    => 0.0,
         <= 0.6  => delay * (0.7 / 0.6),
@@ -179,9 +179,16 @@ public class TrafficAggregationService(AppDbContext db)
                 obs.IsAggregated = true;
 
             await db.SaveChangesAsync(ct);
+
+            // ── 5. Rebuild WaySpeedSummary for affected ways ─────────────────
+            var affectedWayIds = wayBuckets.Keys.Select(k => k.WayId).Distinct().ToList();
+            await RebuildSummariesAsync(affectedWayIds, ct);
         }
 
-        // ── 5. Delete observations outside the retention windows ─────────────
+        // ── 6. Refresh constrained (live) speeds in all summaries ────────────
+        await RefreshConstrainedSpeedsAsync(ct);
+
+        // ── 7. Delete observations outside the retention windows ─────────────
         var liveWindow      = DateTime.UtcNow - LiveRetention;
         var unmatchedCutoff = DateTime.UtcNow - UnmatchedRetention;
 
@@ -459,6 +466,171 @@ public class TrafficAggregationService(AppDbContext db)
             result[wayId] = new WayTrafficData(speedKmh, speedLimit, delayFactor, jamEstimate, source, liveSamples, historicSamples);
         }
         return result;
+    }
+
+    // ── WaySpeedSummary maintenance ─────────────────────────────────────────────
+
+    private static double Percentile(List<double> sorted, double p)
+    {
+        if (sorted.Count == 0) return 0;
+        if (sorted.Count == 1) return sorted[0];
+        var idx = p * (sorted.Count - 1);
+        var lo  = (int)idx;
+        var hi  = Math.Min(lo + 1, sorted.Count - 1);
+        return sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
+    }
+
+    /// <summary>
+    /// Rebuilds WaySpeedSummary rows for the given set of way IDs from the
+    /// current WaySpeedAggregate data.  Freeflow = 85th percentile of bucket
+    /// averages; P50/P95 = 50th / 95th percentiles.
+    /// </summary>
+    private async Task RebuildSummariesAsync(IReadOnlyList<long> wayIds, CancellationToken ct)
+    {
+        var allBuckets = await db.WaySpeedAggregates
+            .Where(a => wayIds.Contains(a.OsmWayId) && a.SampleCount > 0)
+            .Select(a => new { a.OsmWayId, a.SumSpeedKmh, a.SampleCount, a.SpeedLimitKmh })
+            .ToListAsync(ct);
+
+        var byWay = allBuckets.GroupBy(a => a.OsmWayId);
+        var now   = DateTime.UtcNow;
+
+        foreach (var g in byWay)
+        {
+            var avgs = g.Select(a => a.SumSpeedKmh / a.SampleCount)
+                        .OrderBy(v => v)
+                        .ToList();
+            var totalSamples = g.Sum(a => a.SampleCount);
+            var speedLimit   = g.FirstOrDefault(a => a.SpeedLimitKmh != null)?.SpeedLimitKmh;
+
+            var freeflow = Percentile(avgs, 0.85);
+            // Freeflow must be at least 75% of the speed limit to avoid
+            // unrealistically low uncongested baselines from sparse data.
+            if (speedLimit is > 0)
+                freeflow = Math.Max(freeflow, speedLimit.Value * 0.75);
+            var p50      = Percentile(avgs, 0.50);
+            var p95      = Percentile(avgs, 0.95);
+
+            var existing = await db.WaySpeedSummaries
+                .FirstOrDefaultAsync(s => s.OsmWayId == g.Key, ct);
+
+            if (existing is null)
+            {
+                db.WaySpeedSummaries.Add(new WaySpeedSummary
+                {
+                    OsmWayId      = g.Key,
+                    FreeflowSpeed = Math.Round(freeflow, 1),
+                    P50Speed      = Math.Round(p50, 1),
+                    P95Speed      = Math.Round(p95, 1),
+                    SpeedLimitKmh = speedLimit,
+                    TotalSamples  = totalSamples,
+                    LastUpdated   = now
+                });
+            }
+            else
+            {
+                existing.FreeflowSpeed = Math.Round(freeflow, 1);
+                existing.P50Speed      = Math.Round(p50, 1);
+                existing.P95Speed      = Math.Round(p95, 1);
+                existing.SpeedLimitKmh = speedLimit ?? existing.SpeedLimitKmh;
+                existing.TotalSamples  = totalSamples;
+                existing.LastUpdated   = now;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Updates ConstrainedSpeed on all WaySpeedSummary rows from the live
+    /// 30-minute rolling window.  Clears it for ways with no recent data.
+    /// </summary>
+    private async Task RefreshConstrainedSpeedsAsync(CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow.AddMinutes(-30);
+        var now    = DateTime.UtcNow;
+
+        var liveRaw = await db.SpeedObservations
+            .Where(o => o.Timestamp >= cutoff && o.OsmWayId != null)
+            .Select(o => new { o.OsmWayId, SpeedKmh = o.SpeedMs * 3.6 })
+            .ToListAsync(ct);
+
+        var liveByWay = liveRaw
+            .GroupBy(o => o.OsmWayId!.Value)
+            .ToDictionary(g => g.Key, g => g.Average(x => x.SpeedKmh));
+
+        var summaries = await db.WaySpeedSummaries.ToListAsync(ct);
+        foreach (var s in summaries)
+        {
+            s.ConstrainedSpeed = liveByWay.TryGetValue(s.OsmWayId, out var v)
+                ? Math.Round(v, 1)
+                : null;
+            s.LastUpdated = now;
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    // ── Valhalla CSV export ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Exports traffic data in Valhalla's predicted-traffic CSV format.
+    /// Format: way_id,freeflow_speed,constrained_speed,historical_speeds
+    ///   freeflow_speed   — 85th-percentile of bucket averages (integer km/h)
+    ///   constrained_speed — live 30-min average if available, else P50 (integer km/h)
+    ///   historical_speeds — 2016 comma-separated integer km/h values, one per
+    ///                        5-minute slot (Mon 00:00 … Sun 23:55, Valhalla epoch).
+    ///                        Slots without data use freeflow_speed as fill.
+    /// </summary>
+    public async Task WriteValhallaExportCsvAsync(Stream output, CancellationToken ct = default)
+    {
+        // Load all aggregate buckets
+        var allBuckets = await db.WaySpeedAggregates
+            .Where(a => a.SampleCount > 0)
+            .Select(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket, a.SumSpeedKmh, a.SampleCount })
+            .ToListAsync(ct);
+
+        // Load summaries for freeflow / constrained
+        var summaries = await db.WaySpeedSummaries
+            .ToDictionaryAsync(s => s.OsmWayId, ct);
+
+        // Build slot lookup: wayId → (valhalla_slot → avg_kmh)
+        // Valhalla slot = ((dow + 6) % 7) * 288 + bucket  (Monday = day 0)
+        var bucketsByWay = allBuckets
+            .GroupBy(b => b.OsmWayId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.ToDictionary(
+                    b => ((b.DayOfWeek + 6) % 7) * 288 + b.FiveMinuteBucket,
+                    b => b.SumSpeedKmh / b.SampleCount));
+
+        var allWayIds = bucketsByWay.Keys.Union(summaries.Keys).Distinct().OrderBy(id => id);
+
+        await using var writer = new StreamWriter(output, Encoding.UTF8, leaveOpen: true);
+        await writer.WriteLineAsync("way_id,freeflow_speed,constrained_speed,historical_speeds");
+
+        var speedBuffer = new float[2016];
+
+        foreach (var wayId in allWayIds)
+        {
+            summaries.TryGetValue(wayId, out var summary);
+            var freeflow    = summary is not null ? (int)Math.Round(summary.FreeflowSpeed) : 0;
+            var constrained = summary is not null
+                ? (int)Math.Round(summary.ConstrainedSpeed ?? summary.P50Speed)
+                : freeflow;
+
+            bucketsByWay.TryGetValue(wayId, out var slots);
+
+            // Build 2016 float speed values (fill missing slots with freeflow)
+            var fill = (float)freeflow;
+            for (var i = 0; i < 2016; i++)
+                speedBuffer[i] = slots is not null && slots.TryGetValue(i, out var sv)
+                    ? (float)sv
+                    : fill;
+
+            var encoded = ValhallaSpeedEncoder.Encode(speedBuffer);
+            await writer.WriteLineAsync($"{wayId},{freeflow},{constrained},{encoded}");
+        }
     }
 
     /// <summary>

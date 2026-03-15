@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<WaySpeedAggregate> WaySpeedAggregates => Set<WaySpeedAggregate>();
     public DbSet<H3SpeedAggregate> H3SpeedAggregates => Set<H3SpeedAggregate>();
     public DbSet<WayGeometry> WayGeometries => Set<WayGeometry>();
+    public DbSet<WaySpeedSummary> WaySpeedSummaries => Set<WaySpeedSummary>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -80,6 +81,11 @@ public class AppDbContext : DbContext
             // Spatial pre-filter: bbox overlap queries
             e.HasIndex(g => new { g.MinLat, g.MaxLat });
             e.HasIndex(g => new { g.MinLon, g.MaxLon });
+        });
+
+        modelBuilder.Entity<WaySpeedSummary>(e =>
+        {
+            e.HasIndex(s => s.OsmWayId).IsUnique();
         });
     }
 }

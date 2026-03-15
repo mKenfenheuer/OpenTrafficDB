@@ -143,6 +143,30 @@ public class TrafficController(
     }
 
     /// <summary>
+    /// Exports traffic data in Valhalla predicted-traffic CSV format.
+    /// Format: way_id,freeflow_speed,constrained_speed,historical_speeds
+    ///   historical_speeds = 2016 integer km/h values (Mon 00:00 … Sun 23:55, 5-min slots).
+    /// </summary>
+    [HttpGet("valhalla/csv")]
+    [Produces("text/csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> GetValhallaExportCsv(CancellationToken ct)
+    {
+        var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var keyId = User.FindFirstValue("keyId") ?? string.Empty;
+
+        if (!abuseDetection.CheckReadRate(ip, keyId))
+            return StatusCode(429, new { error = "Rate limit exceeded." });
+
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"valhalla_traffic.csv\"";
+
+        await aggregation.WriteValhallaExportCsvAsync(Response.Body, ct);
+        return new EmptyResult();
+    }
+
+    /// <summary>
     /// Live H3-grid traffic statistics as CSV (rolling 30-minute window, resolution 9 ~174 m).
     /// Aggregates observations by H3 hexagonal cell for spatial analytics and heatmaps.
     /// Format: h3_index,avg_speed_kmh,sample_count

@@ -236,13 +236,15 @@
             <div>
                 <div class="popup-row"><span class="popup-label">Speed</span><span class="popup-val">${fmt(p.speed_kmh, ' km/h')}</span></div>
                 <div class="popup-row"><span class="popup-label">Limit</span><span class="popup-val">${p.speed_limit_kmh != null ? fmt(p.speed_limit_kmh, ' km/h') : (p.osm_max_speed != null ? fmt(p.osm_max_speed, ' km/h') : '—')}</span></div>
+                <div class="popup-row"><span class="popup-label">Freeflow</span><span class="popup-val">${fmt(p.freeflow_kmh, ' km/h')}</span></div>
+                <div class="popup-row"><span class="popup-label">P50</span><span class="popup-val">${fmt(p.p50_kmh, ' km/h')}</span></div>
+                <div class="popup-row"><span class="popup-label">P95</span><span class="popup-val">${fmt(p.p95_kmh, ' km/h')}</span></div>
                 <div class="popup-row"><span class="popup-label">Delay</span><span class="popup-val">${pct(p.delay_factor)}</span></div>
                 <div class="popup-row"><span class="popup-label">Congestion</span><span class="popup-val">${pct(p.jam_estimate)}</span></div>
                 <div class="popup-row"><span class="popup-label">Way ID</span><span class="popup-val">${p.osm_way_id}</span></div>
                 <div class="popup-source">
                     Source: <strong>${p.source}</strong>
-                    · Live: ${p.live_samples ?? 0}
-                    · Historic: ${p.historic_samples ?? 0}
+                    · Samples: ${p.total_samples ?? 0}
                 </div>
             </div>`;
 

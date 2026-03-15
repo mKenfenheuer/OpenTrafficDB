@@ -9,7 +9,7 @@ namespace OpenTrafficDB.Services;
 /// Each feature is a LineString representing an OSM way, attributed with current
 /// speed, delay, jam severity, and source metadata.
 /// </summary>
-public class TrafficTileService(AppDbContext db, TrafficAggregationService aggregation)
+public class TrafficTileService(AppDbContext db)
 {
     /// <summary>
     /// Build a traffic overlay tile for the given XYZ coordinate.
@@ -28,15 +28,17 @@ public class TrafficTileService(AppDbContext db, TrafficAggregationService aggre
         if (ways.Count == 0)
             return GzipCompress(MvtEncoder.Encode([new MvtLayer("traffic", [])]));
 
-        // Get current traffic for the matched ways
-        var traffic = await aggregation.GetCurrentWayTrafficAsync(
-            ways.Select(w => w.OsmWayId), ct);
+        // Load precomputed summaries for the matched ways (fast single query)
+        var wayIds = ways.Select(w => w.OsmWayId).ToList();
+        var summaries = await db.WaySpeedSummaries
+            .Where(s => wayIds.Contains(s.OsmWayId))
+            .ToDictionaryAsync(s => s.OsmWayId, ct);
 
-        var features = new List<MvtFeature>(traffic.Count);
+        var features = new List<MvtFeature>(summaries.Count);
 
         foreach (var way in ways)
         {
-            if (!traffic.TryGetValue(way.OsmWayId, out var td)) continue;
+            if (!summaries.TryGetValue(way.OsmWayId, out var s)) continue;
 
             // Project decoded polyline to tile pixel coordinates
             var pixels = PolylineEncoder.Decode(way.EncodedPolyline)
@@ -45,24 +47,37 @@ public class TrafficTileService(AppDbContext db, TrafficAggregationService aggre
 
             if (pixels.Count < 2) continue;
 
-            // Build feature attributes
+            // Current speed: live constrained if available, else freeflow
+            var speedKmh = s.ConstrainedSpeed ?? s.FreeflowSpeed;
+            var source   = s.ConstrainedSpeed.HasValue ? "live" : "historic";
+
+            // Delay / jam relative to freeflow
+            double? delayFactor = null, jamEstimate = null;
+            var limit = s.SpeedLimitKmh ?? way.MaxSpeedKmh;
+            if (limit is > 0)
+            {
+                var delay = Math.Clamp(1.0 - speedKmh / limit.Value, 0.0, 1.0);
+                delayFactor = Math.Round(delay, 3);
+                jamEstimate = Math.Round(TrafficAggregationService.ComputeJam(delay), 3);
+            }
+
             var tags = new Dictionary<string, MvtValue>
             {
-                ["osm_way_id"]       = new MvtValue.Int64Value(way.OsmWayId),
-                ["speed_kmh"]        = new MvtValue.DoubleValue(td.SpeedKmh),
-                ["source"]           = new MvtValue.StringValue(td.Source),
-                ["live_samples"]     = new MvtValue.Int64Value(td.LiveSamples),
-                ["historic_samples"] = new MvtValue.Int64Value(td.HistoricSamples),
+                ["osm_way_id"]    = new MvtValue.Int64Value(way.OsmWayId),
+                ["speed_kmh"]     = new MvtValue.DoubleValue(Math.Round(speedKmh, 1)),
+                ["freeflow_kmh"]  = new MvtValue.DoubleValue(s.FreeflowSpeed),
+                ["p50_kmh"]       = new MvtValue.DoubleValue(s.P50Speed),
+                ["p95_kmh"]       = new MvtValue.DoubleValue(s.P95Speed),
+                ["source"]        = new MvtValue.StringValue(source),
+                ["total_samples"] = new MvtValue.Int64Value(s.TotalSamples),
             };
 
-            if (td.SpeedLimitKmh.HasValue)
-                tags["speed_limit_kmh"] = new MvtValue.DoubleValue(td.SpeedLimitKmh.Value);
-            if (td.DelayFactor.HasValue)
-                tags["delay_factor"]    = new MvtValue.DoubleValue(td.DelayFactor.Value);
-            if (td.JamEstimate.HasValue)
-                tags["jam_estimate"]    = new MvtValue.DoubleValue(td.JamEstimate.Value);
-            if (way.MaxSpeedKmh.HasValue)
-                tags["osm_max_speed"]   = new MvtValue.DoubleValue(way.MaxSpeedKmh.Value);
+            if (limit.HasValue)
+                tags["speed_limit_kmh"] = new MvtValue.DoubleValue(limit.Value);
+            if (delayFactor.HasValue)
+                tags["delay_factor"]    = new MvtValue.DoubleValue(delayFactor.Value);
+            if (jamEstimate.HasValue)
+                tags["jam_estimate"]    = new MvtValue.DoubleValue(jamEstimate.Value);
 
             features.Add(new MvtFeature(
                 Id:       (ulong)Math.Abs(way.OsmWayId),
