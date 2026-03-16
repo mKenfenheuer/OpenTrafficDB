@@ -39,7 +39,6 @@ public class TrafficTileService(AppDbContext db)
         foreach (var way in ways)
         {
             if (!summaries.TryGetValue(way.OsmWayId, out var s)) continue;
-            if (!s.ConstrainedSpeed.HasValue) continue;
 
             // Project decoded polyline to tile pixel coordinates
             var pixels = PolylineEncoder.Decode(way.EncodedPolyline)
@@ -48,7 +47,9 @@ public class TrafficTileService(AppDbContext db)
 
             if (pixels.Count < 2) continue;
 
-            var speedKmh = s.ConstrainedSpeed.Value;
+            // Current speed: live constrained if available, else freeflow
+            var speedKmh = s.ConstrainedSpeed ?? s.FreeflowSpeed;
+            var source   = s.ConstrainedSpeed.HasValue ? "live" : "historic";
 
             // Delay / jam relative to freeflow
             double? delayFactor = null, jamEstimate = null;
@@ -67,7 +68,7 @@ public class TrafficTileService(AppDbContext db)
                 ["freeflow_kmh"]  = new MvtValue.DoubleValue(s.FreeflowSpeed),
                 ["p50_kmh"]       = new MvtValue.DoubleValue(s.P50Speed),
                 ["p95_kmh"]       = new MvtValue.DoubleValue(s.P95Speed),
-                ["source"]        = new MvtValue.StringValue("live"),
+                ["source"]        = new MvtValue.StringValue(source),
                 ["total_samples"] = new MvtValue.Int64Value(s.TotalSamples),
             };
 
