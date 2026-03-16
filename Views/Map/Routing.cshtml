@@ -1,0 +1,726 @@
+@{
+    Layout = "_MapLayout";
+    ViewData["Title"] = "Routing";
+}
+
+@section Head {
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+    <style>
+        #map {
+            position: absolute;
+            top: 56px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+        }
+
+        /* ── Side panel ──────────────────────────────────────────── */
+        #route-panel {
+            position: absolute;
+            top: 68px;
+            left: 12px;
+            width: 320px;
+            max-height: calc(100vh - 80px);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+            overflow: hidden;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+        }
+
+        #panel-header {
+            padding: 14px 16px 10px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        #panel-header h4 {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: var(--text);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 12px;
+        }
+
+        .waypoint-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .waypoint-icon {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: 700;
+            flex-shrink: 0;
+            color: #fff;
+        }
+        .waypoint-icon.origin { background: var(--success); }
+        .waypoint-icon.destination { background: var(--danger); }
+
+        .waypoint-input-wrap {
+            flex: 1;
+            position: relative;
+        }
+        .waypoint-input {
+            width: 100%;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 0.82rem;
+            padding: 7px 10px;
+            outline: none;
+            box-sizing: border-box;
+        }
+        .waypoint-input:focus {
+            border-color: var(--accent);
+        }
+
+        .waypoint-pick-btn {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 5px 7px;
+            flex-shrink: 0;
+            font-size: 0.75rem;
+            transition: border-color 0.15s, color 0.15s;
+        }
+        .waypoint-pick-btn:hover,
+        .waypoint-pick-btn.active {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .autocomplete-list {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            z-index: 100;
+            max-height: 180px;
+            overflow-y: auto;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        }
+        .autocomplete-item {
+            padding: 8px 10px;
+            font-size: 0.8rem;
+            color: var(--text);
+            cursor: pointer;
+            border-bottom: 1px solid var(--border);
+        }
+        .autocomplete-item:last-child { border-bottom: none; }
+        .autocomplete-item:hover { background: var(--surface2); }
+
+        #route-btn {
+            width: 100%;
+            margin-top: 8px;
+            padding: 8px;
+            font-size: 0.82rem;
+        }
+
+        /* ── Results ─────────────────────────────────────────────── */
+        #panel-results {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 16px;
+        }
+
+        .route-card {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+        .route-card:hover { border-color: var(--accent); }
+        .route-card.selected { border-color: var(--accent); background: rgba(88,166,255,0.07); }
+
+        .route-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 4px;
+        }
+        .route-title {
+            font-weight: 600;
+            font-size: 0.84rem;
+            color: var(--text);
+        }
+        .route-time {
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .route-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .delay-badge {
+            display: inline-block;
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        .delay-badge.none  { background: rgba(63,185,80,0.2);  color: var(--success); }
+        .delay-badge.light { background: rgba(210,153,34,0.2); color: var(--warning); }
+        .delay-badge.heavy { background: rgba(248,81,73,0.2);  color: var(--danger); }
+
+        .jams-section {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+        }
+        .jams-label {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+        }
+        .jam-row {
+            font-size: 0.75rem;
+            color: var(--danger);
+            margin-bottom: 2px;
+        }
+
+        .panel-empty {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            text-align: center;
+            padding: 24px 0;
+        }
+
+        #panel-error {
+            padding: 8px 12px;
+            background: rgba(248,81,73,0.12);
+            border-top: 1px solid var(--border);
+            color: var(--danger);
+            font-size: 0.8rem;
+            flex-shrink: 0;
+            display: none;
+        }
+
+        /* ── Pick cursor instructions ────────────────────────────── */
+        #pick-hint {
+            position: absolute;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 8px 14px;
+            font-size: 0.8rem;
+            color: var(--text);
+            z-index: 20;
+            display: none;
+            pointer-events: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        }
+
+        /* ── Spinner ─────────────────────────────────────────────── */
+        .spinner {
+            display: inline-block;
+            width: 14px; height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            vertical-align: middle;
+        }
+        @@keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+}
+
+<div id="map"></div>
+
+<div id="route-panel">
+    <div id="panel-header">
+        <h4>Route</h4>
+
+        <div class="waypoint-row">
+            <div class="waypoint-icon origin">A</div>
+            <div class="waypoint-input-wrap">
+                <input id="origin-input" class="waypoint-input" type="text" placeholder="Origin…" autocomplete="off">
+                <div id="origin-ac" class="autocomplete-list" style="display:none"></div>
+            </div>
+            <button class="waypoint-pick-btn" id="origin-pick-btn" title="Click on map to set origin">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
+            </button>
+        </div>
+
+        <div class="waypoint-row">
+            <div class="waypoint-icon destination">B</div>
+            <div class="waypoint-input-wrap">
+                <input id="dest-input" class="waypoint-input" type="text" placeholder="Destination…" autocomplete="off">
+                <div id="dest-ac" class="autocomplete-list" style="display:none"></div>
+            </div>
+            <button class="waypoint-pick-btn" id="dest-pick-btn" title="Click on map to set destination">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
+            </button>
+        </div>
+
+        <button id="route-btn" class="btn btn-primary" onclick="getRoute()">Get Route</button>
+    </div>
+
+    <div id="panel-results">
+        <div class="panel-empty" id="empty-state">Enter origin and destination to get started.</div>
+    </div>
+    <div id="panel-error"></div>
+</div>
+
+<div id="pick-hint"></div>
+
+@section Scripts {
+<script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    const STYLE_URL = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=YOUR_MAPTILER_API_KEY';
+    const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
+
+    // ── State ──────────────────────────────────────────────────────
+    let map;
+    let originLngLat    = null;  // [lng, lat]
+    let destLngLat      = null;
+    let pickMode        = null;  // 'origin' | 'dest' | null
+    let routes          = [];    // parsed trip objects from response
+    let selectedIdx     = 0;
+    let acTimers        = {};
+    let markers         = { origin: null, dest: null };
+
+    // ── Map init ───────────────────────────────────────────────────
+    map = new maplibregl.Map({
+        container: 'map',
+        style: STYLE_URL,
+        center: [10.0, 51.3],
+        zoom: 6,
+        attributionControl: { compact: true }
+    });
+
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    map.addControl(new maplibregl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        trackUserLocation: false
+    }), 'top-right');
+
+    map.on('load', function () {
+        // Route line sources
+        map.addSource('route-inactive', { type: 'geojson', data: emptyFC() });
+        map.addSource('route-active',   { type: 'geojson', data: emptyFC() });
+        map.addSource('jams',           { type: 'geojson', data: emptyFC() });
+
+        map.addLayer({
+            id: 'route-inactive-line',
+            type: 'line',
+            source: 'route-inactive',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+                'line-color': '#8b949e',
+                'line-width': 5,
+                'line-opacity': 0.6
+            }
+        });
+
+        map.addLayer({
+            id: 'route-active-line',
+            type: 'line',
+            source: 'route-active',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+                'line-color': ['get', 'color'],
+                'line-width': 6,
+                'line-opacity': 0.95
+            }
+        });
+
+        map.addLayer({
+            id: 'jams-line',
+            type: 'line',
+            source: 'jams',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+                'line-color': '#f85149',
+                'line-width': 8,
+                'line-opacity': 0.9
+            }
+        });
+    });
+
+    // ── Click-to-pick ──────────────────────────────────────────────
+    map.on('click', function (e) {
+        if (!pickMode) return;
+        const ll = [e.lngLat.lng, e.lngLat.lat];
+        if (pickMode === 'origin') {
+            setOrigin(ll, fmtCoord(ll));
+        } else {
+            setDest(ll, fmtCoord(ll));
+        }
+        setPickMode(null);
+    });
+
+    // ── Waypoint markers ───────────────────────────────────────────
+    function makeMarker(color) {
+        const el = document.createElement('div');
+        el.style.cssText = `width:14px;height:14px;border-radius:50%;background:${color};
+            border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.5);cursor:pointer;`;
+        return el;
+    }
+
+    function setOrigin(ll, label) {
+        originLngLat = ll;
+        document.getElementById('origin-input').value = label;
+        if (markers.origin) markers.origin.remove();
+        markers.origin = new maplibregl.Marker({ element: makeMarker('var(--success)') })
+            .setLngLat(ll).addTo(map);
+    }
+
+    function setDest(ll, label) {
+        destLngLat = ll;
+        document.getElementById('dest-input').value = label;
+        if (markers.dest) markers.dest.remove();
+        markers.dest = new maplibregl.Marker({ element: makeMarker('var(--danger)') })
+            .setLngLat(ll).addTo(map);
+    }
+
+    function fmtCoord(ll) {
+        return ll[1].toFixed(5) + ', ' + ll[0].toFixed(5);
+    }
+
+    // ── Pick-mode toggle ───────────────────────────────────────────
+    function setPickMode(mode) {
+        pickMode = mode;
+        map.getCanvas().style.cursor = mode ? 'crosshair' : '';
+        const hint = document.getElementById('pick-hint');
+        if (mode) {
+            hint.textContent = 'Click on the map to set the ' + (mode === 'origin' ? 'origin' : 'destination');
+            hint.style.display = 'block';
+        } else {
+            hint.style.display = 'none';
+        }
+        document.getElementById('origin-pick-btn').classList.toggle('active', mode === 'origin');
+        document.getElementById('dest-pick-btn').classList.toggle('active', mode === 'dest');
+    }
+
+    document.getElementById('origin-pick-btn').addEventListener('click', function () {
+        setPickMode(pickMode === 'origin' ? null : 'origin');
+    });
+    document.getElementById('dest-pick-btn').addEventListener('click', function () {
+        setPickMode(pickMode === 'dest' ? null : 'dest');
+    });
+
+    // ── Geocode autocomplete ───────────────────────────────────────
+    function setupAutocomplete(inputId, listId, onSelect) {
+        const input = document.getElementById(inputId);
+        const list  = document.getElementById(listId);
+
+        input.addEventListener('input', function () {
+            clearTimeout(acTimers[inputId]);
+            const q = input.value.trim();
+            if (q.length < 3) { list.style.display = 'none'; return; }
+            acTimers[inputId] = setTimeout(() => geocode(q, list, onSelect, input), 350);
+        });
+
+        input.addEventListener('blur', function () {
+            setTimeout(() => { list.style.display = 'none'; }, 200);
+        });
+    }
+
+    async function geocode(q, list, onSelect, input) {
+        try {
+            const url = NOMINATIM + '?q=' + encodeURIComponent(q) + '&format=json&limit=5';
+            const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+            const data = await res.json();
+            list.innerHTML = '';
+            if (!data.length) { list.style.display = 'none'; return; }
+            data.forEach(function (item) {
+                const el = document.createElement('div');
+                el.className = 'autocomplete-item';
+                el.textContent = item.display_name;
+                el.addEventListener('mousedown', function () {
+                    onSelect([parseFloat(item.lon), parseFloat(item.lat)], item.display_name);
+                    list.style.display = 'none';
+                });
+                list.appendChild(el);
+            });
+            list.style.display = 'block';
+        } catch (_) {
+            list.style.display = 'none';
+        }
+    }
+
+    setupAutocomplete('origin-input', 'origin-ac', function (ll, label) {
+        setOrigin(ll, label);
+        map.flyTo({ center: ll, zoom: Math.max(map.getZoom(), 12) });
+    });
+
+    setupAutocomplete('dest-input', 'dest-ac', function (ll, label) {
+        setDest(ll, label);
+        map.flyTo({ center: ll, zoom: Math.max(map.getZoom(), 12) });
+    });
+
+    // ── Routing ────────────────────────────────────────────────────
+    window.getRoute = async function () {
+        if (!originLngLat || !destLngLat) {
+            showError('Please set both origin and destination.');
+            return;
+        }
+        clearError();
+        setLoading(true);
+
+        const body = {
+            locations: [
+                { lon: originLngLat[0], lat: originLngLat[1], type: 'break' },
+                { lon: destLngLat[0],   lat: destLngLat[1],   type: 'break' }
+            ],
+            costing: 'auto',
+            alternates: 2,
+            directions_options: { units: 'kilometers' }
+        };
+
+        try {
+            const res = await fetch('/web/route', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            if (res.status === 401) {
+                showError('You must be signed in to use routing. <a href="/Home/Login" style="color:var(--accent)">Sign in</a>');
+                setLoading(false);
+                return;
+            }
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                showError(data.error || 'Routing failed.');
+                setLoading(false);
+                return;
+            }
+
+            // Support both { trip } (single) and { alternates } (multi)
+            routes = extractTrips(data);
+            selectedIdx = 0;
+            renderResults();
+            renderMap(0);
+
+        } catch (err) {
+            showError('Network error: ' + err.message);
+        }
+
+        setLoading(false);
+    };
+
+    // Press Enter in inputs to trigger routing
+    ['origin-input', 'dest-input'].forEach(function (id) {
+        document.getElementById(id).addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') window.getRoute();
+        });
+    });
+
+    // ── Extract trips array from Valhalla response ─────────────────
+    function extractTrips(data) {
+        const out = [];
+        if (data.trip) out.push(data.trip);
+        if (data.alternates) data.alternates.forEach(a => a.trip && out.push(a.trip));
+        return out;
+    }
+
+    // ── Decode precision-6 polyline ────────────────────────────────
+    function decodePolyline6(str) {
+        let index = 0, lat = 0, lng = 0;
+        const coords = [];
+        while (index < str.length) {
+            let b, shift = 0, result = 0;
+            do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+            lat += (result & 1) ? ~(result >> 1) : result >> 1;
+            shift = 0; result = 0;
+            do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+            lng += (result & 1) ? ~(result >> 1) : result >> 1;
+            coords.push([lng / 1e6, lat / 1e6]);
+        }
+        return coords;
+    }
+
+    // ── Render results panel ───────────────────────────────────────
+    function renderResults() {
+        const panel = document.getElementById('panel-results');
+        panel.innerHTML = '';
+
+        routes.forEach(function (trip, i) {
+            const ta   = trip.trafficAnalysis || {};
+            const sum  = trip.summary || {};
+            const mins = ta.liveDurationMinutes != null
+                ? ta.liveDurationMinutes
+                : (sum.time != null ? sum.time / 60 : null);
+            const dist = sum.length != null ? sum.length.toFixed(1) + ' km' : '—';
+            const delay = ta.totalDelayMinutes;
+            const delayPct = ta.delayPercent;
+
+            let delayClass = 'none', delayTxt = 'No delay';
+            if (delay != null && delay > 0.5) {
+                delayClass = delay < 3 ? 'light' : 'heavy';
+                delayTxt   = '+' + delay.toFixed(1) + ' min (' + (delayPct != null ? delayPct.toFixed(0) : '?') + '%)';
+            }
+
+            const coverage = ta.trafficCoverageRatio != null
+                ? Math.round(ta.trafficCoverageRatio * 100) + '% coverage'
+                : '';
+
+            const card = document.createElement('div');
+            card.className = 'route-card' + (i === selectedIdx ? ' selected' : '');
+            card.dataset.idx = i;
+
+            let jamsHtml = '';
+            if (ta.jams && ta.jams.length) {
+                const jamsList = ta.jams.slice(0, 3).map(j =>
+                    `<div class="jam-row">⚠ ${j.delayMinutes.toFixed(1)} min – ${j.liveSpeedKmh.toFixed(0)} km/h (${j.lengthKm.toFixed(1)} km)</div>`
+                ).join('');
+                jamsHtml = `<div class="jams-section"><div class="jams-label">Traffic Jams</div>${jamsList}</div>`;
+            }
+
+            card.innerHTML = `
+                <div class="route-card-header">
+                    <span class="route-title">${i === 0 ? 'Best route' : 'Alternative ' + i}</span>
+                    <span class="route-time">${mins != null ? fmtMins(mins) : '—'}</span>
+                </div>
+                <div class="route-meta">
+                    <span>${dist}</span>
+                    ${coverage ? '<span>' + coverage + '</span>' : ''}
+                    <span class="delay-badge ${delayClass}">${delayTxt}</span>
+                </div>
+                ${jamsHtml}
+            `;
+
+            card.addEventListener('click', function () {
+                selectedIdx = i;
+                renderResults();
+                renderMap(i);
+            });
+
+            panel.appendChild(card);
+        });
+    }
+
+    function fmtMins(m) {
+        if (m < 60) return Math.round(m) + ' min';
+        const h = Math.floor(m / 60), rem = Math.round(m % 60);
+        return h + ' h ' + (rem ? rem + ' min' : '');
+    }
+
+    // ── Render route on map ────────────────────────────────────────
+    function routeColor(i, selected) {
+        if (i !== selected) return '#8b949e';
+        const ta = routes[i] && routes[i].trafficAnalysis;
+        if (!ta || ta.totalDelayMinutes == null || ta.totalDelayMinutes < 0.5) return '#58a6ff';
+        if (ta.totalDelayMinutes < 3) return '#d29922';
+        return '#f85149';
+    }
+
+    function renderMap(activeIdx) {
+        if (!routes.length) return;
+
+        const inactiveFeatures = [];
+        const activeFeature    = null;
+
+        routes.forEach(function (trip, i) {
+            const shape = trip.legs && trip.legs[0] && trip.legs[0].shape;
+            if (!shape) return;
+            const coords = decodePolyline6(shape);
+            if (i !== activeIdx) {
+                inactiveFeatures.push({
+                    type: 'Feature',
+                    geometry: { type: 'LineString', coordinates: coords }
+                });
+            }
+        });
+
+        // Active route
+        const activeTrip = routes[activeIdx];
+        const activeShape = activeTrip && activeTrip.legs && activeTrip.legs[0] && activeTrip.legs[0].shape;
+        const activeCoords = activeShape ? decodePolyline6(activeShape) : [];
+        const color = routeColor(activeIdx, activeIdx);
+
+        map.getSource('route-inactive').setData({ type: 'FeatureCollection', features: inactiveFeatures });
+        map.getSource('route-active').setData({
+            type: 'FeatureCollection',
+            features: activeCoords.length ? [{
+                type: 'Feature',
+                properties: { color },
+                geometry: { type: 'LineString', coordinates: activeCoords }
+            }] : []
+        });
+
+        // Jams
+        const jamFeatures = [];
+        if (activeTrip && activeTrip.trafficAnalysis && activeTrip.trafficAnalysis.jams) {
+            activeTrip.trafficAnalysis.jams.forEach(function (jam) {
+                if (!jam.encodedPolyline) return;
+                const coords = decodePolyline6(jam.encodedPolyline);
+                jamFeatures.push({
+                    type: 'Feature',
+                    geometry: { type: 'LineString', coordinates: coords }
+                });
+            });
+        }
+        map.getSource('jams').setData({ type: 'FeatureCollection', features: jamFeatures });
+
+        // Fit bounds to active route
+        if (activeCoords.length) {
+            const bounds = activeCoords.reduce(function (b, c) {
+                return b.extend(c);
+            }, new maplibregl.LngLatBounds(activeCoords[0], activeCoords[0]));
+            map.fitBounds(bounds, { padding: { top: 60, bottom: 60, left: 360, right: 60 }, maxZoom: 14 });
+        }
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────
+    function emptyFC() {
+        return { type: 'FeatureCollection', features: [] };
+    }
+
+    function showError(msg) {
+        const el = document.getElementById('panel-error');
+        el.innerHTML = msg;
+        el.style.display = 'block';
+    }
+    function clearError() {
+        const el = document.getElementById('panel-error');
+        el.style.display = 'none';
+        el.textContent = '';
+    }
+    function setLoading(on) {
+        const btn = document.getElementById('route-btn');
+        btn.disabled = on;
+        btn.innerHTML = on ? '<span class="spinner"></span> Routing…' : 'Get Route';
+    }
+
+}());
+</script>
+}

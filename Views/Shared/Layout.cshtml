@@ -18,7 +18,8 @@
             </button>
             <ul class="navbar-nav" id="navbar-links">
                 @RenderSection("Navbar", required: false)
-                <li><a href="/map/traffic">Map</a></li>
+                <li><a href="/map/traffic">Traffic</a></li>
+                <li><a href="/map/routing">Routing</a></li>
                 <li><a href="/docs">Docs</a></li>
                 <li><a href="/swagger" target="_blank">API</a></li>
                 @if(User.Identity?.IsAuthenticated == true) {
