@@ -133,7 +133,8 @@ public class TrafficAggregationService(AppDbContext db)
                         SumSpeedKmh      = sum,
                         SampleCount      = count,
                         SpeedLimitKmh    = speedLimit,
-                        LastUpdated      = now
+                        LastUpdated      = now,
+                        FirstSeenAt      = now
                     });
                 }
                 else
@@ -142,6 +143,7 @@ public class TrafficAggregationService(AppDbContext db)
                     existing.SampleCount  += count;
                     existing.SpeedLimitKmh = speedLimit ?? existing.SpeedLimitKmh;
                     existing.LastUpdated   = now;
+                    // FirstSeenAt is intentionally never updated
                 }
             }
 
@@ -163,7 +165,8 @@ public class TrafficAggregationService(AppDbContext db)
                         FiveMinuteBucket = bucket,
                         SumSpeedKmh      = sum,
                         SampleCount      = count,
-                        LastUpdated      = now
+                        LastUpdated      = now,
+                        FirstSeenAt      = now
                     });
                 }
                 else
@@ -171,6 +174,7 @@ public class TrafficAggregationService(AppDbContext db)
                     existing.SumSpeedKmh += sum;
                     existing.SampleCount += count;
                     existing.LastUpdated  = now;
+                    // FirstSeenAt is intentionally never updated
                 }
             }
 
@@ -280,6 +284,12 @@ public class TrafficAggregationService(AppDbContext db)
 
         var historicByWay = historic.ToDictionary(a => a.OsmWayId);
 
+        // Load summaries to get per-way freeflow speed for blending
+        var wayIdSet  = historicByWay.Keys.Union(liveByWay.Keys).ToList();
+        var summaries = await db.WaySpeedSummaries
+            .Where(s => wayIdSet.Contains(s.OsmWayId))
+            .ToDictionaryAsync(s => s.OsmWayId, ct);
+
         // Merge: union of all way IDs seen in either source
         var allWayIds = historicByWay.Keys.Union(liveByWay.Keys);
 
@@ -303,7 +313,8 @@ public class TrafficAggregationService(AppDbContext db)
             }
             else
             {
-                speedKmh = hist!.SumSpeedKmh / hist.SampleCount;
+                var freeflow = summaries.TryGetValue(wayId, out var s) ? s.FreeflowSpeed : (hist!.SpeedLimitKmh ?? 0);
+                speedKmh = BlendedAvg(hist!.SumSpeedKmh, hist.SampleCount, hist.FirstSeenAt, freeflow);
                 source   = "historic";
             }
 
@@ -362,13 +373,25 @@ public class TrafficAggregationService(AppDbContext db)
             .ThenBy(a => a.FiveMinuteBucket)
             .ToListAsync(ct);
 
+        var summaries = await db.WaySpeedSummaries
+            .ToDictionaryAsync(s => s.OsmWayId, ct);
+
         await using var writer = new StreamWriter(output, Encoding.UTF8, leaveOpen: true);
         await writer.WriteLineAsync("osm_way_id,speed,time");
 
         foreach (var a in aggregates)
         {
-            var speed = a.SampleCount > 0 ? a.SumSpeedKmh / a.SampleCount : 0;
-            var time  = a.DayOfWeek * 288 + a.FiveMinuteBucket;
+            double speed;
+            if (a.SampleCount > 0)
+            {
+                var freeflow = summaries.TryGetValue(a.OsmWayId, out var s)
+                    ? s.FreeflowSpeed
+                    : (a.SpeedLimitKmh ?? 0);
+                speed = BlendedAvg(a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt, freeflow);
+            }
+            else speed = 0;
+
+            var time = a.DayOfWeek * 288 + a.FiveMinuteBucket;
             await writer.WriteLineAsync($"{a.OsmWayId},{speed:F1},{time}");
         }
     }
@@ -387,13 +410,28 @@ public class TrafficAggregationService(AppDbContext db)
             .ThenBy(a => a.FiveMinuteBucket)
             .ToListAsync(ct);
 
+        // Per-cell freeflow = 85th pct of raw bucket averages
+        var freeflowByCell = aggregates
+            .Where(a => a.SampleCount > 0)
+            .GroupBy(a => a.H3CellIndex)
+            .ToDictionary(
+                g => g.Key,
+                g => Percentile(g.Select(a => a.SumSpeedKmh / a.SampleCount).OrderBy(v => v).ToList(), 0.85));
+
         await using var writer = new StreamWriter(output, Encoding.UTF8, leaveOpen: true);
         await writer.WriteLineAsync("h3_index,speed,time");
 
         foreach (var a in aggregates)
         {
-            var speed = a.SampleCount > 0 ? a.SumSpeedKmh / a.SampleCount : 0;
-            var time  = a.DayOfWeek * 288 + a.FiveMinuteBucket;
+            double speed;
+            if (a.SampleCount > 0)
+            {
+                var freeflow = freeflowByCell.GetValueOrDefault(a.H3CellIndex, 0);
+                speed = BlendedAvg(a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt, freeflow);
+            }
+            else speed = 0;
+
+            var time = a.DayOfWeek * 288 + a.FiveMinuteBucket;
             await writer.WriteLineAsync($"{(ulong)a.H3CellIndex:x},{speed:F1},{time}");
         }
     }
@@ -435,7 +473,11 @@ public class TrafficAggregationService(AppDbContext db)
                 ));
 
         var historicByWay = historic.ToDictionary(a => a.OsmWayId);
-        var allIds = historicByWay.Keys.Union(liveByWay.Keys);
+        var allIds = historicByWay.Keys.Union(liveByWay.Keys).ToList();
+
+        var summaries = await db.WaySpeedSummaries
+            .Where(s => allIds.Contains(s.OsmWayId))
+            .ToDictionaryAsync(s => s.OsmWayId, ct);
 
         var result = new Dictionary<long, WayTrafficData>();
         foreach (var wayId in allIds)
@@ -448,8 +490,13 @@ public class TrafficAggregationService(AppDbContext db)
             int liveSamples     = hasLive ? live.Count : 0;
             int historicSamples = hasHistoric && hist!.SampleCount > 0 ? hist.SampleCount : 0;
 
-            if (hasLive)  { speedKmh = live.AvgKmh;                       source = "live"; }
-            else          { speedKmh = hist!.SumSpeedKmh / hist.SampleCount; source = "historic"; }
+            if (hasLive)  { speedKmh = live.AvgKmh; source = "live"; }
+            else
+            {
+                var freeflow = summaries.TryGetValue(wayId, out var s) ? s.FreeflowSpeed : (hist!.SpeedLimitKmh ?? 0);
+                speedKmh = BlendedAvg(hist!.SumSpeedKmh, hist.SampleCount, hist.FirstSeenAt, freeflow);
+                source = "historic";
+            }
 
             speedKmh = Math.Round(speedKmh, 1);
             var speedLimit = (hasLive ? live.SpeedLimit : null)
@@ -470,6 +517,19 @@ public class TrafficAggregationService(AppDbContext db)
 
     // ── WaySpeedSummary maintenance ─────────────────────────────────────────────
 
+    /// <summary>
+    /// Blends observed average speed with freeflow for unobserved weekly slots.
+    /// If a (way, dow, bucket) has been "alive" for N weeks but only has M observations,
+    /// the remaining (N - M) weeks are assumed to be freeflow.
+    /// Returns the raw observed average when sampleCount >= totalSlots (dense data).
+    /// </summary>
+    private static double BlendedAvg(double sumSpeedKmh, int sampleCount, DateTime firstSeenAt, double freeflowSpeed)
+    {
+        var totalSlots = Math.Max(1, (int)Math.Ceiling((DateTime.UtcNow - firstSeenAt).TotalDays / 7.0));
+        var missing    = Math.Max(0, totalSlots - sampleCount);
+        return (sumSpeedKmh + missing * freeflowSpeed) / (sampleCount + missing);
+    }
+
     private static double Percentile(List<double> sorted, double p)
     {
         if (sorted.Count == 0) return 0;
@@ -489,7 +549,7 @@ public class TrafficAggregationService(AppDbContext db)
     {
         var allBuckets = await db.WaySpeedAggregates
             .Where(a => wayIds.Contains(a.OsmWayId) && a.SampleCount > 0)
-            .Select(a => new { a.OsmWayId, a.SumSpeedKmh, a.SampleCount, a.SpeedLimitKmh })
+            .Select(a => new { a.OsmWayId, a.SumSpeedKmh, a.SampleCount, a.SpeedLimitKmh, a.FirstSeenAt })
             .ToListAsync(ct);
 
         var byWay = allBuckets.GroupBy(a => a.OsmWayId);
@@ -497,19 +557,26 @@ public class TrafficAggregationService(AppDbContext db)
 
         foreach (var g in byWay)
         {
-            var avgs = g.Select(a => a.SumSpeedKmh / a.SampleCount)
-                        .OrderBy(v => v)
-                        .ToList();
+            // Freeflow = 85th pct of raw bucket averages (unblended — represents actual fast periods)
+            var rawAvgs = g.Select(a => a.SumSpeedKmh / a.SampleCount)
+                           .OrderBy(v => v)
+                           .ToList();
             var totalSamples = g.Sum(a => a.SampleCount);
             var speedLimit   = g.FirstOrDefault(a => a.SpeedLimitKmh != null)?.SpeedLimitKmh;
 
-            var freeflow = Percentile(avgs, 0.85);
+            var freeflow = Percentile(rawAvgs, 0.85);
             // Freeflow must be at least 75% of the speed limit to avoid
             // unrealistically low uncongested baselines from sparse data.
             if (speedLimit is > 0)
                 freeflow = Math.Max(freeflow, speedLimit.Value * 0.75);
-            var p50      = Percentile(avgs, 0.50);
-            var p95      = Percentile(avgs, 0.95);
+
+            // P50/P95 use blended averages: unobserved weekly slots count as freeflow,
+            // so a bucket that was congested 6 out of 52 weeks is weighted accordingly.
+            var blendedAvgs = g.Select(a => BlendedAvg(a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt, freeflow))
+                               .OrderBy(v => v)
+                               .ToList();
+            var p50 = Percentile(blendedAvgs, 0.50);
+            var p95 = Percentile(blendedAvgs, 0.95);
 
             var existing = await db.WaySpeedSummaries
                 .FirstOrDefaultAsync(s => s.OsmWayId == g.Key, ct);
@@ -587,22 +654,29 @@ public class TrafficAggregationService(AppDbContext db)
         // Load all aggregate buckets
         var allBuckets = await db.WaySpeedAggregates
             .Where(a => a.SampleCount > 0)
-            .Select(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket, a.SumSpeedKmh, a.SampleCount })
+            .Select(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket, a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt })
             .ToListAsync(ct);
 
         // Load summaries for freeflow / constrained
         var summaries = await db.WaySpeedSummaries
             .ToDictionaryAsync(s => s.OsmWayId, ct);
 
-        // Build slot lookup: wayId → (valhalla_slot → avg_kmh)
+        // Build slot lookup: wayId → (valhalla_slot → blended_avg_kmh)
         // Valhalla slot = ((dow + 6) % 7) * 288 + bucket  (Monday = day 0)
+        // Blended avg weights unobserved weekly slots as freeflow so that a bucket
+        // with jams in 6 out of 52 weeks doesn't look like permanent congestion.
         var bucketsByWay = allBuckets
             .GroupBy(b => b.OsmWayId)
             .ToDictionary(
                 g => g.Key,
-                g => g.ToDictionary(
-                    b => ((b.DayOfWeek + 6) % 7) * 288 + b.FiveMinuteBucket,
-                    b => b.SumSpeedKmh / b.SampleCount));
+                g =>
+                {
+                    summaries.TryGetValue(g.Key, out var sum);
+                    var freeflow = sum?.FreeflowSpeed ?? 0;
+                    return g.ToDictionary(
+                        b => ((b.DayOfWeek + 6) % 7) * 288 + b.FiveMinuteBucket,
+                        b => BlendedAvg(b.SumSpeedKmh, b.SampleCount, b.FirstSeenAt, freeflow));
+                });
 
         var allWayIds = bucketsByWay.Keys.Union(summaries.Keys).Distinct().OrderBy(id => id);
 

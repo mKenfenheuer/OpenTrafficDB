@@ -110,6 +110,9 @@ namespace OpenTrafficDB.Migrations
                     b.Property<int>("DayOfWeek")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("FiveMinuteBucket")
                         .HasColumnType("integer");
 
@@ -339,6 +342,9 @@ namespace OpenTrafficDB.Migrations
 
                     b.Property<int>("DayOfWeek")
                         .HasColumnType("integer");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("FiveMinuteBucket")
                         .HasColumnType("integer");

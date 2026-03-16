@@ -26,4 +26,11 @@ public class WaySpeedAggregate
     public double? SpeedLimitKmh { get; set; }
 
     public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// When the first observation for this (way, dow, bucket) was received.
+    /// Used to compute how many weekly slots have elapsed, so that weeks without
+    /// observations can be treated as freeflow when averaging.
+    /// </summary>
+    public DateTime FirstSeenAt { get; set; } = DateTime.UtcNow;
 }
