@@ -60,7 +60,7 @@ public class ValhallaMapMatchingService(
                 }
             },
             shape_match = "map_snap",
-            trace_options = new { search_radius = 25 },
+            trace_options = new { search_radius = 100 },
             filters = new
             {
                 attributes = new[]
@@ -90,8 +90,8 @@ public class ValhallaMapMatchingService(
 
             if (!response.IsSuccessStatusCode)
             {
-                var errBody = await response.Content.ReadAsStringAsync(ct);
-                logger.LogWarning("Valhalla trace_attributes {Status}: {Body}", response.StatusCode, errBody);
+                //var errBody = await response.Content.ReadAsStringAsync(ct);
+                //logger.LogWarning("Valhalla trace_attributes {Status}: {Body}", response.StatusCode, errBody);
                 return [];
             }
 
