@@ -25,6 +25,9 @@ namespace OpenTrafficDB.Services;
 ///      maneuver's [begin_shape_index, end_shape_index] range.
 ///      Recalculate leg and trip summary times accordingly.
 ///   6. Group consecutive congested edges into traffic-jam segments.
+///   7. For significant jams on the best candidate, request an additional
+///      Valhalla route with those jam areas excluded (exit/rejoin strategy).
+///      Merge the detour into the candidate pool and re-rank.
 /// </summary>
 public class ValhallaRoutingService(
     IHttpClientFactory httpClientFactory,
@@ -88,7 +91,9 @@ public class ValhallaRoutingService(
         }
 
         var routeLegShapes = ExtractRouteLegShapes(valhallaDoc);
+        var tripNodes      = ExtractAllTripNodes(valhallaDoc);
 
+        // Analyse traffic for every candidate in parallel
         var results = new RouteAnalysisResult[routeLegShapes.Count];
         using var sem = new SemaphoreSlim(4);
         await Task.WhenAll(routeLegShapes.Select(async (legShapes, i) =>
@@ -98,21 +103,51 @@ public class ValhallaRoutingService(
             finally { sem.Release(); }
         }));
 
-        var ranked = results
-            .Select((r, originalIndex) => (Result: r, OriginalIndex: originalIndex))
+        // Build unified candidate pool: (trip JSON node, analysis result)
+        var pool = results
+            .Select((r, i) => (TripNode: tripNodes[i], Result: r))
+            .Where(x => x.TripNode is not null)
+            .Select(x => (TripNode: x.TripNode!, Result: x.Result))
+            .ToList();
+
+        // For the current traffic-best route, try to generate a jam-avoiding detour
+        var bestJams = pool.OrderBy(x => x.Result.Analysis.LiveDurationMinutes)
+                           .FirstOrDefault().Result?.Analysis.Jams ?? [];
+
+        var detours = await TryJamDetourAsync(clientRequest, bestJams, ct);
+        pool.AddRange(detours);
+
+        // Re-rank the full pool (original candidates + any detour), trim to requested count
+        var finalRanked = pool
             .OrderBy(x => x.Result.Analysis.LiveDurationMinutes)
             .Take(requestedRoutes)
             .ToList();
 
-        var rebuilt = RebuildValhallaResponse(
-            valhallaDoc,
-            [.. ranked.Select(x => x.OriginalIndex)],
-            [.. ranked.Select(x => x.Result)]);
+        for (int i = 0; i < finalRanked.Count; i++)
+            finalRanked[i].Result.Analysis.RouteIndex = i;
 
+        var rebuilt = RebuildValhallaResponse(valhallaDoc, finalRanked);
         return (rebuilt, 200, null);
     }
 
-    // ── Shape extraction ──────────────────────────────────────────────────────
+    // ── Shape / node extraction ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Extract the raw trip JsonNode for every route in the Valhalla response.
+    /// Index 0 = primary trip; 1..N = alternates (each wrapped in {trip:…}).
+    /// Returns null slots for indices that cannot be resolved.
+    /// </summary>
+    private static List<JsonNode?> ExtractAllTripNodes(JsonElement doc)
+    {
+        var root  = JsonNode.Parse(doc.GetRawText())!.AsObject();
+        var nodes = new List<JsonNode?> { root["trip"]?.DeepClone() };
+
+        if (root["alternates"] is JsonArray alts)
+            foreach (var alt in alts)
+                nodes.Add(alt?["trip"]?.DeepClone());
+
+        return nodes;
+    }
 
     /// <summary>
     /// Returns [routeIndex][legIndex] → decoded shape coords.
@@ -428,6 +463,98 @@ public class ValhallaRoutingService(
         return jams;
     }
 
+    // ── Jam-avoidance detour ──────────────────────────────────────────────────
+
+    // Only attempt a detour if the best route has a jam with at least this much delay.
+    private const double MinDetourJamDelayMinutes = 2.0;
+
+    // Bounding-box buffer in degrees (~400 m) applied to each jam polygon.
+    // Wide enough to cover highway ramps so Valhalla can route around them.
+    private const double JamPolygonBufferDeg = 0.004;
+
+    /// <summary>
+    /// For the significant jams on the current best route, build Valhalla
+    /// <c>exclude_polygons</c> for each jam and request a fresh route that must
+    /// exit before the jam and rejoin after it.  The result is a single
+    /// (TripNode, RouteAnalysisResult) candidate that is merged back into the
+    /// main pool and re-ranked against the original candidates.
+    /// Returns an empty list when there are no actionable jams or the request fails.
+    /// </summary>
+    private async Task<List<(JsonNode TripNode, RouteAnalysisResult Result)>> TryJamDetourAsync(
+        JsonElement originalRequest,
+        List<TrafficJam> jams,
+        CancellationToken ct)
+    {
+        var excludePolygons = BuildExcludePolygons(jams);
+        if (excludePolygons is null) return [];
+
+        // Single best-route request — no alternates needed for the detour.
+        var detourReq = JsonNode.Parse(originalRequest.GetRawText())!.AsObject();
+        detourReq["alternates"]       = 0;
+        detourReq["exclude_polygons"] = excludePolygons;
+
+        var client = httpClientFactory.CreateClient("valhalla");
+        var body   = new StringContent(detourReq.ToJsonString(), Encoding.UTF8, "application/json");
+
+        try
+        {
+            using var response = await client.PostAsync($"{_valhallaBaseUrl}/route", body, ct);
+            if (!response.IsSuccessStatusCode) return [];
+
+            var rawJson    = await response.Content.ReadAsStringAsync(ct);
+            var detourDoc  = JsonDocument.Parse(rawJson).RootElement;
+            var legShapes  = ExtractRouteLegShapes(detourDoc);
+            if (legShapes.Count == 0) return [];
+
+            var result   = await AnalyseRouteAsync(0, legShapes[0], ct);
+            var tripNode = JsonNode.Parse(rawJson)!.AsObject()["trip"]?.DeepClone();
+            if (tripNode is null) return [];
+
+            return [(tripNode, result)];
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Jam-avoidance detour request failed.");
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Build a Valhalla <c>exclude_polygons</c> array from significant traffic jams.
+    /// Each jam becomes a buffered bounding-box polygon (closed ring, [lon, lat] order).
+    /// Returns null when no jams meet the delay threshold.
+    /// </summary>
+    private static JsonArray? BuildExcludePolygons(List<TrafficJam> jams)
+    {
+        var polygons = new JsonArray();
+
+        foreach (var jam in jams
+            .Where(j => j.DelayMinutes >= MinDetourJamDelayMinutes)
+            .OrderByDescending(j => j.DelayMinutes)
+            .Take(5))   // limit polygons to avoid over-constraining Valhalla
+        {
+            var coords = PolylineEncoder.Decode(jam.EncodedPolyline).ToList();
+            if (coords.Count == 0) continue;
+
+            double minLat = coords.Min(c => c.Lat) - JamPolygonBufferDeg;
+            double maxLat = coords.Max(c => c.Lat) + JamPolygonBufferDeg;
+            double minLon = coords.Min(c => c.Lon) - JamPolygonBufferDeg;
+            double maxLon = coords.Max(c => c.Lon) + JamPolygonBufferDeg;
+
+            // Closed rectangular ring in GeoJSON [lon, lat] order
+            polygons.Add(new JsonArray
+            {
+                new JsonArray { minLon, minLat },
+                new JsonArray { maxLon, minLat },
+                new JsonArray { maxLon, maxLat },
+                new JsonArray { minLon, maxLat },
+                new JsonArray { minLon, minLat }
+            });
+        }
+
+        return polygons.Count > 0 ? polygons : null;
+    }
+
     // ── Request manipulation ──────────────────────────────────────────────────
 
     private static int ReadAlternates(JsonElement source)
@@ -448,35 +575,27 @@ public class ValhallaRoutingService(
     // ── Response rebuilding ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Rebuild the Valhalla response with only the traffic-ranked routes.
+    /// Rebuild the Valhalla response from a ranked list of (trip node, analysis) pairs.
+    /// Accepts trip nodes from any Valhalla response (original candidates or jam detours).
     /// Each trip's time fields are patched with traffic delays; trafficAnalysis is injected.
-    /// Root-level fields (id, etc.) are preserved verbatim.
+    /// Root-level fields (id, etc.) are copied verbatim from <paramref name="original"/>.
     /// </summary>
     private static JsonElement RebuildValhallaResponse(
         JsonElement original,
-        List<int> orderedOriginalIndices,
-        List<RouteAnalysisResult> results)
+        List<(JsonNode TripNode, RouteAnalysisResult Result)> rankedTrips)
     {
-        if (orderedOriginalIndices.Count == 0) return original;
+        if (rankedTrips.Count == 0) return original;
 
-        var root = JsonNode.Parse(original.GetRawText())!.AsObject();
-
-        JsonNode? GetTripNode(int idx)
-        {
-            if (idx == 0) return root["trip"]?.DeepClone();
-            if (root["alternates"] is JsonArray alts && idx - 1 < alts.Count)
-                return alts[idx - 1]?["trip"]?.DeepClone();
-            return null;
-        }
-
+        var root    = JsonNode.Parse(original.GetRawText())!.AsObject();
         var newRoot = new JsonObject();
+
         foreach (var prop in root)
         {
             if (prop.Key is "trip" or "alternates") continue;
             newRoot[prop.Key] = prop.Value?.DeepClone();
         }
 
-        JsonNode PatchAndInject(JsonNode tripNode, RouteAnalysisResult result)
+        static JsonNode PatchAndInject(JsonNode tripNode, RouteAnalysisResult result)
         {
             var obj = tripNode.AsObject();
             PatchTripTimes(obj, result.LegShapeDelays);
@@ -485,17 +604,11 @@ public class ValhallaRoutingService(
             return obj;
         }
 
-        var bestTrip = GetTripNode(orderedOriginalIndices[0]);
-        if (bestTrip is not null)
-            newRoot["trip"] = PatchAndInject(bestTrip, results[0]);
+        newRoot["trip"] = PatchAndInject(rankedTrips[0].TripNode, rankedTrips[0].Result);
 
         var newAlts = new JsonArray();
-        for (int i = 1; i < orderedOriginalIndices.Count; i++)
-        {
-            var tripNode = GetTripNode(orderedOriginalIndices[i]);
-            if (tripNode is null) continue;
-            newAlts.Add(new JsonObject { ["trip"] = PatchAndInject(tripNode, results[i]) });
-        }
+        for (int i = 1; i < rankedTrips.Count; i++)
+            newAlts.Add(new JsonObject { ["trip"] = PatchAndInject(rankedTrips[i].TripNode, rankedTrips[i].Result) });
 
         if (newAlts.Count > 0) newRoot["alternates"] = newAlts;
 
