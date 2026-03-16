@@ -298,6 +298,11 @@ public class ValhallaRoutingService(
                     live    = hist;
                     hasData = true;
                 }
+                else if (s.P50Speed < s.FreeflowSpeed)
+                {
+                    live    = s.P50Speed;
+                    hasData = true;                    
+                }
                 else
                 {
                     live    = freeflow;
