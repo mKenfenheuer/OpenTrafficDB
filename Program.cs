@@ -34,6 +34,7 @@ public class Program
         builder.Services.AddScoped<ValhallaMapMatchingService>();
         builder.Services.AddScoped<WayGeometryService>();
         builder.Services.AddScoped<TrafficTileService>();
+        builder.Services.AddScoped<ValhallaRoutingService>();
         builder.Services.AddHostedService<AggregationBackgroundService>();
         builder.Services.AddHostedService<WayGeometryBackgroundService>();
 
