@@ -121,7 +121,16 @@ public class ValhallaRoutingService(
         var detourTasks = finalRanked
             .Select(r => TryJamDetourAsync(clientRequest, r.Result.Analysis.Jams, ct));
         var allDetours = await Task.WhenAll(detourTasks);
+
+        // Re-sort the full pool (originals + detours), deduplicate by shape polyline,
+        // then trim back to the user-requested count.
         finalRanked.AddRange(allDetours.SelectMany(d => d));
+        var seen = new HashSet<string>();
+        finalRanked = finalRanked
+            .OrderBy(x => x.Result.Analysis.LiveDurationMinutes)
+            .Where(x => seen.Add(GetRouteShapeKey(x.TripNode)))
+            .Take(requestedRoutes)
+            .ToList();
 
         for (int i = 0; i < finalRanked.Count; i++)
             finalRanked[i].Result.Analysis.RouteIndex = i;
@@ -286,11 +295,11 @@ public class ValhallaRoutingService(
 
             if (summaries.TryGetValue(edge.WayId, out var s))
             {
-                freeflow = s.FreeflowSpeed > 0 ? s.FreeflowSpeed : s.P50Speed;
+                freeflow = s.FreeflowSpeed > 0 ? s.FreeflowSpeed : s.P95Speed;
                 // Prefer live 30-min average, then time-of-day historical, then freeflow baseline
                 if (s.ConstrainedSpeed.HasValue)
                 {
-                    live    = s.ConstrainedSpeed.Value;
+                    live    = Math.Max(s.ConstrainedSpeed.Value,1);
                     hasData = true;
                 }
                 else if (historicalSpeeds.TryGetValue(edge.WayId, out var hist) && hist > 0)
@@ -484,8 +493,8 @@ public class ValhallaRoutingService(
                 else if (edge.Coords.Count > 0) jamCoords.AddRange(edge.Coords.Skip(1));
 
                 jamLengthKm    += lengthKm;
-                jamFfSec       += lengthKm / freeflow * 3600;
-                jamLiveSec     += lengthKm / live     * 3600;
+                jamFfSec       += lengthKm / Math.Max(1,freeflow) * 3600;
+                jamLiveSec     += lengthKm / Math.Max(1,live)     * 3600;
                 jamFfKmhSum    += freeflow;
                 jamLiveKmhSum  += live;
                 jamEdgeCount++;
@@ -572,6 +581,20 @@ public class ValhallaRoutingService(
     }
 
     // ── Request manipulation ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Produces a deduplication key by concatenating the encoded shape strings of all
+    /// legs in a trip node. Two routes with identical shapes are considered duplicates.
+    /// </summary>
+    private static string GetRouteShapeKey(JsonNode tripNode)
+    {
+        if (tripNode["legs"] is not JsonArray legs) return string.Empty;
+
+        var sb = new StringBuilder();
+        foreach (var leg in legs)
+            sb.Append(leg?["shape"]?.GetValue<string>());
+        return sb.ToString();
+    }
 
     private static int ReadAlternates(JsonElement source)
     {

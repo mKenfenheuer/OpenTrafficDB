@@ -20,7 +20,7 @@ public class RateLimitRetryHandler(ILogger<RateLimitRetryHandler> logger) : Dele
         {
             await Task.Delay(delay, ct);
         }
-        catch (Exception ex)
+        catch
         {
 
         }
