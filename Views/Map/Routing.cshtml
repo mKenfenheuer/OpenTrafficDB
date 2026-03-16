@@ -316,9 +316,9 @@
     // ── Map init ───────────────────────────────────────────────────
     map = new maplibregl.Map({
         container: 'map',
-        style: STYLE_URL,
-        center: [10.0, 51.3],
-        zoom: 6,
+        style:     STYLE_URL,
+        center:    [6.953101,50.935173],  // centre on Cologne by default
+        zoom:      9,
         attributionControl: { compact: true }
     });
 
@@ -333,24 +333,40 @@
         map.addSource('traffic', {
             type: 'vector',
             tiles: [window.location.origin + '/tiles/traffic/current/{z}/{x}/{y}'],
-            minzoom: 10, maxzoom: 16
+            minzoom: 6, maxzoom: 16
         });
+
         map.addLayer({
-            id: 'traffic-lines',
-            type: 'line',
+            id:     'traffic-lines',
+            type:   'line',
             source: 'traffic',
             'source-layer': 'traffic',
-            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            layout: {
+                'line-cap':  'round',
+                'line-join': 'round'
+            },
             paint: {
-                'line-color': [
-                    'interpolate', ['linear'],
-                    ['coalesce', ['get', 'jam_estimate'], 0],
-                    0,   '#3fb950',
-                    0.4, '#d29922',
-                    0.8, '#f85149'
+                // Width scales with zoom
+                'line-width': [
+                    'interpolate', ['linear'], ['zoom'],
+                    8,  2,
+                    12, 4,
+                    16, 7
                 ],
-                'line-width': 3,
-                'line-opacity': 0.65
+                // Colour by jam_estimate when available, grey otherwise
+                'line-color': [
+                    'case',
+                    ['has', 'jam_estimate'],
+                    [
+                        'interpolate', ['linear'],
+                        ['get', 'jam_estimate'],
+                        0.0,  '#3fb950',   // free flow — green
+                        0.35, '#d29922',   // slowing   — yellow
+                        0.70, '#f85149'    // congested — red
+                    ],
+                    '#8b949e'  // no speed-limit data — muted grey
+                ],
+                'line-opacity': 0.85
             }
         });
 

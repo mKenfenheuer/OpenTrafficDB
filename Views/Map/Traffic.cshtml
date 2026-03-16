@@ -120,8 +120,8 @@
     map = new maplibregl.Map({
         container: 'map',
         style:     STYLE_URL,
-        center:    [10.0, 51.3],  // centre on Germany by default
-        zoom:      6,
+        center:    [6.953101,50.935173],  // centre on Cologne by default
+        zoom:      9,
         attributionControl: { compact: true }
     });
 
@@ -147,7 +147,7 @@
         map.addSource('traffic', {
             type:  'vector',
             tiles: [url],
-            minzoom: 8,
+            minzoom: 6,
             maxzoom: 16
         });
 
