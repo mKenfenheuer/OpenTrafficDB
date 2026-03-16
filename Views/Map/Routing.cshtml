@@ -389,7 +389,7 @@
             source: 'jams',
             layout: { 'line-cap': 'round', 'line-join': 'round' },
             paint: {
-                'line-color': '#f85149',
+                'line-color': ['match', ['get', 'severity'], 'heavy', '#f85149', '#d29922'],
                 'line-width': 8,
                 'line-opacity': 0.9
             }
@@ -662,10 +662,7 @@
     // ── Render route on map ────────────────────────────────────────
     function routeColor(i, selected) {
         if (i !== selected) return '#8b949e';
-        const ta = routes[i] && routes[i].trafficAnalysis;
-        if (!ta || ta.totalDelayMinutes == null || ta.totalDelayMinutes < 0.5) return '#58a6ff';
-        if (ta.totalDelayMinutes < 3) return '#d29922';
-        return '#f85149';
+        return '#58a6ff';
     }
 
     function renderMap(activeIdx) {
@@ -710,6 +707,7 @@
                 const coords = decodePolyline6(jam.encodedPolyline);
                 jamFeatures.push({
                     type: 'Feature',
+                    properties: { severity: jam.delayMinutes >= 3 ? 'heavy' : 'light' },
                     geometry: { type: 'LineString', coordinates: coords }
                 });
             });
