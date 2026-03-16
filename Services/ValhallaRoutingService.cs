@@ -474,8 +474,8 @@ public class ValhallaRoutingService(
                 {
                     EncodedPolyline  = PolylineEncoder.Encode(jamCoords),
                     DelayMinutes     = Math.Round(delaySec / 60.0, 2),
-                    LiveSpeedKmh     = Math.Round(jamLiveKmhSum / jamEdgeCount, 1),
-                    FreeflowSpeedKmh = Math.Round(jamFfKmhSum   / jamEdgeCount, 1),
+                    LiveSpeedKmh     = Math.Round(jamLiveSec > 0 ? jamLengthKm / jamLiveSec * 3600 : 0, 1),
+                    FreeflowSpeedKmh = Math.Round(jamFfSec  > 0 ? jamLengthKm / jamFfSec  * 3600 : 0, 1),
                     DelayPercent     = Math.Round(jamFfSec > 0 ? delaySec / jamFfSec * 100 : 0, 1),
                     LengthKm         = Math.Round(jamLengthKm, 3)
                 });
@@ -538,7 +538,11 @@ public class ValhallaRoutingService(
         try
         {
             using var response = await client.PostAsync($"{_valhallaBaseUrl}/route", body, ct);
-            if (!response.IsSuccessStatusCode) return [];
+            if (!response.IsSuccessStatusCode) 
+            {
+                string data = await response.Content.ReadAsStringAsync();
+                return [];
+            }
 
             var rawJson    = await response.Content.ReadAsStringAsync(ct);
             var detourDoc  = JsonDocument.Parse(rawJson).RootElement;
@@ -566,15 +570,51 @@ public class ValhallaRoutingService(
     /// </summary>
     private static JsonArray? BuildExcludeLocations(List<TrafficJam> jams)
     {
-        var locations = new JsonArray();
+        const int MaxLocations = 50;
 
-        foreach (var jam in jams
+        var qualifying = jams
             .Where(j => j.DelayMinutes >= MinDetourJamDelayMinutes)
             .OrderByDescending(j => j.DelayMinutes)
-            .Take(5))
+            .Take(5)
+            .ToList();
+
+        if (qualifying.Count == 0) return null;
+
+        // Decode all jam points upfront
+        var jamPoints = qualifying
+            .Select(j => PolylineEncoder.Decode(j.EncodedPolyline).ToList())
+            .ToList();
+
+        // Distribute MaxLocations slots across jams, at least 1 per jam
+        int remaining = MaxLocations;
+        var slots = new int[jamPoints.Count];
+        for (int i = 0; i < slots.Length; i++) { slots[i] = 1; remaining--; }
+
+        // Give extra slots proportionally by delay magnitude
+        double totalDelay = qualifying.Sum(j => j.DelayMinutes);
+        for (int i = 0; i < slots.Length && remaining > 0; i++)
         {
-            foreach (var (lat, lon) in PolylineEncoder.Decode(jam.EncodedPolyline))
-                locations.Add(new JsonObject { ["lat"] = lat, ["lon"] = lon });
+            int extra = (int)Math.Floor(qualifying[i].DelayMinutes / totalDelay * (MaxLocations - jamPoints.Count));
+            extra = Math.Min(extra, remaining);
+            slots[i] += extra;
+            remaining -= extra;
+        }
+        // Assign any leftover slots to the worst jam
+        slots[0] += remaining;
+
+        var locations = new JsonArray();
+        for (int i = 0; i < jamPoints.Count; i++)
+        {
+            var pts = jamPoints[i];
+            int count = Math.Min(slots[i], pts.Count);
+            if (count <= 0) continue;
+
+            // Sample evenly if we have more points than slots
+            for (int k = 0; k < count; k++)
+            {
+                int idx = pts.Count == 1 ? 0 : (int)Math.Round((double)k / (count - 1) * (pts.Count - 1));
+                locations.Add(new JsonObject { ["lat"] = pts[idx].Lat, ["lon"] = pts[idx].Lon });
+            }
         }
 
         return locations.Count > 0 ? locations : null;
