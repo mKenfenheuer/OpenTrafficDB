@@ -110,18 +110,18 @@ public class ValhallaRoutingService(
             .Select(x => (TripNode: x.TripNode!, Result: x.Result))
             .ToList();
 
-        // For the current traffic-best route, try to generate a jam-avoiding detour
-        var bestJams = pool.OrderBy(x => x.Result.Analysis.LiveDurationMinutes)
-                           .FirstOrDefault().Result?.Analysis.Jams ?? [];
-
-        var detours = await TryJamDetourAsync(clientRequest, bestJams, ct);
-        pool.AddRange(detours);
-
-        // Re-rank the full pool (original candidates + any detour), trim to requested count
+        // Trim original candidates to the user-requested count, ranked by live duration
         var finalRanked = pool
             .OrderBy(x => x.Result.Analysis.LiveDurationMinutes)
             .Take(requestedRoutes)
             .ToList();
+
+        // Try a jam-avoiding detour for every route (best + all alternates) and append
+        // results so they never displace any of the originally requested routes.
+        var detourTasks = finalRanked
+            .Select(r => TryJamDetourAsync(clientRequest, r.Result.Analysis.Jams, ct));
+        var allDetours = await Task.WhenAll(detourTasks);
+        finalRanked.AddRange(allDetours.SelectMany(d => d));
 
         for (int i = 0; i < finalRanked.Count; i++)
             finalRanked[i].Result.Analysis.RouteIndex = i;
@@ -502,10 +502,6 @@ public class ValhallaRoutingService(
     // Only attempt a detour if the best route has a jam with at least this much delay.
     private const double MinDetourJamDelayMinutes = 2.0;
 
-    // Bounding-box buffer in degrees (~400 m) applied to each jam polygon.
-    // Wide enough to cover highway ramps so Valhalla can route around them.
-    private const double JamPolygonBufferDeg = 0.004;
-
     /// <summary>
     /// For the significant jams on the current best route, build Valhalla
     /// <c>exclude_polygons</c> for each jam and request a fresh route that must
@@ -519,13 +515,13 @@ public class ValhallaRoutingService(
         List<TrafficJam> jams,
         CancellationToken ct)
     {
-        var excludePolygons = BuildExcludePolygons(jams);
-        if (excludePolygons is null) return [];
+        var excludeLocations = BuildExcludeLocations(jams);
+        if (excludeLocations is null) return [];
 
         // Single best-route request — no alternates needed for the detour.
         var detourReq = JsonNode.Parse(originalRequest.GetRawText())!.AsObject();
-        detourReq["alternates"]       = 0;
-        detourReq["exclude_polygons"] = excludePolygons;
+        detourReq["alternates"]        = 0;
+        detourReq["exclude_locations"] = excludeLocations;
 
         var client = httpClientFactory.CreateClient("valhalla");
         var body   = new StringContent(detourReq.ToJsonString(), Encoding.UTF8, "application/json");
@@ -554,39 +550,25 @@ public class ValhallaRoutingService(
     }
 
     /// <summary>
-    /// Build a Valhalla <c>exclude_polygons</c> array from significant traffic jams.
-    /// Each jam becomes a buffered bounding-box polygon (closed ring, [lon, lat] order).
+    /// Build a Valhalla <c>exclude_locations</c> array from significant traffic jams.
+    /// Each decoded shape point of qualifying jams becomes an {"lat":…,"lon":…} entry,
+    /// so only the exact congested road segments are excluded rather than a broad bbox.
     /// Returns null when no jams meet the delay threshold.
     /// </summary>
-    private static JsonArray? BuildExcludePolygons(List<TrafficJam> jams)
+    private static JsonArray? BuildExcludeLocations(List<TrafficJam> jams)
     {
-        var polygons = new JsonArray();
+        var locations = new JsonArray();
 
         foreach (var jam in jams
             .Where(j => j.DelayMinutes >= MinDetourJamDelayMinutes)
             .OrderByDescending(j => j.DelayMinutes)
-            .Take(5))   // limit polygons to avoid over-constraining Valhalla
+            .Take(5))
         {
-            var coords = PolylineEncoder.Decode(jam.EncodedPolyline).ToList();
-            if (coords.Count == 0) continue;
-
-            double minLat = coords.Min(c => c.Lat) - JamPolygonBufferDeg;
-            double maxLat = coords.Max(c => c.Lat) + JamPolygonBufferDeg;
-            double minLon = coords.Min(c => c.Lon) - JamPolygonBufferDeg;
-            double maxLon = coords.Max(c => c.Lon) + JamPolygonBufferDeg;
-
-            // Closed rectangular ring in GeoJSON [lon, lat] order
-            polygons.Add(new JsonArray
-            {
-                new JsonArray { minLon, minLat },
-                new JsonArray { maxLon, minLat },
-                new JsonArray { maxLon, maxLat },
-                new JsonArray { minLon, maxLat },
-                new JsonArray { minLon, minLat }
-            });
+            foreach (var (lat, lon) in PolylineEncoder.Decode(jam.EncodedPolyline))
+                locations.Add(new JsonObject { ["lat"] = lat, ["lon"] = lon });
         }
 
-        return polygons.Count > 0 ? polygons : null;
+        return locations.Count > 0 ? locations : null;
     }
 
     // ── Request manipulation ──────────────────────────────────────────────────
