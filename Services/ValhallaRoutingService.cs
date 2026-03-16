@@ -37,7 +37,7 @@ public class ValhallaRoutingService(
 {
     private readonly string _valhallaBaseUrl = config["Valhalla:BaseUrl"] ?? "http://localhost:8002";
 
-    private const double JamThreshold      = 0.75;
+    private const double JamThreshold      = 0.95;
     private const double MinJamDelaySeconds = 10.0;
 
     private static readonly JsonSerializerOptions _jsonOptions = new()
