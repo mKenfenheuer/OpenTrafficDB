@@ -64,6 +64,24 @@
         </div>
       </div>
 
+      <!-- Danger Zone -->
+      <div class="section">
+        <div class="section-title" style="color:var(--danger)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          Danger Zone
+        </div>
+        <div class="card" style="border:1px solid var(--danger)">
+          <div class="card-title" style="color:var(--danger)">Purge all traffic data</div>
+          <p class="text-muted" style="margin-bottom:12px">
+            Permanently deletes all speed observations, way aggregates, H3 aggregates, and way speed summaries.
+            Resets all user contribution counters to zero. Geometries, users, and API keys are kept.
+            <strong>This cannot be undone.</strong>
+          </p>
+          <div id="purge-alert" class="alert hidden"></div>
+          <button class="btn btn-danger" onclick="purgeData()">Purge all traffic data</button>
+        </div>
+      </div>
+
       <!-- Blocked IPs -->
       <div class="section">
         <div class="section-title d-flex justify-between align-center">
@@ -292,6 +310,20 @@
     window.unblock = async function (id) {
       const res = await web('DELETE', `/admin/blocked-ips/${id}`);
       if (res?.ok) loadBlocked();
+    };
+
+    // ── Danger Zone ────────────────────────────────────────────────────────────
+
+    window.purgeData = async function () {
+      const alertEl = document.getElementById('purge-alert');
+      alertEl.classList.add('hidden');
+      if (!confirm('This will permanently delete ALL speed observations, aggregates, and summaries, and reset all contribution counters.\n\nType OK to confirm.')) return;
+      if (prompt('Type PURGE to confirm:') !== 'PURGE') { showAlert(alertEl, 'Purge cancelled.', 'info'); return; }
+
+      const res = await web('DELETE', '/admin/data');
+      if (!res?.ok) { showAlert(alertEl, res?.data?.error || 'Purge failed.'); return; }
+      showAlert(alertEl, res.data.message || 'Data purged.', 'success');
+      loadStats();
     };
 
     // ── Helpers ────────────────────────────────────────────────────────────────

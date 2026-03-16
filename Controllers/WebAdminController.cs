@@ -207,4 +207,22 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
         await abuseDetection.UnblockAsync(id);
         return Ok(new { message = "IP unblocked." });
     }
+
+    // ── Danger Zone ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Purge all gathered traffic data: speed observations, way/H3 aggregates, and way speed summaries.
+    /// Geometries, users, API keys, and blocked IPs are preserved.
+    /// </summary>
+    [HttpDelete("data")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> PurgeTrafficData()
+    {
+        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"WaySpeedSummaries\", \"WaySpeedAggregates\", \"H3SpeedAggregates\", \"SpeedObservations\" RESTART IDENTITY");
+
+        // Reset contribution counters — the observations are gone
+        await db.Users.ExecuteUpdateAsync(s => s.SetProperty(u => u.TotalContributions, 0));
+
+        return Ok(new { message = "All traffic data purged. Geometries, users, and API keys are intact." });
+    }
 }
