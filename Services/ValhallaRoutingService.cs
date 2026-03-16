@@ -205,11 +205,25 @@ public class ValhallaRoutingService(
             .SelectMany(edges => edges.Select(e => e.WayId))
             .Where(id => id != 0).Distinct().ToList();
 
+        // Current time-of-day bucket for historical fallback
+        var now       = DateTime.UtcNow;
+        int currentDow    = (int)now.DayOfWeek;
+        int currentBucket = (now.Hour * 60 + now.Minute) / 5;
+
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var summaries = await db.WaySpeedSummaries
             .AsNoTracking()
             .Where(s => wayIds.Contains(s.OsmWayId))
             .ToDictionaryAsync(s => s.OsmWayId, ct);
+
+        // Historical speed for the current day-of-week + 5-minute bucket
+        var historicalSpeeds = await db.WaySpeedAggregates
+            .AsNoTracking()
+            .Where(a => wayIds.Contains(a.OsmWayId)
+                     && a.DayOfWeek == currentDow
+                     && a.FiveMinuteBucket == currentBucket
+                     && a.SampleCount > 0)
+            .ToDictionaryAsync(a => a.OsmWayId, a => a.SumSpeedKmh / a.SampleCount, ct);
 
         double totalFreeflowSec = 0, totalLiveSec = 0, totalKm = 0, coveredKm = 0;
         var allEdgeInfo = new List<(EdgeData Edge, double FreeflowSpeed, double LiveSpeed, double LengthKm, bool HasLiveData)>();
@@ -218,7 +232,7 @@ public class ValhallaRoutingService(
         for (int li = 0; li < legEdges.Count; li++)
         {
             var (legDelay, edgeInfo, ffSec, livSec, km, covKm) =
-                ComputeLegDelays(legEdges[li], legShapes[li].Count, summaries);
+                ComputeLegDelays(legEdges[li], legShapes[li].Count, summaries, historicalSpeeds);
 
             legShapeDelays.Add(legDelay);
             allEdgeInfo.AddRange(edgeInfo);
@@ -258,7 +272,8 @@ public class ValhallaRoutingService(
         ComputeLegDelays(
             List<EdgeData> edges,
             int shapePointCount,
-            Dictionary<long, WaySpeedSummary> summaries)
+            Dictionary<long, WaySpeedSummary> summaries,
+            Dictionary<long, double> historicalSpeeds)
     {
         var shapePointDelays = new double[shapePointCount];
         var edgeInfo = new List<(EdgeData, double, double, double, bool)>();
@@ -272,8 +287,22 @@ public class ValhallaRoutingService(
             if (summaries.TryGetValue(edge.WayId, out var s))
             {
                 freeflow = s.FreeflowSpeed > 0 ? s.FreeflowSpeed : s.P50Speed;
-                live     = s.ConstrainedSpeed ?? freeflow;
-                hasData  = s.ConstrainedSpeed.HasValue;
+                // Prefer live 30-min average, then time-of-day historical, then freeflow baseline
+                if (s.ConstrainedSpeed.HasValue)
+                {
+                    live    = s.ConstrainedSpeed.Value;
+                    hasData = true;
+                }
+                else if (historicalSpeeds.TryGetValue(edge.WayId, out var hist) && hist > 0)
+                {
+                    live    = hist;
+                    hasData = true;
+                }
+                else
+                {
+                    live    = freeflow;
+                    hasData = false;
+                }
             }
 
             if (freeflow <= 0) freeflow = 50;

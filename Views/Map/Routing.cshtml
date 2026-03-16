@@ -329,6 +329,31 @@
     }), 'top-right');
 
     map.on('load', function () {
+        // Traffic tile overlay (same source as /map/traffic)
+        map.addSource('traffic', {
+            type: 'vector',
+            tiles: [window.location.origin + '/tiles/traffic/current/{z}/{x}/{y}'],
+            minzoom: 10, maxzoom: 16
+        });
+        map.addLayer({
+            id: 'traffic-lines',
+            type: 'line',
+            source: 'traffic',
+            'source-layer': 'traffic',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+                'line-color': [
+                    'interpolate', ['linear'],
+                    ['coalesce', ['get', 'jam_estimate'], 0],
+                    0,   '#3fb950',
+                    0.4, '#d29922',
+                    0.8, '#f85149'
+                ],
+                'line-width': 3,
+                'line-opacity': 0.65
+            }
+        });
+
         // Route line sources
         map.addSource('route-inactive', { type: 'geojson', data: emptyFC() });
         map.addSource('route-active',   { type: 'geojson', data: emptyFC() });
