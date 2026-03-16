@@ -23,6 +23,11 @@ public class Program
         builder.Services.AddDbContext<AppDbContext>(options =>
             options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+        // Factory used by ValhallaRoutingService to create one DbContext per concurrent task
+        builder.Services.AddDbContextFactory<AppDbContext>(options =>
+            options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")),
+            ServiceLifetime.Scoped);
+
         // ── Services ────────────────────────────────────────────────────────────
         builder.Services.AddSingleton<AbuseDetectionService>();
         builder.Services.AddSingleton<CryptoService>();

@@ -29,7 +29,7 @@ namespace OpenTrafficDB.Services;
 public class ValhallaRoutingService(
     IHttpClientFactory httpClientFactory,
     IConfiguration config,
-    AppDbContext db,
+    IDbContextFactory<AppDbContext> dbFactory,
     ILogger<ValhallaRoutingService> logger)
 {
     private readonly string _valhallaBaseUrl = config["Valhalla:BaseUrl"] ?? "http://localhost:8002";
@@ -165,11 +165,12 @@ public class ValhallaRoutingService(
         foreach (var legCoords in legShapes)
             legEdges.Add(legCoords.Count >= 2 ? await GetEdgesAsync(legCoords, ct) : []);
 
-        // Single DB query across all legs
+        // Single DB query across all legs — own context per concurrent task
         var wayIds = legEdges
             .SelectMany(edges => edges.Select(e => e.WayId))
             .Where(id => id != 0).Distinct().ToList();
 
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
         var summaries = await db.WaySpeedSummaries
             .AsNoTracking()
             .Where(s => wayIds.Contains(s.OsmWayId))
@@ -277,7 +278,7 @@ public class ValhallaRoutingService(
         {
             encoded_polyline = PolylineEncoder.Encode(coords),
             costing          = "auto",
-            shape_match      = "edge_walk",
+            shape_match      = "map_snap",
             filters          = new
             {
                 attributes = new[]
