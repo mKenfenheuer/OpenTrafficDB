@@ -1,3 +1,4 @@
+using System.Data;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -33,30 +34,48 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     /// <summary>Get service-wide statistics.</summary>
     [HttpGet("stats")]
     [ProducesResponseType(typeof(AdminStatsResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetStats()
+    public async Task<IActionResult> GetStats(CancellationToken ct)
     {
-        // Single round-trip: all counts computed server-side in one query
-        // TotalObservations uses pg_class.reltuples for an instant estimate —
-        // COUNT(*) on millions of rows takes 30-60 s due to PostgreSQL MVCC full scans.
-        var row = await db.Database.SqlQuery<AdminStatsResponse>($"""
+        // Use raw ADO.NET to avoid EF's subquery wrapper (which blocks planner optimisations).
+        // TotalObservations reads pg_class.reltuples — instant estimate, updated by autovacuum.
+        // COUNT(*) on millions of rows would take 30-60 s due to PostgreSQL MVCC.
+        const string sql = """
             SELECT
-                (SELECT reltuples::bigint FROM pg_class WHERE relname = 'SpeedObservations') AS "TotalObservations",
-                (SELECT COUNT(*)  FROM "SpeedObservations"
-                    WHERE "CreatedAt" >= NOW() - INTERVAL '24 hours')             AS "ObservationsLast24h",
-                (SELECT COUNT(*)                                                  FROM "Users")                                                     AS "TotalUsers",
-                (SELECT COUNT(*)  FROM "Users"
-                    WHERE "IsActive" = true AND "Role" = 'User')                  AS "UserCount",
-                (SELECT COUNT(*)  FROM "Users"
-                    WHERE "IsActive" = true AND "Role" = 'Contributor')           AS "ContributorCount",
-                (SELECT COUNT(*)  FROM "Users"
-                    WHERE "IsActive" = true AND "Role" = 'Admin')                 AS "AdminCount",
-                (SELECT COUNT(*)  FROM "ApiKeys" WHERE "IsActive" = true)         AS "ActiveApiKeys",
-                (SELECT COUNT(DISTINCT "OsmWayId") FROM "WaySpeedAggregates")     AS "AggregatedWays",
-                (SELECT COUNT(*)  FROM "BlockedIps"
-                    WHERE "ExpiresAt" IS NULL OR "ExpiresAt" > NOW())             AS "BlockedIps"
-            """).SingleAsync();
+                (SELECT reltuples::bigint FROM pg_class WHERE relname = 'SpeedObservations'),
+                (SELECT COUNT(*) FROM "SpeedObservations" WHERE "CreatedAt" >= NOW() - INTERVAL '24 hours'),
+                (SELECT COUNT(*) FROM "Users"),
+                (SELECT COUNT(*) FROM "Users" WHERE "IsActive" = true AND "Role" = 'User'),
+                (SELECT COUNT(*) FROM "Users" WHERE "IsActive" = true AND "Role" = 'Contributor'),
+                (SELECT COUNT(*) FROM "Users" WHERE "IsActive" = true AND "Role" = 'Admin'),
+                (SELECT COUNT(*) FROM "ApiKeys" WHERE "IsActive" = true),
+                (SELECT COUNT(DISTINCT "OsmWayId") FROM "WaySpeedAggregates"),
+                (SELECT COUNT(*) FROM "BlockedIps" WHERE "ExpiresAt" IS NULL OR "ExpiresAt" > NOW())
+            """;
 
-        return Ok(row);
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync(ct);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+
+        var result = new AdminStatsResponse
+        {
+            TotalObservations    = reader.GetInt64(0),
+            ObservationsLast24h  = reader.GetInt64(1),
+            TotalUsers           = reader.GetInt64(2),
+            UserCount            = reader.GetInt64(3),
+            ContributorCount     = reader.GetInt64(4),
+            AdminCount           = reader.GetInt64(5),
+            ActiveApiKeys        = reader.GetInt64(6),
+            AggregatedWays       = reader.GetInt64(7),
+            BlockedIps           = reader.GetInt64(8),
+        };
+
+        return Ok(result);
     }
 
     // ── Users ─────────────────────────────────────────────────────────────────
