@@ -41,15 +41,21 @@ public class AggregationBackgroundService(
 
     private async Task RunCycleAsync(CancellationToken ct)
     {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var matchingService = scope.ServiceProvider.GetRequiredService<ValhallaMapMatchingService>();
-        var aggregationService = scope.ServiceProvider.GetRequiredService<TrafficAggregationService>();
-
+        // Each step gets its own scope+DbContext so that ExecuteDeleteAsync in
+        // ReaggregateAsync cannot affect rows still tracked by the matching step.
         logger.LogDebug("Running map-matching pass...");
-        await matchingService.ProcessUnmatchedAsync(db, ct);
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var matchingService = scope.ServiceProvider.GetRequiredService<ValhallaMapMatchingService>();
+            await matchingService.ProcessUnmatchedAsync(db, ct);
+        }
 
         logger.LogDebug("Running aggregation pass...");
-        await aggregationService.ReaggregateAsync(ct);
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var aggregationService = scope.ServiceProvider.GetRequiredService<TrafficAggregationService>();
+            await aggregationService.ReaggregateAsync(ct);
+        }
     }
 }
