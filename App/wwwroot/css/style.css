@@ -474,6 +474,7 @@ footer a:hover { color: var(--text); }
 /* ── Utilities ───────────────────────────────────────────── */
 .text-muted { color: var(--text-muted); }
 .text-success { color: var(--success); }
+.text-warning { color: var(--warning); }
 .text-danger { color: var(--danger); }
 .text-sm { font-size: 0.82rem; }
 .mt-1 { margin-top: 8px; }

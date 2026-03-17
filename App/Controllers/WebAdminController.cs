@@ -23,9 +23,9 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
 
     // ── Workers ───────────────────────────────────────────────────────────────
 
-    /// <summary>Get health status of all worker services.</summary>
+    /// <summary>Get health and metrics for all worker services.</summary>
     [HttpGet("workers")]
-    [ProducesResponseType(typeof(WorkerInfo[]), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(WorkerServiceInfo[]), StatusCodes.Status200OK)]
     public IActionResult GetWorkers() => Ok(workerHealth.GetAllStatuses());
 
     // ── Stats ─────────────────────────────────────────────────────────────────
