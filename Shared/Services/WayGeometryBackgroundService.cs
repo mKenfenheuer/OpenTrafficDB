@@ -164,7 +164,7 @@ public class WayGeometryBackgroundService(
                 if (ct.IsCancellationRequested) break;
                 if (element.Type != OsmGeoType.Way) continue;
                 var way = (Way)element;
-                if (way.Nodes == null || way.Tags == null || !RelevantHighwayTypes.Contains(way.Tags?["highway"] ?? "")) continue;
+                if (way.Nodes == null || way.Tags == null || !way.Tags.TryGetValue("highway", out var hwType) || !RelevantHighwayTypes.Contains(hwType)) continue;
                 foreach (var nodeId in way.Nodes)
                     neededNodeIds.Add(nodeId);
 
@@ -249,7 +249,7 @@ public class WayGeometryBackgroundService(
 
                 var way = (Way)element;
                 if (way.Id == null || way.Nodes == null || way.Nodes.Length < 2) continue;
-                if (way.Tags == null || !RelevantHighwayTypes.Contains(way.Tags?["highway"] ?? "")) continue;
+                if (way.Tags == null || !way.Tags.TryGetValue("highway", out var hwType) || !RelevantHighwayTypes.Contains(hwType)) continue;
 
                 var coords = new List<(float Lat, float Lon)>(way.Nodes.Length);
                 foreach (var nodeId in way.Nodes)
