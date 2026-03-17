@@ -62,97 +62,57 @@ public class TileController(WorkerClient workers, IConfiguration config) : Contr
 
     /// <summary>
     /// MapLibre GL style JSON for the current traffic overlay.
-    /// Uses a plain dark background — add your own base map source as needed.
+    /// Compatible with Maputnik and any MapLibre GL client.
     /// </summary>
     [HttpGet("traffic/current/style.json")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetStyleJson()
     {
-        var baseUrl = config["BaseUrl"]?.TrimEnd('/') ?? $"{Request.Scheme}://{Request.Host}";
+        var baseUrl    = config["BaseUrl"]?.TrimEnd('/') ?? $"{Request.Scheme}://{Request.Host}";
         var tileJsonUrl = $"{baseUrl}/tiles/traffic/current.json";
 
-        return Ok(new
-        {
-            version = 8,
-            name    = "OpenTrafficDB Traffic",
-            glyphs  = "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
-            sources = new Dictionary<string, object>
+        var json = $$"""
             {
-                ["traffic"] = new
-                {
-                    type    = "vector",
-                    url     = tileJsonUrl,
+              "version": 8,
+              "name": "OpenTrafficDB Traffic",
+              "sources": {
+                "traffic": {
+                  "type": "vector",
+                  "url": "{{tileJsonUrl}}"
                 }
-            },
-            layers = new object[]
-            {
-                new
+              },
+              "layers": [
                 {
-                    id   = "background",
-                    type = "background",
-                    paint = new { background_color = "#1a1a2e" }
-                },
-                new
-                {
-                    id     = "traffic-lines-casing",
-                    type   = "line",
-                    source = "traffic",
-                    source_layer = "traffic",
-                    minzoom = 6,
-                    layout = new
-                    {
-                        line_cap  = "round",
-                        line_join = "round"
-                    },
-                    paint = new
-                    {
-                        line_color   = "#000000",
-                        line_opacity = 0.3,
-                        line_width   = new object[]
-                        {
-                            "interpolate", new[] { "linear" }, new[] { "zoom" },
-                            8, 4, 12, 7, 16, 12
-                        }
-                    }
-                },
-                new
-                {
-                    id     = "traffic-lines",
-                    type   = "line",
-                    source = "traffic",
-                    source_layer = "traffic",
-                    minzoom = 6,
-                    layout = new
-                    {
-                        line_cap  = "round",
-                        line_join = "round"
-                    },
-                    paint = new
-                    {
-                        line_width = new object[]
-                        {
-                            "interpolate", new[] { "linear" }, new[] { "zoom" },
-                            8, 2, 12, 4, 16, 7
-                        },
-                        line_color = new object[]
-                        {
-                            "case",
-                            new object[] { "has", "jam_estimate" },
-                            new object[]
-                            {
-                                "interpolate", new[] { "linear" },
-                                new[] { "get", "jam_estimate" },
-                                0.0,  "#3fb950",
-                                0.35, "#d29922",
-                                0.70, "#f85149"
-                            },
-                            "#8b949e"
-                        },
-                        line_opacity = 0.85
-                    }
+                  "id": "traffic-lines",
+                  "type": "line",
+                  "source": "traffic",
+                  "source-layer": "traffic",
+                  "minzoom": 6,
+                  "paint": {
+                    "line-color": [
+                      "interpolate",
+                      ["linear"],
+                      ["coalesce", ["to-number", ["get", "jam_estimate"]], 0],
+                      0.0, ["rgba", 0, 200, 0, 1],
+                      0.5, ["rgba", 255, 165, 0, 1],
+                      1.0, ["rgba", 255, 0, 0, 1]
+                    ],
+                    "line-width": [
+                      "interpolate",
+                      ["linear"],
+                      ["zoom"],
+                      6, 1,
+                      10, 2,
+                      14, 4
+                    ],
+                    "line-opacity": 0.9
+                  }
                 }
+              ]
             }
-        });
+            """;
+
+        return Content(json, "application/json");
     }
 
     /// <summary>

@@ -50,7 +50,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                         4096, 64, true
                     )                                                                   AS geom,
                     base."OsmWayId"                                                     AS osm_way_id,
-                    ROUND(CAST(base.speed_kmh AS numeric), 1)                           AS speed_kmh,
+                    ROUND(base.speed_kmh::numeric, 1)::float8                          AS speed_kmh,
                     base."FreeflowSpeed"                                                AS freeflow_kmh,
                     base."P50Speed"                                                     AS p50_kmh,
                     base."P95Speed"                                                     AS p95_kmh,
@@ -59,16 +59,14 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                          ELSE 'historic' END                                            AS source,
                     base.speed_limit_kmh,
                     CASE WHEN base.speed_limit_kmh > 0
-                         THEN ROUND(CAST(base.delay AS numeric), 3) END                 AS delay_factor,
+                         THEN ROUND(base.delay::numeric, 3)::float8 END                AS delay_factor,
                     CASE WHEN base.speed_limit_kmh > 0
-                         THEN ROUND(CAST(
-                             CASE
+                         THEN ROUND((CASE
                                  WHEN base.delay <= 0    THEN 0.0
                                  WHEN base.delay <= 0.6  THEN base.delay * (0.7 / 0.6)
                                  WHEN base.delay <= 0.85 THEN 0.7 + (base.delay - 0.6) * (0.3 / 0.25)
                                  ELSE 1.0
-                             END
-                         AS numeric), 3) END                                            AS jam_estimate
+                             END)::numeric, 3)::float8 END                             AS jam_estimate
                 FROM (
                     SELECT
                         wg."OsmWayId",
