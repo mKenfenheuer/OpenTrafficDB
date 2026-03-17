@@ -41,7 +41,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         // Derived fields (delay, jam) are computed in a nested subquery so the delay value
         // is not repeated multiple times across the CASE expressions.
         var result = await db.Database.SqlQuery<byte[]>($"""
-            SELECT ST_AsMVT(q, 'traffic', 4096, 'geom')
+            SELECT ST_AsMVT(q, 'traffic', 4096, 'geom') AS "Value"
             FROM (
                 SELECT
                     ST_AsMVTGeom(
