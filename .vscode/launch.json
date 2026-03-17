@@ -9,7 +9,7 @@
             "name": "C#: OpenTrafficDB Debug",
             "type": "dotnet",
             "request": "launch",
-            "projectPath": "${workspaceFolder}/OpenTrafficDB.csproj"
+            "projectPath": "${workspaceFolder}/App/OpenTrafficDB.App.csproj"
         }
 
     ]
