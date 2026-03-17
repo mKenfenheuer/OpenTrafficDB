@@ -93,6 +93,7 @@ public class WorkerClient(
         {
             resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
         }
+        catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {
             logger.LogError(ex, "Worker {Worker} request to {Path} failed", workerName, path);
@@ -141,6 +142,7 @@ public class WorkerClient(
         {
             resp = await client.GetAsync(url + path, HttpCompletionOption.ResponseHeadersRead, ct);
         }
+        catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {
             logger.LogError(ex, "Worker {Worker} public request to {Path} failed", workerName, path);

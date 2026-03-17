@@ -15,7 +15,7 @@ namespace OpenTrafficDB.App.Controllers;
 [Authorize(AuthenticationSchemes = CookieAuthenticationDefaults.AuthenticationScheme)]
 [Produces("application/json")]
 [ApiExplorerSettings(IgnoreApi = true)]
-public class WebRoutingController(ValhallaRoutingService routing) : ControllerBase
+public class WebRoutingController(WorkerClient workers) : ControllerBase
 {
     [HttpPost]
     public async Task<IActionResult> Route(
@@ -25,18 +25,11 @@ public class WebRoutingController(ValhallaRoutingService routing) : ControllerBa
         if (body.ValueKind != JsonValueKind.Object)
             return BadRequest(new { error = "Request body must be a JSON object." });
 
-        var (result, statusCode, error) = await routing.RouteWithTrafficAsync(body, ct);
+        await workers.ProxyAsync("Routing", HttpMethod.Post, "/internal/route",
+            0, string.Empty, string.Empty,
+            new System.Net.Http.StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
+            Response, ct: ct);
 
-        if (result is null)
-        {
-            return statusCode switch
-            {
-                400 => BadRequest(new { error }),
-                503 => StatusCode(503, new { error }),
-                _   => StatusCode(502, new { error })
-            };
-        }
-
-        return Ok(result);
+        return new EmptyResult();
     }
 }
