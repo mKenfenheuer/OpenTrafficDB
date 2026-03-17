@@ -45,6 +45,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SpeedObservation>(e =>
         {
             e.HasIndex(o => o.Timestamp);
+            // Composite index for live bbox queries (Timestamp + lat/lon range filter)
+            e.HasIndex(o => new { o.Timestamp, o.Latitude, o.Longitude });
+            // Composite index for aggregation: fetch recent unmatched by way
+            e.HasIndex(o => new { o.Timestamp, o.OsmWayId }).HasFilter("\"OsmWayId\" IS NOT NULL");
             e.HasIndex(o => new { o.Latitude, o.Longitude });
             e.HasIndex(o => o.OsmWayId).HasFilter("\"OsmWayId\" IS NOT NULL");
             e.HasIndex(o => o.H3CellIndex).HasFilter("\"H3CellIndex\" IS NOT NULL");

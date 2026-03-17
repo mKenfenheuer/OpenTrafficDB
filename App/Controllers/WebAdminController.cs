@@ -35,21 +35,26 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     [ProducesResponseType(typeof(AdminStatsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStats()
     {
-        var yesterday = DateTime.UtcNow.AddHours(-24);
-        var now = DateTime.UtcNow;
+        // Single round-trip: all counts computed server-side in one query
+        var row = await db.Database.SqlQuery<AdminStatsResponse>($"""
+            SELECT
+                (SELECT COUNT(*)                                                  FROM "SpeedObservations")                                         AS "TotalObservations",
+                (SELECT COUNT(*)  FROM "SpeedObservations"
+                    WHERE "CreatedAt" >= NOW() - INTERVAL '24 hours')             AS "ObservationsLast24h",
+                (SELECT COUNT(*)                                                  FROM "Users")                                                     AS "TotalUsers",
+                (SELECT COUNT(*)  FROM "Users"
+                    WHERE "IsActive" = true AND "Role" = 'User')                  AS "UserCount",
+                (SELECT COUNT(*)  FROM "Users"
+                    WHERE "IsActive" = true AND "Role" = 'Contributor')           AS "ContributorCount",
+                (SELECT COUNT(*)  FROM "Users"
+                    WHERE "IsActive" = true AND "Role" = 'Admin')                 AS "AdminCount",
+                (SELECT COUNT(*)  FROM "ApiKeys" WHERE "IsActive" = true)         AS "ActiveApiKeys",
+                (SELECT COUNT(DISTINCT "OsmWayId") FROM "WaySpeedAggregates")     AS "AggregatedWays",
+                (SELECT COUNT(*)  FROM "BlockedIps"
+                    WHERE "ExpiresAt" IS NULL OR "ExpiresAt" > NOW())             AS "BlockedIps"
+            """).FirstAsync();
 
-        return Ok(new AdminStatsResponse
-        {
-            TotalObservations   = await db.SpeedObservations.LongCountAsync(),
-            ObservationsLast24h = await db.SpeedObservations.LongCountAsync(o => o.CreatedAt >= yesterday),
-            TotalUsers          = await db.Users.CountAsync(),
-            UserCount           = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.User),
-            ContributorCount    = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.Contributor),
-            AdminCount          = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.Admin),
-            ActiveApiKeys       = await db.ApiKeys.CountAsync(k => k.IsActive),
-            AggregatedWays     = await db.WaySpeedAggregates.Select(a => a.OsmWayId).Distinct().CountAsync(),
-            BlockedIps          = await db.BlockedIps.CountAsync(b => b.ExpiresAt == null || b.ExpiresAt > now)
-        });
+        return Ok(row);
     }
 
     // ── Users ─────────────────────────────────────────────────────────────────
