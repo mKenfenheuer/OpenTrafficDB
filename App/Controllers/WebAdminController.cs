@@ -36,9 +36,11 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     public async Task<IActionResult> GetStats()
     {
         // Single round-trip: all counts computed server-side in one query
+        // TotalObservations uses pg_class.reltuples for an instant estimate —
+        // COUNT(*) on millions of rows takes 30-60 s due to PostgreSQL MVCC full scans.
         var row = await db.Database.SqlQuery<AdminStatsResponse>($"""
             SELECT
-                (SELECT COUNT(*)                                                  FROM "SpeedObservations")                                         AS "TotalObservations",
+                (SELECT reltuples::bigint FROM pg_class WHERE relname = 'SpeedObservations') AS "TotalObservations",
                 (SELECT COUNT(*)  FROM "SpeedObservations"
                     WHERE "CreatedAt" >= NOW() - INTERVAL '24 hours')             AS "ObservationsLast24h",
                 (SELECT COUNT(*)                                                  FROM "Users")                                                     AS "TotalUsers",
@@ -52,7 +54,7 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
                 (SELECT COUNT(DISTINCT "OsmWayId") FROM "WaySpeedAggregates")     AS "AggregatedWays",
                 (SELECT COUNT(*)  FROM "BlockedIps"
                     WHERE "ExpiresAt" IS NULL OR "ExpiresAt" > NOW())             AS "BlockedIps"
-            """).FirstAsync();
+            """).SingleAsync();
 
         return Ok(row);
     }
