@@ -76,8 +76,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<WayGeometry>(e =>
         {
             e.HasIndex(g => g.OsmWayId).IsUnique();
-            e.HasIndex(g => new { g.MinLat, g.MaxLat });
-            e.HasIndex(g => new { g.MinLon, g.MaxLon });
+            // Combined 4-column index lets Postgres do a single range scan for bbox overlap queries.
+            // Replace with a PostGIS GIST index on a geometry column for best spatial performance.
+            e.HasIndex(g => new { g.MinLat, g.MaxLat, g.MinLon, g.MaxLon });
         });
 
         modelBuilder.Entity<WaySpeedSummary>(e =>

@@ -14,6 +14,23 @@ services:
       timeout: 5s
       retries: 10
 
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: opentraffic
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: opentrafficdb
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+      AUTH_TYPE: scram-sha-256
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   valhalla:
     image: ghcr.io/valhalla/valhalla-scripted:latest
     restart: unless-stopped
@@ -45,13 +62,13 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: >-
-        Host=postgres;Port=5432;Database=opentrafficdb;
-        Username=opentraffic;Password=${POSTGRES_PASSWORD}
+        Host=pgbouncer;Port=5432;Database=opentrafficdb;
+        Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true
       Jwt__Key: ${JWT_KEY}
       Security__IpHashPepper: ${IP_HASH_PEPPER}
     depends_on:
-      postgres:
-        condition: service_healthy
+      pgbouncer:
+        condition: service_started
 
   aggregate:
     image: ${AGGREGATE_IMAGE:-registry.gitlab.com/opentrafficdb/aggregate:latest}
@@ -59,15 +76,15 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: >-
-        Host=postgres;Port=5432;Database=opentrafficdb;
-        Username=opentraffic;Password=${POSTGRES_PASSWORD}
+        Host=pgbouncer;Port=5432;Database=opentrafficdb;
+        Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true
       Jwt__Key: ${JWT_KEY}
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       Valhalla__BaseUrl: http://valhalla:8002
       Overpass__BaseUrl: http://overpass:80
     depends_on:
-      postgres:
-        condition: service_healthy
+      pgbouncer:
+        condition: service_started
       valhalla:
         condition: service_started
 
@@ -77,14 +94,14 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: >-
-        Host=postgres;Port=5432;Database=opentrafficdb;
-        Username=opentraffic;Password=${POSTGRES_PASSWORD}
+        Host=pgbouncer;Port=5432;Database=opentrafficdb;
+        Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true
       Jwt__Key: ${JWT_KEY}
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       Valhalla__BaseUrl: http://valhalla:8002
     depends_on:
-      postgres:
-        condition: service_healthy
+      pgbouncer:
+        condition: service_started
       valhalla:
         condition: service_started
 
@@ -96,8 +113,8 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: >-
-        Host=postgres;Port=5432;Database=opentrafficdb;
-        Username=opentraffic;Password=${POSTGRES_PASSWORD}
+        Host=pgbouncer;Port=5432;Database=opentrafficdb;
+        Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true
       Jwt__Key: ${JWT_KEY}
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       BaseUrl: ${BASE_URL}
@@ -112,8 +129,8 @@ services:
       Workers__Aggregate__Urls__0: http://aggregate:8080
       Workers__Routing__Urls__0: http://routing:8080
     depends_on:
-      postgres:
-        condition: service_healthy
+      pgbouncer:
+        condition: service_started
       ingest:
         condition: service_started
       aggregate:
