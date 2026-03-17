@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 // ── Public surface ────────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>Hashing and API key utilities (no JWT — see ApiKeyAuthenticationHandler for auth).</summary>
 public class CryptoService()

@@ -1,6 +1,6 @@
-using OpenTrafficDB.App.Models.DTOs;
+using OpenTrafficDB.Shared.Models.DTOs;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 public class ValidationResult
 {

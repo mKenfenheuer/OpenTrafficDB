@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 public class PasswordService
 {

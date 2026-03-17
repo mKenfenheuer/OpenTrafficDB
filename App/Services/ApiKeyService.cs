@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.App.Data;
-using OpenTrafficDB.App.Models;
-using OpenTrafficDB.App.Models.DTOs;
+using OpenTrafficDB.Shared.Data;
+using OpenTrafficDB.Shared.Models;
+using OpenTrafficDB.Shared.Models.DTOs;
+using OpenTrafficDB.Shared.Services;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>Shared API key management used by both JWT and cookie-authenticated controllers.</summary>
 public class ApiKeyService(AppDbContext db, CryptoService crypto)

@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.App.Models;
+namespace OpenTrafficDB.Shared.Models;
 
 /// <summary>
 /// Pre-aggregated speed data per H3 cell (resolution 9, ~174 m) per 5-minute time bucket.

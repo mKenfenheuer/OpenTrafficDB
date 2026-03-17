@@ -3,10 +3,10 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
-using OpenTrafficDB.App.Data;
+using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.App.Middleware;
-using OpenTrafficDB.App.Models;
-using OpenTrafficDB.App.Services;
+using OpenTrafficDB.Shared.Models;
+using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB;
 

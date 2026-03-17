@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.App.Models;
+namespace OpenTrafficDB.Shared.Models;
 
 /// <summary>
 /// Stores the shape of an OSM way as a Valhalla-encoded polyline (precision 6)

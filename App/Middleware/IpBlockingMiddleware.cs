@@ -1,4 +1,4 @@
-using OpenTrafficDB.App.Services;
+using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.App.Middleware;
 

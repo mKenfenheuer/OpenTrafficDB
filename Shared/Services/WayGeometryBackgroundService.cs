@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.App.Data;
+using OpenTrafficDB.Shared.Data;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>
 /// Periodically scans for OSM way IDs that have no stored geometry and fetches

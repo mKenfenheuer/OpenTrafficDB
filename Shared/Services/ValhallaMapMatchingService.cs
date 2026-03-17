@@ -4,10 +4,10 @@ using System.Text.Json.Serialization;
 using H3;
 using H3.Model;
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.App.Data;
-using OpenTrafficDB.App.Models;
+using OpenTrafficDB.Shared.Data;
+using OpenTrafficDB.Shared.Models;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>
 /// Performs server-side map matching of GPS observations to OSM road segments

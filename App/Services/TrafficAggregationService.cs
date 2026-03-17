@@ -1,10 +1,10 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.App.Data;
-using OpenTrafficDB.App.Models;
-using OpenTrafficDB.App.Models.DTOs;
+using OpenTrafficDB.Shared.Data;
+using OpenTrafficDB.Shared.Models;
+using OpenTrafficDB.Shared.Models.DTOs;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 public class TrafficAggregationService(AppDbContext db)
 {

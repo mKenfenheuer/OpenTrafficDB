@@ -3,11 +3,11 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.App.Data;
-using OpenTrafficDB.App.Models;
-using OpenTrafficDB.App.Models.DTOs;
+using OpenTrafficDB.Shared.Data;
+using OpenTrafficDB.Shared.Models;
+using OpenTrafficDB.Shared.Models.DTOs;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>
 /// Proxies Valhalla /route requests and enriches the response with

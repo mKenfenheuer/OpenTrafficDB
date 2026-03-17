@@ -1,10 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.App.Data;
-using OpenTrafficDB.App.Models;
+using OpenTrafficDB.Shared.Data;
+using OpenTrafficDB.Shared.Models;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>
 /// Fetches OSM way shapes from the Overpass API and stores them as

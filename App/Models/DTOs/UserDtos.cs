@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace OpenTrafficDB.App.Models.DTOs;
+namespace OpenTrafficDB.Shared.Models.DTOs;
 
 public class UserProfileResponse
 {

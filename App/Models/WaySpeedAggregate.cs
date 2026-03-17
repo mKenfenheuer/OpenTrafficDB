@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.App.Models;
+namespace OpenTrafficDB.Shared.Models;
 
 /// <summary>
 /// Pre-aggregated speed data per OSM way per 5-minute time bucket.

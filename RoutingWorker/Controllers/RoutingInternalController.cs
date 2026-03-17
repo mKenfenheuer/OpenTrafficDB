@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using OpenTrafficDB.App.Services;
+using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.RoutingWorker.Controllers;
 

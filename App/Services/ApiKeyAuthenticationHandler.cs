@@ -3,10 +3,11 @@ using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using OpenTrafficDB.App.Data;
-using OpenTrafficDB.App.Models;
+using OpenTrafficDB.Shared.Data;
+using OpenTrafficDB.Shared.Models;
+using OpenTrafficDB.Shared.Services;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>
 /// Authenticates requests using a raw API key supplied as:

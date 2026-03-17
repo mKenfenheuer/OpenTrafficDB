@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 public enum WorkerStatus { Unknown, Healthy, Degraded, Unhealthy }
 

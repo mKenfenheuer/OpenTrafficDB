@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace OpenTrafficDB.App.Models.DTOs;
+namespace OpenTrafficDB.Shared.Models.DTOs;
 
 /// <summary>
 /// A single traffic jam detected on a route — one or more consecutive edges

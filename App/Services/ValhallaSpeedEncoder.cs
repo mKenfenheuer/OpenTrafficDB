@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>
 /// Ports Valhalla's compress_speed_buckets + encode_compressed_speeds to C#.

@@ -1,8 +1,9 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Design;
 using NetTopologySuite.Geometries;
-using OpenTrafficDB.App.Models;
+using OpenTrafficDB.Shared.Models;
 
-namespace OpenTrafficDB.App.Data;
+namespace OpenTrafficDB.Shared.Data;
 
 public class AppDbContext : DbContext
 {
@@ -95,3 +96,20 @@ public class AppDbContext : DbContext
 /// </summary>
 public class ReadOnlyAppDbContext(DbContextOptions<ReadOnlyAppDbContext> options)
     : AppDbContext(options) { }
+
+/// <summary>
+/// Design-time factory so `dotnet ef migrations` can instantiate AppDbContext
+/// without a running host. Connection string is unused at design time.
+/// </summary>
+public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
+{
+    public AppDbContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(
+                "Host=localhost;Database=opentrafficdb;Username=postgres",
+                o => o.UseNetTopologySuite())
+            .Options;
+        return new AppDbContext(options);
+    }
+}

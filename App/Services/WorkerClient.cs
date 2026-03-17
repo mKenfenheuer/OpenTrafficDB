@@ -1,6 +1,6 @@
 using System.Net.Http.Headers;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>
 /// Forwards requests to worker services with round-robin load balancing,

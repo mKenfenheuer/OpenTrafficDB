@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 public interface IEmailService
 {

@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>PBKDF2-SHA256 password hashing. Salt and hash stored as base64(salt).base64(hash).</summary>
 public class PasswordService

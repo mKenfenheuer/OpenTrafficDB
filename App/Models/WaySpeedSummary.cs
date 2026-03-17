@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.App.Models;
+namespace OpenTrafficDB.Shared.Models;
 
 /// <summary>
 /// Precomputed per-way speed summary.  Rebuilt by TrafficAggregationService whenever

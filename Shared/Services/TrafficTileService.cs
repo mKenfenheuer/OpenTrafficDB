@@ -1,9 +1,9 @@
 using System.IO.Compression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
-using OpenTrafficDB.App.Data;
+using OpenTrafficDB.Shared.Data;
 
-namespace OpenTrafficDB.App.Services;
+namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>
 /// Builds gzip-compressed Mapbox Vector Tile (MVT) bytes for the "traffic" layer.
