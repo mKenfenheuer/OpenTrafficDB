@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using OpenTrafficDB.Shared.Models.DTOs;
 
 namespace OpenTrafficDB.Shared.Services;
 
@@ -174,6 +176,72 @@ public class WorkerClient(
             }
 
             await resp.Content.CopyToAsync(outResponse.Body, ct);
+        }
+    }
+
+    /// <summary>
+    /// Sends a match job to a specific worker URL and returns the result.
+    /// Uses the long-timeout "workerJobs" HTTP client.
+    /// Returns null if the request fails.
+    /// </summary>
+    public async Task<MatchJobResult?> SendMatchJobAsync(string workerUrl, MatchJobRequest req, CancellationToken ct = default)
+    {
+        var token = jwtService.CreateServiceToken();
+        var client = httpClientFactory.CreateClient("workerJobs");
+        using var request = new HttpRequestMessage(HttpMethod.Post, workerUrl + "/internal/jobs/match");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(req);
+        try
+        {
+            using var resp = await client.SendAsync(request, ct);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content.ReadFromJsonAsync<MatchJobResult>(ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Match job request to {Url} failed", workerUrl);
+            return null;
+        }
+    }
+
+    /// <summary>Sends an aggregate job to a specific worker URL. Returns null on failure.</summary>
+    public async Task<AggregateJobResult?> SendAggregateJobAsync(string workerUrl, AggregateJobRequest req, CancellationToken ct = default)
+    {
+        var token = jwtService.CreateServiceToken();
+        var client = httpClientFactory.CreateClient("workerJobs");
+        using var request = new HttpRequestMessage(HttpMethod.Post, workerUrl + "/internal/jobs/aggregate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(req);
+        try
+        {
+            using var resp = await client.SendAsync(request, ct);
+            return resp.IsSuccessStatusCode
+                ? await resp.Content.ReadFromJsonAsync<AggregateJobResult>(ct)
+                : null;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Aggregate job request to {Url} failed", workerUrl);
+            return null;
+        }
+    }
+
+    /// <summary>Sends a finalize request (refresh constrained speeds + delete old obs) to a specific worker.</summary>
+    public async Task SendFinalizeAsync(string workerUrl, CancellationToken ct = default)
+    {
+        var token = jwtService.CreateServiceToken();
+        var client = httpClientFactory.CreateClient("workerJobs");
+        using var request = new HttpRequestMessage(HttpMethod.Post, workerUrl + "/internal/jobs/finalize");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        try
+        {
+            using var resp = await client.SendAsync(request, ct);
+            if (!resp.IsSuccessStatusCode)
+                logger.LogWarning("Finalize request to {Url} returned {Status}", workerUrl, resp.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Finalize request to {Url} failed", workerUrl);
         }
     }
 }

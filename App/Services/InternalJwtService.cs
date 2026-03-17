@@ -37,4 +37,17 @@ public class InternalJwtService(IConfiguration config)
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
+
+    /// <summary>Creates a 5-minute internal JWT for service-to-service calls (no user context).</summary>
+    public string CreateServiceToken()
+    {
+        var token = new JwtSecurityToken(
+            issuer:             "opentrafficdb-app",
+            audience:           "opentrafficdb-internal",
+            claims:             [new Claim(JwtRegisteredClaimNames.Sub, "coordinator")],
+            expires:            DateTime.UtcNow.AddMinutes(5),
+            signingCredentials: new SigningCredentials(_key, SecurityAlgorithms.HmacSha256));
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
 }

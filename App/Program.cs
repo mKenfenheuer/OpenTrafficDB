@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.App.Middleware;
+using OpenTrafficDB.App.Services;
 using OpenTrafficDB.Shared.Models;
 using OpenTrafficDB.Shared.Services;
 
@@ -32,10 +33,17 @@ public class Program
         builder.Services.AddSingleton<WorkerHealthService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkerHealthService>());
 
+        builder.Services.AddHostedService<AggregationCoordinatorService>();
+
         // HTTP client for inter-service communication with workers
         builder.Services.AddHttpClient("workers", client =>
         {
             client.Timeout = TimeSpan.FromSeconds(60);
+        });
+
+        builder.Services.AddHttpClient("workerJobs", client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(30);
         });
 
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)

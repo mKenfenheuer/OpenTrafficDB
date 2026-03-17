@@ -9,7 +9,6 @@ namespace OpenTrafficDB.AggregateWorker.Services;
 
 public class TrafficAggregationService(AppDbContext db)
 {
-    private const int AggregateBatchSize = 5_000;
 
     // ── Traffic jam estimation ───────────────────────────────────────────────────
 
@@ -31,146 +30,152 @@ public class TrafficAggregationService(AppDbContext db)
 
     // ── Hybrid aggregation ──────────────────────────────────────────────────────
 
-    public async Task ReaggregateAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Aggregates matched observations in [from, to) time window.
+    /// Does NOT run cleanup — call <see cref="FinalizeAsync"/> after all slots complete.
+    /// Returns the number of observations processed.
+    /// </summary>
+    public async Task<AggregateJobResult> ReaggregateRangeAsync(
+        DateTime from, DateTime to, CancellationToken ct = default)
     {
-        // Process in bounded batches so we never load millions of rows at once.
         var newlyMatched = await db.SpeedObservations
-            .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null)
+            .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null
+                     && o.Timestamp >= from && o.Timestamp < to)
             .OrderBy(o => o.Id)
-            .Take(AggregateBatchSize)
             .ToListAsync(ct);
 
-        if (newlyMatched.Count > 0)
+        if (newlyMatched.Count == 0) return new AggregateJobResult(0);
+
+        var roadWorksWayIds = newlyMatched
+            .Where(o => o.RoadWorks && o.SpeedLimitKmh > 0)
+            .Select(o => o.OsmWayId!.Value)
+            .ToHashSet();
+
+        Dictionary<(long WayId, int Dow, int Bucket), double>  existingAvgByKey   = [];
+        Dictionary<(long WayId, int Dow, int Bucket), double?> existingLimitByKey = [];
+        if (roadWorksWayIds.Count > 0)
         {
-            var roadWorksWayIds = newlyMatched
-                .Where(o => o.RoadWorks && o.SpeedLimitKmh > 0)
-                .Select(o => o.OsmWayId!.Value)
-                .ToHashSet();
-
-            Dictionary<(long WayId, int Dow, int Bucket), double>  existingAvgByKey   = [];
-            Dictionary<(long WayId, int Dow, int Bucket), double?> existingLimitByKey = [];
-            if (roadWorksWayIds.Count > 0)
-            {
-                var existing = await db.WaySpeedAggregates
-                    .Where(a => roadWorksWayIds.Contains(a.OsmWayId) && a.SampleCount > 0)
-                    .AsNoTracking()
-                    .ToListAsync(ct);
-                existingAvgByKey   = existing.ToDictionary(a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket), a => a.SumSpeedKmh / a.SampleCount);
-                existingLimitByKey = existing.ToDictionary(a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket), a => a.SpeedLimitKmh);
-            }
-
-            var wayBuckets = new Dictionary<(long WayId, int Dow, int Bucket), (double Sum, int Count, double? SpeedLimit)>();
-            var h3Buckets  = new Dictionary<(long Cell, int Dow, int Bucket), (double Sum, int Count)>();
-
-            foreach (var obs in newlyMatched)
-            {
-                var ts     = obs.Timestamp.ToUniversalTime();
-                var dow    = (int)ts.DayOfWeek;
-                var bucket = ToFiveMinuteBucket(ts);
-                var kmh    = obs.SpeedMs * 3.6;
-
-                if (obs.RoadWorks && obs.SpeedLimitKmh > 0)
-                {
-                    var threshold = obs.SpeedLimitKmh.Value * 0.7;
-                    var existingKey = (obs.OsmWayId!.Value, dow, bucket);
-                    var currentAvg = existingAvgByKey.GetValueOrDefault(existingKey, double.MaxValue);
-                    var currentSpeedLimit = existingLimitByKey.GetValueOrDefault(existingKey);
-                    if (currentSpeedLimit != null && currentSpeedLimit < obs.SpeedLimitKmh)
-                        threshold = currentSpeedLimit.Value * 0.7;
-                    if (currentAvg >= threshold)
-                        kmh = threshold;
-                }
-
-                var eKey = (obs.OsmWayId!.Value, dow, bucket);
-                wayBuckets[eKey] = wayBuckets.TryGetValue(eKey, out var ea)
-                    ? (ea.Sum + kmh, ea.Count + 1, obs.SpeedLimitKmh ?? ea.SpeedLimit)
-                    : (kmh, 1, obs.SpeedLimitKmh);
-
-                var hKey = (obs.H3CellIndex!.Value, dow, bucket);
-                h3Buckets[hKey] = h3Buckets.TryGetValue(hKey, out var ha)
-                    ? (ha.Sum + kmh, ha.Count + 1) : (kmh, 1);
-            }
-
-            var now = DateTime.UtcNow;
-
-            // ── 2. Bulk-load existing way aggregates, then upsert in memory ──
-            var affectedWayIds = wayBuckets.Keys.Select(k => k.WayId).ToHashSet();
-            var existingWayAggs = await db.WaySpeedAggregates
-                .Where(a => affectedWayIds.Contains(a.OsmWayId))
-                .ToDictionaryAsync(a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket), ct);
-
-            foreach (var (key, (sum, count, speedLimit)) in wayBuckets)
-            {
-                var (wayId, dow, bucket) = key;
-                if (existingWayAggs.TryGetValue(key, out var existing))
-                {
-                    existing.SumSpeedKmh  += sum;
-                    existing.SampleCount  += count;
-                    existing.SpeedLimitKmh = speedLimit ?? existing.SpeedLimitKmh;
-                    existing.LastUpdated   = now;
-                }
-                else
-                {
-                    var row = new WaySpeedAggregate
-                    {
-                        OsmWayId         = wayId,
-                        DayOfWeek        = dow,
-                        FiveMinuteBucket = bucket,
-                        SumSpeedKmh      = sum,
-                        SampleCount      = count,
-                        SpeedLimitKmh    = speedLimit,
-                        LastUpdated      = now,
-                        FirstSeenAt      = now
-                    };
-                    db.WaySpeedAggregates.Add(row);
-                    existingWayAggs[key] = row;
-                }
-            }
-
-            // ── 3. Bulk-load existing H3 aggregates, then upsert in memory ──
-            var affectedCells = h3Buckets.Keys.Select(k => k.Cell).ToHashSet();
-            var existingH3Aggs = await db.H3SpeedAggregates
-                .Where(a => affectedCells.Contains(a.H3CellIndex))
-                .ToDictionaryAsync(a => (a.H3CellIndex, a.DayOfWeek, a.FiveMinuteBucket), ct);
-
-            foreach (var (key, (sum, count)) in h3Buckets)
-            {
-                var (cell, dow, bucket) = key;
-                if (existingH3Aggs.TryGetValue(key, out var existing))
-                {
-                    existing.SumSpeedKmh += sum;
-                    existing.SampleCount += count;
-                    existing.LastUpdated  = now;
-                }
-                else
-                {
-                    db.H3SpeedAggregates.Add(new H3SpeedAggregate
-                    {
-                        H3CellIndex      = cell,
-                        DayOfWeek        = dow,
-                        FiveMinuteBucket = bucket,
-                        SumSpeedKmh      = sum,
-                        SampleCount      = count,
-                        LastUpdated      = now,
-                        FirstSeenAt      = now
-                    });
-                }
-            }
-
-            // ── 4. Mark observations as aggregated ───────────────────────────
-            foreach (var obs in newlyMatched)
-                obs.IsAggregated = true;
-
-            await db.SaveChangesAsync(ct);
-
-            // ── 5. Rebuild summaries for affected ways ────────────────────────
-            await RebuildSummariesAsync(affectedWayIds.ToList(), ct);
+            var existing = await db.WaySpeedAggregates
+                .Where(a => roadWorksWayIds.Contains(a.OsmWayId) && a.SampleCount > 0)
+                .AsNoTracking()
+                .ToListAsync(ct);
+            existingAvgByKey   = existing.ToDictionary(a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket), a => a.SumSpeedKmh / a.SampleCount);
+            existingLimitByKey = existing.ToDictionary(a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket), a => a.SpeedLimitKmh);
         }
 
-        // ── 6. Refresh constrained speeds via a single SQL UPDATE ─────────────
+        var wayBuckets = new Dictionary<(long WayId, int Dow, int Bucket), (double Sum, int Count, double? SpeedLimit)>();
+        var h3Buckets  = new Dictionary<(long Cell, int Dow, int Bucket), (double Sum, int Count)>();
+
+        foreach (var obs in newlyMatched)
+        {
+            var ts     = obs.Timestamp.ToUniversalTime();
+            var dow    = (int)ts.DayOfWeek;
+            var bucket = ToFiveMinuteBucket(ts);
+            var kmh    = obs.SpeedMs * 3.6;
+
+            if (obs.RoadWorks && obs.SpeedLimitKmh > 0)
+            {
+                var threshold = obs.SpeedLimitKmh.Value * 0.7;
+                var existingKey = (obs.OsmWayId!.Value, dow, bucket);
+                var currentAvg = existingAvgByKey.GetValueOrDefault(existingKey, double.MaxValue);
+                var currentSpeedLimit = existingLimitByKey.GetValueOrDefault(existingKey);
+                if (currentSpeedLimit != null && currentSpeedLimit < obs.SpeedLimitKmh)
+                    threshold = currentSpeedLimit.Value * 0.7;
+                if (currentAvg >= threshold)
+                    kmh = threshold;
+            }
+
+            var eKey = (obs.OsmWayId!.Value, dow, bucket);
+            wayBuckets[eKey] = wayBuckets.TryGetValue(eKey, out var ea)
+                ? (ea.Sum + kmh, ea.Count + 1, obs.SpeedLimitKmh ?? ea.SpeedLimit)
+                : (kmh, 1, obs.SpeedLimitKmh);
+
+            var hKey = (obs.H3CellIndex!.Value, dow, bucket);
+            h3Buckets[hKey] = h3Buckets.TryGetValue(hKey, out var ha)
+                ? (ha.Sum + kmh, ha.Count + 1) : (kmh, 1);
+        }
+
+        var now = DateTime.UtcNow;
+
+        var affectedWayIds = wayBuckets.Keys.Select(k => k.WayId).ToHashSet();
+        var existingWayAggs = await db.WaySpeedAggregates
+            .Where(a => affectedWayIds.Contains(a.OsmWayId))
+            .ToDictionaryAsync(a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket), ct);
+
+        foreach (var (key, (sum, count, speedLimit)) in wayBuckets)
+        {
+            var (wayId, dow, bucket) = key;
+            if (existingWayAggs.TryGetValue(key, out var existing))
+            {
+                existing.SumSpeedKmh  += sum;
+                existing.SampleCount  += count;
+                existing.SpeedLimitKmh = speedLimit ?? existing.SpeedLimitKmh;
+                existing.LastUpdated   = now;
+            }
+            else
+            {
+                var row = new WaySpeedAggregate
+                {
+                    OsmWayId         = wayId,
+                    DayOfWeek        = dow,
+                    FiveMinuteBucket = bucket,
+                    SumSpeedKmh      = sum,
+                    SampleCount      = count,
+                    SpeedLimitKmh    = speedLimit,
+                    LastUpdated      = now,
+                    FirstSeenAt      = now
+                };
+                db.WaySpeedAggregates.Add(row);
+                existingWayAggs[key] = row;
+            }
+        }
+
+        var affectedCells = h3Buckets.Keys.Select(k => k.Cell).ToHashSet();
+        var existingH3Aggs = await db.H3SpeedAggregates
+            .Where(a => affectedCells.Contains(a.H3CellIndex))
+            .ToDictionaryAsync(a => (a.H3CellIndex, a.DayOfWeek, a.FiveMinuteBucket), ct);
+
+        foreach (var (key, (sum, count)) in h3Buckets)
+        {
+            var (cell, dow, bucket) = key;
+            if (existingH3Aggs.TryGetValue(key, out var existing))
+            {
+                existing.SumSpeedKmh += sum;
+                existing.SampleCount += count;
+                existing.LastUpdated  = now;
+            }
+            else
+            {
+                db.H3SpeedAggregates.Add(new H3SpeedAggregate
+                {
+                    H3CellIndex      = cell,
+                    DayOfWeek        = dow,
+                    FiveMinuteBucket = bucket,
+                    SumSpeedKmh      = sum,
+                    SampleCount      = count,
+                    LastUpdated      = now,
+                    FirstSeenAt      = now
+                });
+            }
+        }
+
+        foreach (var obs in newlyMatched)
+            obs.IsAggregated = true;
+
+        await db.SaveChangesAsync(ct);
+        await RebuildSummariesAsync(affectedWayIds.ToList(), ct);
+
+        return new AggregateJobResult(newlyMatched.Count);
+    }
+
+    /// <summary>
+    /// Runs global cleanup after all aggregation slots complete:
+    /// refreshes constrained speeds and deletes observations outside retention windows.
+    /// </summary>
+    public async Task FinalizeAsync(CancellationToken ct = default)
+    {
         await RefreshConstrainedSpeedsAsync(ct);
 
-        // ── 7. Delete observations outside the retention windows ──────────────
         var liveWindow      = DateTime.UtcNow - LiveRetention;
         var unmatchedCutoff = DateTime.UtcNow - UnmatchedRetention;
 

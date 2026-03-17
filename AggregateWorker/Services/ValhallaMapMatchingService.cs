@@ -6,6 +6,7 @@ using H3.Model;
 using Microsoft.EntityFrameworkCore;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Models;
+using OpenTrafficDB.Shared.Models.DTOs;
 using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.AggregateWorker.Services;
@@ -126,36 +127,68 @@ public class ValhallaMapMatchingService(
         }
     }
 
+    private const int MaxConcurrentValhalla = 4;
+
     /// <summary>
-    /// Match unmatched observations in the database.
-    /// Groups by TripId, sends each trip trace to Valhalla, writes OSM node IDs and H3 index.
+    /// Match observations in [from, to) time window. Processes all trips in parallel
+    /// (up to <see cref="MaxConcurrentValhalla"/> concurrent Valhalla calls).
+    /// Returns the number of observations matched.
     /// </summary>
-    public async Task ProcessUnmatchedAsync(AppDbContext db, CancellationToken ct = default)
+    public async Task<MatchJobResult> ProcessRangeAsync(
+        DateTime from, DateTime to, AppDbContext db, CancellationToken ct = default)
     {
-        // Load only observations that are unmatched and not already marked aggregated (stale unmatched).
         var unmatched = await db.SpeedObservations
-            .Where(o => o.OsmWayId == null && !o.IsAggregated)
+            .Where(o => o.OsmWayId == null && !o.IsAggregated
+                     && o.Timestamp >= from && o.Timestamp < to)
             .OrderBy(o => o.Timestamp)
             .ToListAsync(ct);
 
-        if (unmatched.Count == 0) return;
+        if (unmatched.Count == 0) return new MatchJobResult(0);
 
-        int updatedCount = 0;
         var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
+        var trips       = unmatched.GroupBy(o => o.TripId).ToList();
 
-        foreach (var trip in unmatched.GroupBy(o => o.TripId))
+        var tripResults = new (List<(int Idx, MatchResult Match)>[] SegmentMatches,
+                               List<SpeedObservation>              Sorted)[trips.Count];
+
+        using var sem = new SemaphoreSlim(MaxConcurrentValhalla);
+
+        await Task.WhenAll(trips.Select(async (trip, i) =>
         {
-            var sorted = trip.OrderBy(o => o.Timestamp).ToList();
+            var sorted   = trip.OrderBy(o => o.Timestamp).ToList();
             var segments = SplitTrace(sorted);
 
-            foreach (var segment in segments)
-            {
-                var matchMap = await MatchTraceAsync(
-                    segment.Select(o => (o.Latitude, o.Longitude, o.Timestamp)).ToList(), ct);
+            var segmentMatches = new List<(int, MatchResult)>[segments.Count];
 
-                foreach (var (idx, match) in matchMap)
+            await Task.WhenAll(segments.Select(async (segment, si) =>
+            {
+                await sem.WaitAsync(ct);
+                try
                 {
-                    if (idx >= segment.Count) continue;
+                    var matchMap = await MatchTraceAsync(
+                        segment.Select(o => (o.Latitude, o.Longitude, o.Timestamp)).ToList(), ct);
+                    segmentMatches[si] = [.. matchMap
+                        .Where(kv => kv.Key < segment.Count)
+                        .Select(kv => (kv.Key, kv.Value))];
+                }
+                finally { sem.Release(); }
+            }));
+
+            tripResults[i] = (segmentMatches, sorted);
+        }));
+
+        int updatedCount = 0;
+        for (int i = 0; i < trips.Count; i++)
+        {
+            var (segmentMatches, sorted) = tripResults[i];
+            var segments = SplitTrace(sorted);
+
+            for (int si = 0; si < segments.Count; si++)
+            {
+                if (segmentMatches[si] is null) continue;
+                var segment = segments[si];
+                foreach (var (idx, match) in segmentMatches[si])
+                {
                     var obs = segment[idx];
                     obs.OsmWayId      = match.OsmWayId;
                     obs.H3CellIndex   = match.H3CellIndex;
@@ -164,8 +197,6 @@ public class ValhallaMapMatchingService(
                 }
             }
 
-            // Mark observations that Valhalla could not match and are older than 5 minutes
-            // as aggregated so they are cleaned up by ReaggregateAsync and not retried endlessly.
             foreach (var obs in sorted)
             {
                 if (obs.OsmWayId == null && obs.CreatedAt < staleCutoff)
@@ -175,6 +206,7 @@ public class ValhallaMapMatchingService(
 
         await db.SaveChangesAsync(ct);
         _logMapMatched(logger, updatedCount, null);
+        return new MatchJobResult(updatedCount);
     }
 
     /// <summary>

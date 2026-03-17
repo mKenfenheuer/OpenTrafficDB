@@ -30,7 +30,6 @@ builder.Services.AddDbContext<ReadOnlyAppDbContext>(options =>
 builder.Services.AddScoped<TrafficAggregationService>();
 builder.Services.AddScoped<ValhallaMapMatchingService>();
 builder.Services.AddScoped<TrafficTileService>();
-builder.Services.AddHostedService<AggregationBackgroundService>();
 builder.Services.AddHostedService<WayGeometryBackgroundService>();
 builder.Services.AddTransient<RateLimitRetryHandler>();
 
