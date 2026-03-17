@@ -6,7 +6,11 @@ namespace OpenTrafficDB.App.Data;
 
 public class AppDbContext : DbContext
 {
-    public AppDbContext(DbContextOptions options) : base(options) { }
+    // Generic constructor required by EF when multiple DbContext types are registered.
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    // Protected overload for derived types (e.g. ReadOnlyAppDbContext).
+    protected AppDbContext(DbContextOptions options) : base(options) { }
 
     public DbSet<User> Users => Set<User>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
