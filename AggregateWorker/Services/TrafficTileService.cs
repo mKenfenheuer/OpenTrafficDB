@@ -40,8 +40,8 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         //
         // Derived fields (delay, jam) are computed in a nested subquery so the delay value
         // is not repeated multiple times across the CASE expressions.
-        var result = await db.Database.SqlQuery<RawMvt>($"""
-            SELECT ST_AsMVT(q, 'traffic', 4096, 'geom') AS "Tile"
+        var result = await db.Database.SqlQuery<byte[]>($"""
+            SELECT ST_AsMVT(q, 'traffic', 4096, 'geom')
             FROM (
                 SELECT
                     ST_AsMVTGeom(
@@ -94,16 +94,11 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
             .FirstOrDefaultAsync(ct);
 
         // ST_AsMVT returns empty bytea (zero bytes) when no features match — treat as empty tile.
-        var mvtBytes = result?.Tile;
+        var mvtBytes = result;
         if (mvtBytes is not { Length: > 0 })
             mvtBytes = MvtEncoder.Encode([new MvtLayer("traffic", [])]);
 
         return GzipCompress(mvtBytes);
-    }
-
-    private sealed class RawMvt
-    {
-        public byte[] Tile { get; set; } = [];
     }
 
     private static byte[] GzipCompress(byte[] data)

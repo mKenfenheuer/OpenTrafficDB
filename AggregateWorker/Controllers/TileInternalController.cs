@@ -5,7 +5,7 @@ namespace OpenTrafficDB.AggregateWorker.Controllers;
 
 [ApiController]
 [Route("internal/tiles")]
-public class TileInternalController(TrafficTileService tileService) : ControllerBase
+public class TileInternalController(TrafficTileService tileService, ILogger<TileInternalController> logger) : ControllerBase
 {
     [HttpGet("traffic/current/{z}/{x}/{y}")]
     public async Task<IActionResult> GetCurrentTrafficTile(int z, int x, int y, CancellationToken ct)
@@ -26,6 +26,11 @@ public class TileInternalController(TrafficTileService tileService) : Controller
         catch (OperationCanceledException)
         {
             return NoContent();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Tile {Z}/{X}/{Y} build failed", z, x, y);
+            return StatusCode(500);
         }
     }
 }
