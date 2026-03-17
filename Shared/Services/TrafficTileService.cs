@@ -1,7 +1,6 @@
 using System.IO.Compression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
-using NetTopologySuite.Geometries;
 using OpenTrafficDB.App.Data;
 
 namespace OpenTrafficDB.App.Services;
@@ -14,8 +13,6 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
 {
     private static readonly DistributedCacheEntryOptions TileOptions =
         new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30) };
-
-    private static readonly GeometryFactory Factory = new(new PrecisionModel(), 4326);
 
     public async Task<byte[]> BuildTileAsync(int z, int x, int y, CancellationToken ct = default)
     {
@@ -32,18 +29,15 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
     {
         var (minLat, minLon, maxLat, maxLon) = TileMath.TileBounds(z, x, y);
 
-        // Build a bbox polygon and use the PostGIS GIST index via ST_Intersects
-        var tileBbox = Factory.CreatePolygon([
-            new Coordinate(minLon, minLat),
-            new Coordinate(maxLon, minLat),
-            new Coordinate(maxLon, maxLat),
-            new Coordinate(minLon, maxLat),
-            new Coordinate(minLon, minLat)
-        ]);
-        tileBbox.SRID = 4326;
-
+        // Use raw SQL with ST_MakeEnvelope so the bbox is expressed as scalar doubles —
+        // avoids passing a Geometry object as a parameter, which requires NTS type mapping
+        // at the Npgsql data source level and fails with PgBouncer pooled connections.
+        // The GIST index on BBox is still used by Postgres via the && operator.
         var ways = await db.WayGeometries
-            .Where(g => g.BBox != null && g.BBox.Intersects(tileBbox))
+            .FromSqlInterpolated($"""
+                SELECT * FROM "WayGeometries"
+                WHERE "BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
+                """)
             .AsNoTracking()
             .ToListAsync(ct);
 
