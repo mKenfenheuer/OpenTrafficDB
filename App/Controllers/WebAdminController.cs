@@ -66,13 +66,13 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
         {
             TotalObservations    = reader.GetInt64(0),
             ObservationsLast24h  = reader.GetInt64(1),
-            TotalUsers           = reader.GetInt64(2),
-            UserCount            = reader.GetInt64(3),
-            ContributorCount     = reader.GetInt64(4),
-            AdminCount           = reader.GetInt64(5),
-            ActiveApiKeys        = reader.GetInt64(6),
-            AggregatedWays       = reader.GetInt64(7),
-            BlockedIps           = reader.GetInt64(8),
+            TotalUsers           = (int)reader.GetInt64(2),
+            UserCount            = (int)reader.GetInt64(3),
+            ContributorCount     = (int)reader.GetInt64(4),
+            AdminCount           = (int)reader.GetInt64(5),
+            ActiveApiKeys        = (int)reader.GetInt64(6),
+            AggregatedWays       = (int)reader.GetInt64(7),
+            BlockedIps           = (int)reader.GetInt64(8),
         };
 
         return Ok(result);
