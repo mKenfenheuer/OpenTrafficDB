@@ -28,7 +28,8 @@ public class Program
         builder.Services.AddSingleton<WorkerClient>();
         builder.Services.AddScoped<IEmailService, SmtpEmailService>();
         builder.Services.AddScoped<ApiKeyService>();
-        builder.Services.AddHostedService<WorkerHealthService>();
+        builder.Services.AddSingleton<WorkerHealthService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkerHealthService>());
 
         // HTTP client for inter-service communication with workers
         builder.Services.AddHttpClient("workers", client =>
