@@ -1,7 +1,6 @@
 using System.IO.Compression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
-using NetTopologySuite.Geometries;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Services;
 
@@ -9,12 +8,14 @@ namespace OpenTrafficDB.AggregateWorker.Services;
 
 /// <summary>
 /// Builds gzip-compressed Mapbox Vector Tile (MVT) bytes for the "traffic" layer.
-/// Tiles are cached in Redis (IDistributedCache) for 30 seconds.
+/// Geometry clipping, simplification, and MVT encoding are performed by PostGIS
+/// (ST_AsMVTGeom + ST_AsMVT) to avoid per-coordinate mercator projection in C#.
+/// Tiles are cached in Redis (IDistributedCache) for 60 seconds.
 /// </summary>
 public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
 {
     private static readonly DistributedCacheEntryOptions TileOptions =
-        new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30) };
+        new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60) };
 
     public async Task<byte[]> BuildTileAsync(int z, int x, int y, CancellationToken ct = default)
     {
@@ -31,91 +32,78 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
     {
         var (minLat, minLon, maxLat, maxLon) = TileMath.TileBounds(z, x, y);
 
-        // Use raw SQL with ST_MakeEnvelope so the bbox is expressed as scalar doubles —
-        // avoids passing a Geometry object as a parameter, which requires NTS type mapping
-        // at the Npgsql data source level and fails with PgBouncer pooled connections.
-        // The GIST index on BBox is still used by Postgres via the && operator.
-        var rows = await db.Database.SqlQuery<WayWithSummary>($"""
+        // PostGIS does all the heavy lifting:
+        //   - GIST bbox filter on WayGeometries.BBox
+        //   - ST_AsMVTGeom: clips to tile + 64px buffer, re-projects to tile coordinates,
+        //     simplifies geometry (Douglas-Peucker) — returns NULL for geometries fully outside
+        //   - ST_AsMVT: encodes features + tags into MVT protobuf bytes
+        //
+        // Derived fields (delay, jam) are computed in a nested subquery so the delay value
+        // is not repeated multiple times across the CASE expressions.
+        var result = await db.Database.SqlQuery<RawMvt>($"""
+            SELECT ST_AsMVT(q, 'traffic', 4096, 'geom') AS "Tile"
+            FROM (
                 SELECT
-                    wg."OsmWayId",
-                    wg."Geometry",
-                    wg."MaxSpeedKmh",
-                    wss."FreeflowSpeed",
-                    wss."ConstrainedSpeed",
-                    wss."P50Speed",
-                    wss."P95Speed",
-                    wss."SpeedLimitKmh",
-                    wss."TotalSamples"
-                FROM "WayGeometries" wg
-                JOIN "WaySpeedSummaries" wss ON wss."OsmWayId" = wg."OsmWayId"
-                WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
-                """)
-            .AsNoTracking()
-            .ToListAsync(ct);
+                    ST_AsMVTGeom(
+                        base."Geometry",
+                        ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326),
+                        4096, 64, true
+                    )                                                                   AS geom,
+                    base."OsmWayId"                                                     AS osm_way_id,
+                    ROUND(CAST(base.speed_kmh AS numeric), 1)                           AS speed_kmh,
+                    base."FreeflowSpeed"                                                AS freeflow_kmh,
+                    base."P50Speed"                                                     AS p50_kmh,
+                    base."P95Speed"                                                     AS p95_kmh,
+                    base."TotalSamples"                                                 AS total_samples,
+                    CASE WHEN base."ConstrainedSpeed" IS NOT NULL THEN 'live'
+                         ELSE 'historic' END                                            AS source,
+                    base.speed_limit_kmh,
+                    CASE WHEN base.speed_limit_kmh > 0
+                         THEN ROUND(CAST(base.delay AS numeric), 3) END                 AS delay_factor,
+                    CASE WHEN base.speed_limit_kmh > 0
+                         THEN ROUND(CAST(
+                             CASE
+                                 WHEN base.delay <= 0    THEN 0.0
+                                 WHEN base.delay <= 0.6  THEN base.delay * (0.7 / 0.6)
+                                 WHEN base.delay <= 0.85 THEN 0.7 + (base.delay - 0.6) * (0.3 / 0.25)
+                                 ELSE 1.0
+                             END
+                         AS numeric), 3) END                                            AS jam_estimate
+                FROM (
+                    SELECT
+                        wg."OsmWayId",
+                        wg."Geometry",
+                        wss."FreeflowSpeed",
+                        wss."ConstrainedSpeed",
+                        wss."P50Speed",
+                        wss."P95Speed",
+                        wss."TotalSamples",
+                        COALESCE(wss."ConstrainedSpeed", wss."FreeflowSpeed")           AS speed_kmh,
+                        COALESCE(wss."SpeedLimitKmh", wg."MaxSpeedKmh")                AS speed_limit_kmh,
+                        LEAST(GREATEST(
+                            1.0 - COALESCE(wss."ConstrainedSpeed", wss."FreeflowSpeed")
+                                / NULLIF(COALESCE(wss."SpeedLimitKmh", wg."MaxSpeedKmh"), 0),
+                            0.0), 1.0)                                                  AS delay
+                    FROM "WayGeometries" wg
+                    JOIN "WaySpeedSummaries" wss ON wss."OsmWayId" = wg."OsmWayId"
+                    WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
+                ) base
+            ) q
+            WHERE q.geom IS NOT NULL
+            """)
+            .FirstOrDefaultAsync(ct);
 
-        if (rows.Count == 0)
-            return GzipCompress(MvtEncoder.Encode([new MvtLayer("traffic", [])]));
+        // ST_AsMVT returns empty bytea (zero bytes) when no features match — treat as empty tile.
+        var mvtBytes = result?.Tile;
+        if (mvtBytes is not { Length: > 0 })
+            mvtBytes = MvtEncoder.Encode([new MvtLayer("traffic", [])]);
 
-        var features = new List<MvtFeature>(rows.Count);
-
-        foreach (var row in rows)
-        {
-            if (row.Geometry == null) continue;
-            var pixels = row.Geometry.Coordinates
-                .Select(c => TileMath.LatLonToPixel(c.Y, c.X, z, x, y))
-                .ToList();
-
-            if (pixels.Count < 2) continue;
-
-            var speedKmh = row.ConstrainedSpeed ?? row.FreeflowSpeed;
-            var source   = row.ConstrainedSpeed.HasValue ? "live" : "historic";
-
-            double? delayFactor = null, jamEstimate = null;
-            var limit = row.SpeedLimitKmh ?? row.MaxSpeedKmh;
-            if (limit is > 0)
-            {
-                var delay = Math.Clamp(1.0 - speedKmh / limit.Value, 0.0, 1.0);
-                delayFactor = Math.Round(delay, 3);
-                jamEstimate = Math.Round(TrafficAggregationService.ComputeJam(delay), 3);
-            }
-
-            var tags = new Dictionary<string, MvtValue>
-            {
-                ["osm_way_id"]    = new MvtValue.Int64Value(row.OsmWayId),
-                ["speed_kmh"]     = new MvtValue.DoubleValue(Math.Round(speedKmh, 1)),
-                ["freeflow_kmh"]  = new MvtValue.DoubleValue(row.FreeflowSpeed),
-                ["p50_kmh"]       = new MvtValue.DoubleValue(row.P50Speed),
-                ["p95_kmh"]       = new MvtValue.DoubleValue(row.P95Speed),
-                ["source"]        = new MvtValue.StringValue(source),
-                ["total_samples"] = new MvtValue.Int64Value(row.TotalSamples),
-            };
-
-            if (limit.HasValue)          tags["speed_limit_kmh"] = new MvtValue.DoubleValue(limit.Value);
-            if (delayFactor.HasValue)    tags["delay_factor"]    = new MvtValue.DoubleValue(delayFactor.Value);
-            if (jamEstimate.HasValue)    tags["jam_estimate"]    = new MvtValue.DoubleValue(jamEstimate.Value);
-
-            features.Add(new MvtFeature(
-                Id:       (ulong)Math.Abs(row.OsmWayId),
-                Geometry: pixels,
-                Tags:     tags));
-        }
-
-        return GzipCompress(MvtEncoder.Encode([new MvtLayer("traffic", features)]));
+        return GzipCompress(mvtBytes);
     }
 
-    // Flat projection used by the single-query JOIN — avoids loading full entity graphs.
-    private sealed class WayWithSummary
+    private sealed class RawMvt
     {
-        public long     OsmWayId         { get; set; }
-        public Geometry? Geometry        { get; set; }
-        public double?  MaxSpeedKmh      { get; set; }
-        // WaySpeedSummary columns
-        public double   FreeflowSpeed    { get; set; }
-        public double?  ConstrainedSpeed { get; set; }
-        public double   P50Speed         { get; set; }
-        public double   P95Speed         { get; set; }
-        public double?  SpeedLimitKmh    { get; set; }
-        public int      TotalSamples     { get; set; }
+        public byte[] Tile { get; set; } = [];
     }
 
     private static byte[] GzipCompress(byte[] data)
