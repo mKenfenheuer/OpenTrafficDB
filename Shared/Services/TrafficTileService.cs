@@ -1,27 +1,30 @@
 using System.IO.Compression;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Caching.Distributed;
+using NetTopologySuite.Geometries;
 using OpenTrafficDB.App.Data;
 
 namespace OpenTrafficDB.App.Services;
 
 /// <summary>
 /// Builds gzip-compressed Mapbox Vector Tile (MVT) bytes for the "traffic" layer.
-/// Tiles are cached in memory for 30 seconds to avoid redundant DB queries under
-/// concurrent map load.
+/// Tiles are cached in Redis (IDistributedCache) for 30 seconds.
 /// </summary>
-public class TrafficTileService(AppDbContext db, IMemoryCache cache)
+public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
 {
-    private static readonly TimeSpan TileTtl = TimeSpan.FromSeconds(30);
+    private static readonly DistributedCacheEntryOptions TileOptions =
+        new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30) };
+
+    private static readonly GeometryFactory Factory = new(new PrecisionModel(), 4326);
 
     public async Task<byte[]> BuildTileAsync(int z, int x, int y, CancellationToken ct = default)
     {
         var key = $"tile:{z}:{x}:{y}";
-        if (cache.TryGetValue(key, out byte[]? cached))
-            return cached!;
+        var cached = await cache.GetAsync(key, ct);
+        if (cached != null) return cached;
 
         var tile = await BuildTileInternalAsync(z, x, y, ct);
-        cache.Set(key, tile, TileTtl);
+        await cache.SetAsync(key, tile, TileOptions, ct);
         return tile;
     }
 
@@ -29,9 +32,18 @@ public class TrafficTileService(AppDbContext db, IMemoryCache cache)
     {
         var (minLat, minLon, maxLat, maxLon) = TileMath.TileBounds(z, x, y);
 
+        // Build a bbox polygon and use the PostGIS GIST index via ST_Intersects
+        var tileBbox = Factory.CreatePolygon([
+            new Coordinate(minLon, minLat),
+            new Coordinate(maxLon, minLat),
+            new Coordinate(maxLon, maxLat),
+            new Coordinate(minLon, maxLat),
+            new Coordinate(minLon, minLat)
+        ]);
+        tileBbox.SRID = 4326;
+
         var ways = await db.WayGeometries
-            .Where(g => g.MinLat <= maxLat && g.MaxLat >= minLat
-                     && g.MinLon <= maxLon && g.MaxLon >= minLon)
+            .Where(g => g.BBox != null && g.BBox.Intersects(tileBbox))
             .AsNoTracking()
             .ToListAsync(ct);
 

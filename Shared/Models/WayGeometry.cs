@@ -1,3 +1,5 @@
+using NetTopologySuite.Geometries;
+
 namespace OpenTrafficDB.App.Models;
 
 public class WayGeometry
@@ -12,4 +14,10 @@ public class WayGeometry
     public double? MaxSpeedKmh { get; set; }
     public int NodeCount { get; set; }
     public DateTime FetchedAt { get; set; }
+
+    /// <summary>
+    /// Bounding box as a PostGIS geometry polygon (SRID 4326).
+    /// Populated on insert/update, indexed with GIST for fast tile bbox queries.
+    /// </summary>
+    public Geometry? BBox { get; set; }
 }

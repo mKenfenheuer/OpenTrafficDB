@@ -1,17 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using NetTopologySuite.Geometries;
 using OpenTrafficDB.App.Models;
 
 namespace OpenTrafficDB.App.Data;
 
 public class AppDbContext : DbContext
 {
-    public AppDbContext(DbContextOptions options) : base(options)
-    {
-        if (Database.GetPendingMigrations().Any())
-        {
-            Database.Migrate();
-        }
-    }
+    public AppDbContext(DbContextOptions options) : base(options) { }
 
     public DbSet<User> Users => Set<User>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
@@ -24,6 +19,8 @@ public class AppDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasPostgresExtension("postgis");
+
         modelBuilder.Entity<User>(e =>
         {
             e.HasIndex(u => u.EmailHash).IsUnique();
@@ -45,9 +42,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SpeedObservation>(e =>
         {
             e.HasIndex(o => o.Timestamp);
-            // Composite index for live bbox queries (Timestamp + lat/lon range filter)
             e.HasIndex(o => new { o.Timestamp, o.Latitude, o.Longitude });
-            // Composite index for aggregation: fetch recent unmatched by way
             e.HasIndex(o => new { o.Timestamp, o.OsmWayId }).HasFilter("\"OsmWayId\" IS NOT NULL");
             e.HasIndex(o => new { o.Latitude, o.Longitude });
             e.HasIndex(o => o.OsmWayId).HasFilter("\"OsmWayId\" IS NOT NULL");
@@ -76,9 +71,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<WayGeometry>(e =>
         {
             e.HasIndex(g => g.OsmWayId).IsUnique();
-            // Combined 4-column index lets Postgres do a single range scan for bbox overlap queries.
-            // Replace with a PostGIS GIST index on a geometry column for best spatial performance.
-            e.HasIndex(g => new { g.MinLat, g.MaxLat, g.MinLon, g.MaxLon });
+            // GIST index on BBox geometry — replaces the four-column B-tree index.
+            // Enables O(log n) ST_Intersects queries for tile bbox lookups.
+            e.HasIndex(g => g.BBox).HasMethod("GIST");
+            e.Property(g => g.BBox).HasColumnType("geometry(Polygon,4326)");
         });
 
         modelBuilder.Entity<WaySpeedSummary>(e =>
@@ -87,3 +83,11 @@ public class AppDbContext : DbContext
         });
     }
 }
+
+/// <summary>
+/// Read-only DbContext pointed at the read replica (falls back to primary if
+/// ConnectionStrings:ReadConnection is not configured).
+/// Inject this into services that never write — tiles, CSV exports, routing queries.
+/// </summary>
+public class ReadOnlyAppDbContext(DbContextOptions<ReadOnlyAppDbContext> options)
+    : AppDbContext(options) { }

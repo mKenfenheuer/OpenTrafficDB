@@ -12,11 +12,18 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ── Database ──────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
+        o => o.UseNetTopologySuite()));
 
 builder.Services.AddDbContextFactory<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")),
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
+        o => o.UseNetTopologySuite()),
     ServiceLifetime.Scoped);
+
+var readConn = builder.Configuration.GetConnectionString("ReadConnection")
+    ?? builder.Configuration.GetConnectionString("DefaultConnection");
+builder.Services.AddDbContext<ReadOnlyAppDbContext>(options =>
+    options.UseNpgsql(readConn, o => o.UseNetTopologySuite()));
 
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<ValhallaRoutingService>();

@@ -12,11 +12,18 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ── Database ──────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
+        o => o.UseNetTopologySuite()));
 
 builder.Services.AddDbContextFactory<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")),
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
+        o => o.UseNetTopologySuite()),
     ServiceLifetime.Scoped);
+
+var readConn = builder.Configuration.GetConnectionString("ReadConnection")
+    ?? builder.Configuration.GetConnectionString("DefaultConnection");
+builder.Services.AddDbContext<ReadOnlyAppDbContext>(options =>
+    options.UseNpgsql(readConn, o => o.UseNetTopologySuite()));
 
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<TrafficAggregationService>();
@@ -58,7 +65,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-builder.Services.AddMemoryCache();
+var redisConn = builder.Configuration.GetConnectionString("Redis") ?? "redis:6379";
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConn;
+    options.InstanceName = "otdb:";
+});
 builder.Services.AddAuthorization();
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks()

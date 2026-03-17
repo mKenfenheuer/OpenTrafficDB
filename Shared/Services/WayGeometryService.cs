@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using NetTopologySuite.Geometries;
 using OpenTrafficDB.App.Data;
 using OpenTrafficDB.App.Models;
 
@@ -115,7 +116,8 @@ public class WayGeometryService(
 
         if (result?.Elements == null) return [];
 
-        var now = DateTime.UtcNow;
+        var now     = DateTime.UtcNow;
+        var factory = new GeometryFactory(new PrecisionModel(), 4326);
         var geometries = new List<WayGeometry>(result.Elements.Count);
 
         foreach (var el in result.Elements)
@@ -124,17 +126,32 @@ public class WayGeometryService(
 
             var maxspeedRaw = el.Tags != null && el.Tags.TryGetValue("maxspeed", out var ms) ? ms : null;
 
+            var minLat = el.Bounds?.MinLat ?? el.Geometry.Min(p => p.Lat);
+            var minLon = el.Bounds?.MinLon ?? el.Geometry.Min(p => p.Lon);
+            var maxLat = el.Bounds?.MaxLat ?? el.Geometry.Max(p => p.Lat);
+            var maxLon = el.Bounds?.MaxLon ?? el.Geometry.Max(p => p.Lon);
+
+            // Build bbox polygon for GIST index (coordinate order: lon, lat = x, y)
+            var bbox = factory.CreatePolygon([
+                new Coordinate(minLon, minLat),
+                new Coordinate(maxLon, minLat),
+                new Coordinate(maxLon, maxLat),
+                new Coordinate(minLon, maxLat),
+                new Coordinate(minLon, minLat)
+            ]);
+
             geometries.Add(new WayGeometry
             {
-                OsmWayId         = el.Id,
-                MinLat           = el.Bounds?.MinLat ?? el.Geometry.Min(p => p.Lat),
-                MinLon           = el.Bounds?.MinLon ?? el.Geometry.Min(p => p.Lon),
-                MaxLat           = el.Bounds?.MaxLat ?? el.Geometry.Max(p => p.Lat),
-                MaxLon           = el.Bounds?.MaxLon ?? el.Geometry.Max(p => p.Lon),
-                EncodedPolyline  = PolylineEncoder.Encode(el.Geometry.Select(p => (p.Lat, p.Lon))),
-                MaxSpeedKmh      = ParseMaxSpeed(maxspeedRaw),
-                NodeCount        = el.Geometry.Count,
-                FetchedAt        = now
+                OsmWayId        = el.Id,
+                MinLat          = minLat,
+                MinLon          = minLon,
+                MaxLat          = maxLat,
+                MaxLon          = maxLon,
+                BBox            = bbox,
+                EncodedPolyline = PolylineEncoder.Encode(el.Geometry.Select(p => (p.Lat, p.Lon))),
+                MaxSpeedKmh     = ParseMaxSpeed(maxspeedRaw),
+                NodeCount       = el.Geometry.Count,
+                FetchedAt       = now
             });
         }
 
