@@ -1,47 +1,110 @@
 before_script:
-  - export CI_ENVIRONMENT_HOST=$(echo $CI_ENVIRONMENT_URL | sed 's~http[s]*://~~g')
+  - export BRANCH_TAG=$(echo "$CI_COMMIT_REF_NAME" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
 
 stages:
   - build
   - deploy
 
-# ── Docker image build ──────────────────────────────────────────────────────
-build_amd64_image:
+# ── App (gateway) ────────────────────────────────────────────────────────────
+build_app:
   stage: build
-  only:
-    - main
-  tags:
-    - docker
-    - build
-    - linux
-    - shell
+  tags: [docker, build, linux, shell]
+  rules:
+    - changes:
+        - App/**/*
+        - Shared/**/*
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build -t opentrafficdb .
-    - docker image tag opentrafficdb $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-    - docker image tag opentrafficdb $CI_REGISTRY_IMAGE:latest
-    - docker image push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-    - docker image push $CI_REGISTRY_IMAGE:latest
+    - docker build -f App/Dockerfile -t app-image .
+    - docker image tag app-image $CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHORT_SHA
+    - docker image tag app-image $CI_REGISTRY_IMAGE/app:$BRANCH_TAG
+    - docker image push $CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHORT_SHA
+    - docker image push $CI_REGISTRY_IMAGE/app:$BRANCH_TAG
     - docker image prune -f
 
-# ── Production deployment ───────────────────────────────────────────────────
+# ── IngestWorker ─────────────────────────────────────────────────────────────
+build_ingest:
+  stage: build
+  tags: [docker, build, linux, shell]
+  rules:
+    - changes:
+        - IngestWorker/**/*
+        - Shared/**/*
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -f IngestWorker/Dockerfile -t ingest-image .
+    - docker image tag ingest-image $CI_REGISTRY_IMAGE/ingest:$CI_COMMIT_SHORT_SHA
+    - docker image tag ingest-image $CI_REGISTRY_IMAGE/ingest:$BRANCH_TAG
+    - docker image push $CI_REGISTRY_IMAGE/ingest:$CI_COMMIT_SHORT_SHA
+    - docker image push $CI_REGISTRY_IMAGE/ingest:$BRANCH_TAG
+    - docker image prune -f
+
+# ── AggregateWorker ──────────────────────────────────────────────────────────
+build_aggregate:
+  stage: build
+  tags: [docker, build, linux, shell]
+  rules:
+    - changes:
+        - AggregateWorker/**/*
+        - Shared/**/*
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -f AggregateWorker/Dockerfile -t aggregate-image .
+    - docker image tag aggregate-image $CI_REGISTRY_IMAGE/aggregate:$CI_COMMIT_SHORT_SHA
+    - docker image tag aggregate-image $CI_REGISTRY_IMAGE/aggregate:$BRANCH_TAG
+    - docker image push $CI_REGISTRY_IMAGE/aggregate:$CI_COMMIT_SHORT_SHA
+    - docker image push $CI_REGISTRY_IMAGE/aggregate:$BRANCH_TAG
+    - docker image prune -f
+
+# ── RoutingWorker ─────────────────────────────────────────────────────────────
+build_routing:
+  stage: build
+  tags: [docker, build, linux, shell]
+  rules:
+    - changes:
+        - RoutingWorker/**/*
+        - Shared/**/*
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -f RoutingWorker/Dockerfile -t routing-image .
+    - docker image tag routing-image $CI_REGISTRY_IMAGE/routing:$CI_COMMIT_SHORT_SHA
+    - docker image tag routing-image $CI_REGISTRY_IMAGE/routing:$BRANCH_TAG
+    - docker image push $CI_REGISTRY_IMAGE/routing:$CI_COMMIT_SHORT_SHA
+    - docker image push $CI_REGISTRY_IMAGE/routing:$BRANCH_TAG
+    - docker image prune -f
+
+# ── Production deployment ─────────────────────────────────────────────────────
 deploy_production:
   stage: deploy
   needs:
-    - build_amd64_image
+    - job: build_app
+      optional: true
+    - job: build_ingest
+      optional: true
+    - job: build_aggregate
+      optional: true
+    - job: build_routing
+      optional: true
   allow_failure: false
-  only:
-    - main
+  rules:
+    - if: $CI_COMMIT_REF_NAME == "main"
+      changes:
+        - App/**/*
+        - IngestWorker/**/*
+        - AggregateWorker/**/*
+        - RoutingWorker/**/*
+        - Shared/**/*
+        - docker-compose.yml
+        - .env.example
   environment:
     name: prod
-  tags:
-    - docker
-    - linux
-    - no-gpu
+  tags: [docker, linux, no-gpu]
   script:
-    - mkdir -p /mnt/opentraffic/valhalla
-    - mkdir -p /mnt/opentraffic/postgres
+    - mkdir -p /mnt/opentraffic/valhalla /mnt/opentraffic/postgres /mnt/opentraffic/overpass
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - export APP_IMAGE=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-    - docker compose pull api
+    - export APP_IMAGE=$CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHORT_SHA
+    - export INGEST_IMAGE=$CI_REGISTRY_IMAGE/ingest:$CI_COMMIT_SHORT_SHA
+    - export AGGREGATE_IMAGE=$CI_REGISTRY_IMAGE/aggregate:$CI_COMMIT_SHORT_SHA
+    - export ROUTING_IMAGE=$CI_REGISTRY_IMAGE/routing:$CI_COMMIT_SHORT_SHA
+    - docker compose pull --ignore-pull-failures
     - docker compose up -d

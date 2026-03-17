@@ -15,9 +15,46 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
-    <PackageReference Include="pocketken.H3" Version="4.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Razor.RuntimeCompilation" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Shared/OpenTrafficDB.Shared.csproj" />
+  </ItemGroup>
+
+  <!-- Exclude files that are now provided by the Shared project -->
+  <ItemGroup>
+    <Compile Remove="Data/AppDbContext.cs" />
+    <Compile Remove="Models/User.cs" />
+    <Compile Remove="Models/ApiKey.cs" />
+    <Compile Remove="Models/SpeedObservation.cs" />
+    <Compile Remove="Models/WaySpeedAggregate.cs" />
+    <Compile Remove="Models/H3SpeedAggregate.cs" />
+    <Compile Remove="Models/WayGeometry.cs" />
+    <Compile Remove="Models/WaySpeedSummary.cs" />
+    <Compile Remove="Models/BlockedIp.cs" />
+    <Compile Remove="Models/UserRole.cs" />
+    <Compile Remove="Models/DTOs/SpeedDtos.cs" />
+    <Compile Remove="Models/DTOs/TrafficDtos.cs" />
+    <Compile Remove="Models/DTOs/RoutingDtos.cs" />
+    <Compile Remove="Models/DTOs/AuthDtos.cs" />
+    <Compile Remove="Models/DTOs/UserDtos.cs" />
+    <Compile Remove="Models/DTOs/WebDtos.cs" />
+    <Compile Remove="Services/CryptoService.cs" />
+    <Compile Remove="Services/PasswordService.cs" />
+    <Compile Remove="Services/SpeedValidationService.cs" />
+    <Compile Remove="Services/PolylineEncoder.cs" />
+    <Compile Remove="Services/TileMath.cs" />
+    <Compile Remove="Services/MvtEncoder.cs" />
+    <Compile Remove="Services/ValhallaSpeedEncoder.cs" />
+    <Compile Remove="Services/TrafficAggregationService.cs" />
+    <Compile Remove="Services/ValhallaMapMatchingService.cs" />
+    <Compile Remove="Services/ValhallaRoutingService.cs" />
+    <Compile Remove="Services/TrafficTileService.cs" />
+    <Compile Remove="Services/WayGeometryService.cs" />
+    <Compile Remove="Services/AggregationBackgroundService.cs" />
+    <Compile Remove="Services/WayGeometryBackgroundService.cs" />
   </ItemGroup>
 
 </Project>

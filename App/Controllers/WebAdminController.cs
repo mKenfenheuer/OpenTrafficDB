@@ -16,10 +16,17 @@ namespace OpenTrafficDB.App.Controllers;
 [Authorize(AuthenticationSchemes = CookieAuthenticationDefaults.AuthenticationScheme, Policy = "WebAdminOnly")]
 [Produces("application/json")]
 [ApiExplorerSettings(IgnoreApi = true)]
-public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto) : ControllerBase
+public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto, WorkerHealthService workerHealth) : ControllerBase
 {
     private int CurrentUserId =>
         int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "0");
+
+    // ── Workers ───────────────────────────────────────────────────────────────
+
+    /// <summary>Get health status of all worker services.</summary>
+    [HttpGet("workers")]
+    [ProducesResponseType(typeof(WorkerInfo[]), StatusCodes.Status200OK)]
+    public IActionResult GetWorkers() => Ok(workerHealth.GetAllStatuses());
 
     // ── Stats ─────────────────────────────────────────────────────────────────
 

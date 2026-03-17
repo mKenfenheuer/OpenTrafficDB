@@ -1,49 +1,73 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using OpenTrafficDB.App.Data;
+using OpenTrafficDB.App.Services;
 
-namespace OpenTrafficDB.AggregateWorker;
+JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
-public class Program
+var builder = WebApplication.CreateBuilder(args);
+
+// ── Database ──────────────────────────────────────────────────────────────────
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddDbContextFactory<AppDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")),
+    ServiceLifetime.Scoped);
+
+// ── Services ──────────────────────────────────────────────────────────────────
+builder.Services.AddScoped<TrafficAggregationService>();
+builder.Services.AddScoped<ValhallaMapMatchingService>();
+builder.Services.AddScoped<TrafficTileService>();
+builder.Services.AddScoped<WayGeometryService>();
+builder.Services.AddHostedService<AggregationBackgroundService>();
+builder.Services.AddHostedService<WayGeometryBackgroundService>();
+builder.Services.AddTransient<RateLimitRetryHandler>();
+
+builder.Services.AddHttpClient("valhalla", client =>
 {
-    public static void Main(string[] args)
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).AddHttpMessageHandler<RateLimitRetryHandler>();
+
+builder.Services.AddHttpClient("overpass", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(60);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenTrafficDB/1.0");
+}).AddHttpMessageHandler<RateLimitRetryHandler>();
+
+// ── Internal JWT Authentication ───────────────────────────────────────────────
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("Jwt:Key is required");
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
     {
-        var builder = WebApplication.CreateBuilder(args);
-
-        // Add services to the container.
-        builder.Services.AddAuthorization();
-
-        // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-        builder.Services.AddOpenApi();
-
-        var app = builder.Build();
-
-        // Configure the HTTP request pipeline.
-        if (app.Environment.IsDevelopment())
+        options.TokenValidationParameters = new TokenValidationParameters
         {
-            app.MapOpenApi();
-        }
-
-        app.UseHttpsRedirection();
-
-        app.UseAuthorization();
-
-        var summaries = new[]
-        {
-            "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey         = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ValidateIssuer           = true,
+            ValidIssuer              = "opentrafficdb-app",
+            ValidateAudience         = true,
+            ValidAudience            = "opentrafficdb-internal",
+            ValidateLifetime         = true,
+            ClockSkew                = TimeSpan.FromSeconds(30)
         };
+    });
 
-        app.MapGet("/weatherforecast", (HttpContext httpContext) =>
-        {
-            var forecast =  Enumerable.Range(1, 5).Select(index =>
-                new WeatherForecast
-                {
-                    Date = DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-                    TemperatureC = Random.Shared.Next(-20, 55),
-                    Summary = summaries[Random.Shared.Next(summaries.Length)]
-                })
-                .ToArray();
-            return forecast;
-        })
-        .WithName("GetWeatherForecast");
+builder.Services.AddAuthorization();
+builder.Services.AddControllers();
+builder.Services.AddHealthChecks()
+    .AddNpgSql(builder.Configuration.GetConnectionString("DefaultConnection")!);
 
-        app.Run();
-    }
-}
+var app = builder.Build();
+
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+app.MapHealthChecks("/health");
+
+await app.RunAsync();

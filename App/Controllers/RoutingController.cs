@@ -7,34 +7,19 @@ using OpenTrafficDB.App.Services;
 namespace OpenTrafficDB.App.Controllers;
 
 /// <summary>
-/// Traffic-enriched routing: proxies Valhalla /route requests and overlays
-/// per-route delay and congestion analysis from the OpenTrafficDB speed data.
+/// Traffic-enriched routing: forwards requests to RoutingWorker.
 /// </summary>
 [ApiController]
 [Route("api/v1/route")]
 [Authorize(AuthenticationSchemes = ApiKeyAuthenticationHandler.SchemeName)]
 [Produces("application/json")]
 public class RoutingController(
-    ValhallaRoutingService routing,
-    AbuseDetectionService abuseDetection) : ControllerBase
+    AbuseDetectionService abuseDetection,
+    WorkerClient workers) : ControllerBase
 {
     /// <summary>
     /// Route with traffic enrichment.
-    ///
-    /// Accepts a standard Valhalla /route request as either:
-    /// - POST with a JSON body, or
-    /// - GET with the request serialised as the <c>json</c> query parameter.
-    ///
-    /// <c>alternates</c> is automatically raised to at least 10 so the
-    /// traffic-optimal route can be selected from a wide candidate pool.
-    /// Only the number of routes originally requested are returned, ranked
-    /// by ascending live travel time.
-    ///
-    /// Each <c>trip</c> object in the response contains a <c>trafficAnalysis</c> field:
-    /// - <c>freeflowDurationMinutes</c> / <c>liveDurationMinutes</c>
-    /// - <c>totalDelayMinutes</c>, <c>delayPercent</c>
-    /// - <c>trafficCoverageRatio</c> (0–1, fraction of route with live data)
-    /// - <c>jams[]</c> — individual congestion segments with geometry, delay, and speeds
+    /// Accepts a standard Valhalla /route request as POST body or GET ?json= parameter.
     /// </summary>
     [HttpGet]
     [HttpPost]
@@ -51,46 +36,42 @@ public class RoutingController(
     {
         var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var keyId = User.FindFirstValue("keyId") ?? string.Empty;
+        var userId = int.Parse(User.FindFirstValue("sub") ?? "0");
 
         if (!abuseDetection.CheckReadRate(ip, keyId))
             return StatusCode(429, new { error = "Rate limit exceeded." });
 
-        JsonElement request;
-        if (body.HasValue && body.Value.ValueKind == JsonValueKind.Object)
+        if (Request.Method == HttpMethods.Post &&
+            body.HasValue && body.Value.ValueKind == JsonValueKind.Object)
         {
-            request = body.Value;
+            await workers.ProxyAsync("Routing", HttpMethod.Post, "/internal/route",
+                userId, keyId, string.Empty,
+                new System.Net.Http.StringContent(body.Value.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
+                Response, ct: ct);
         }
         else if (!string.IsNullOrWhiteSpace(json))
         {
+            // Validate JSON before forwarding
             try
             {
                 var parsed = JsonDocument.Parse(json).RootElement;
                 if (parsed.ValueKind != JsonValueKind.Object)
                     return BadRequest(new { error = "The 'json' query parameter must be a JSON object." });
-                request = parsed;
             }
             catch (JsonException)
             {
                 return BadRequest(new { error = "The 'json' query parameter is not valid JSON." });
             }
+
+            await workers.ProxyAsync("Routing", HttpMethod.Get, "/internal/route",
+                userId, keyId, string.Empty, null, Response,
+                query: $"?json={Uri.EscapeDataString(json)}", ct: ct);
         }
         else
         {
             return BadRequest(new { error = "Provide the Valhalla route request as a POST body or as the 'json' query parameter." });
         }
 
-        var (result, statusCode, error) = await routing.RouteWithTrafficAsync(request, ct);
-
-        if (result is null)
-        {
-            return statusCode switch
-            {
-                400 => BadRequest(new { error }),
-                503 => StatusCode(503, new { error }),
-                _   => StatusCode(502, new { error })
-            };
-        }
-
-        return Ok(result);
+        return new EmptyResult();
     }
 }

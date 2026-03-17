@@ -11,6 +11,17 @@
         <p class="text-muted">Service statistics, user management, and IP controls</p>
       </div>
 
+      <!-- Workers -->
+      <div class="section">
+        <div class="section-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Worker Services
+        </div>
+        <div id="workers-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
+          <div class="text-muted" style="padding:16px">Loading…</div>
+        </div>
+      </div>
+
       <!-- Stats -->
       <div class="section">
         <div class="section-title">
@@ -130,6 +141,32 @@
     const session = await getSession();
     if (!session)              { window.location.href = '/';             throw new Error(); }
     if (session.role !== 'Admin') { window.location.href = '/Home/Dashboard'; throw new Error(); }
+
+    // ── Workers ────────────────────────────────────────────────────────────────
+
+    async function loadWorkers() {
+      const res = await web('GET', '/admin/workers');
+      const grid = document.getElementById('workers-grid');
+      if (!res?.ok) { grid.innerHTML = '<div class="text-danger">Failed to load worker status.</div>'; return; }
+
+      const statusColor = { Healthy: 'success', Unhealthy: 'danger', Unknown: 'muted' };
+      const statusIcon  = { Healthy: '●', Unhealthy: '●', Unknown: '○' };
+
+      grid.innerHTML = res.data.map(w => `
+        <div class="card" style="padding:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-weight:600">${esc(w.name)}</span>
+            <span class="text-${statusColor[w.status] || 'muted'}" title="${w.status}">
+              ${statusIcon[w.status] || '○'} ${w.status}
+            </span>
+          </div>
+          <div class="text-muted" style="font-size:0.8rem">
+            ${w.urls.map(u => `<div>${esc(u)}</div>`).join('')}
+            ${w.lastChecked ? `<div style="margin-top:4px">Last checked: ${fmtDateTime(w.lastChecked)}</div>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
 
     // ── Stats ──────────────────────────────────────────────────────────────────
 
@@ -335,6 +372,7 @@
       return `<tr><td colspan="${cols}" class="text-muted" style="text-align:center;padding:24px">${msg}</td></tr>`;
     }
 
-    Promise.all([loadStats(), loadUsers(), loadBlocked()]);
+    Promise.all([loadWorkers(), loadStats(), loadUsers(), loadBlocked()]);
+    setInterval(loadWorkers, 10_000);
   </script>
 }

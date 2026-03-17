@@ -4,18 +4,18 @@ EXPOSE 8080
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-COPY ["OpenTrafficDB.csproj", "."]
-RUN dotnet restore "OpenTrafficDB.csproj"
-COPY . .
-RUN dotnet build "OpenTrafficDB.csproj" -c Release -o /app/build
+COPY ["Shared/OpenTrafficDB.Shared.csproj", "Shared/"]
+COPY ["App/OpenTrafficDB.App.csproj", "App/"]
+RUN dotnet restore "App/OpenTrafficDB.App.csproj"
+COPY Shared/ Shared/
+COPY App/ App/
+RUN dotnet build "App/OpenTrafficDB.App.csproj" -c Release -o /app/build
 
 FROM build AS publish
-RUN dotnet publish "OpenTrafficDB.csproj" -c Release -o /app/publish
+RUN dotnet publish "App/OpenTrafficDB.App.csproj" -c Release -o /app/publish
 
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-
 ENV ASPNETCORE_URLS=http://+:8080
-
-ENTRYPOINT ["dotnet", "OpenTrafficDB.dll"]
+ENTRYPOINT ["dotnet", "OpenTrafficDB.App.dll"]

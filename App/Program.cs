@@ -1,7 +1,4 @@
-using System.Security.Claims;
 using System.Security.Cryptography;
-using System.Text;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -23,43 +20,25 @@ public class Program
         builder.Services.AddDbContext<AppDbContext>(options =>
             options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-        // Factory used by ValhallaRoutingService to create one DbContext per concurrent task
-        builder.Services.AddDbContextFactory<AppDbContext>(options =>
-            options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")),
-            ServiceLifetime.Scoped);
-
         // ── Services ────────────────────────────────────────────────────────────
         builder.Services.AddSingleton<AbuseDetectionService>();
         builder.Services.AddSingleton<CryptoService>();
         builder.Services.AddSingleton<PasswordService>();
+        builder.Services.AddSingleton<InternalJwtService>();
+        builder.Services.AddSingleton<WorkerClient>();
         builder.Services.AddScoped<IEmailService, SmtpEmailService>();
         builder.Services.AddScoped<ApiKeyService>();
-        builder.Services.AddScoped<SpeedValidationService>();
-        builder.Services.AddScoped<TrafficAggregationService>();
-        builder.Services.AddScoped<ValhallaMapMatchingService>();
-        builder.Services.AddScoped<WayGeometryService>();
-        builder.Services.AddScoped<TrafficTileService>();
-        builder.Services.AddScoped<ValhallaRoutingService>();
-        builder.Services.AddHostedService<AggregationBackgroundService>();
-        builder.Services.AddHostedService<WayGeometryBackgroundService>();
+        builder.Services.AddHostedService<WorkerHealthService>();
 
-        builder.Services.AddTransient<RateLimitRetryHandler>();
-
-        // HTTP client for Valhalla map matching
-        builder.Services.AddHttpClient("valhalla", client =>
-        {
-            client.Timeout = TimeSpan.FromSeconds(30);
-        }).AddHttpMessageHandler<RateLimitRetryHandler>();
-
-        // HTTP client for Overpass API (way geometry fetching)
-        builder.Services.AddHttpClient("overpass", client =>
+        // HTTP client for inter-service communication with workers
+        builder.Services.AddHttpClient("workers", client =>
         {
             client.Timeout = TimeSpan.FromSeconds(60);
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenTrafficDB/1.0");
-        }).AddHttpMessageHandler<RateLimitRetryHandler>();
+        });
 
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-                .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationHandler.SchemeName, options => { })
+                .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+                    ApiKeyAuthenticationHandler.SchemeName, options => { })
             .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
             {
                 options.Cookie.Name = "otdb_session";
@@ -129,7 +108,6 @@ public class Program
                 }
             });
 
-            // Include XML doc comments
             var xmlPath = Path.Combine(AppContext.BaseDirectory, "OpenTrafficDB.xml");
             if (File.Exists(xmlPath)) c.IncludeXmlComments(xmlPath);
         });
@@ -161,9 +139,9 @@ public class Program
             // Seed default admin account if no Admin user exists
             if (!await db.Users.AnyAsync(u => u.Role == UserRole.Admin))
             {
-                var jwtSvc = scope.ServiceProvider.GetRequiredService<CryptoService>();
-                var pwdSvc = scope.ServiceProvider.GetRequiredService<PasswordService>();
-                var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+                var cryptoSvc = scope.ServiceProvider.GetRequiredService<CryptoService>();
+                var pwdSvc    = scope.ServiceProvider.GetRequiredService<PasswordService>();
+                var logger    = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
                 var rawPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(12))
                     .Replace('+', '-').Replace('/', '_').TrimEnd('=');
@@ -171,7 +149,7 @@ public class Program
                 var admin = new User
                 {
                     Name = "Admin",
-                    EmailHash = jwtSvc.HashEmail("admin@example.com"),
+                    EmailHash = cryptoSvc.HashEmail("admin@example.com"),
                     PasswordHash = pwdSvc.HashPassword(rawPassword),
                     IsEmailVerified = true,
                     Role = UserRole.Admin,
@@ -195,7 +173,6 @@ public class Program
         app.UseCors();
         app.UseMiddleware<IpBlockingMiddleware>();
 
-        // Serve wwwroot static files;
         app.UseDefaultFiles();
         app.UseStaticFiles();
 

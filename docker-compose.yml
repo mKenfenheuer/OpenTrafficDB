@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: opentrafficdb
       POSTGRES_USER: opentraffic
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - /mnt/opentraffic/postgres:/var/lib/postgresql/data
     healthcheck:
@@ -21,9 +21,7 @@ services:
       - /mnt/opentraffic/valhalla:/custom_files
     environment:
       tile_building_blocked: "0"
-      tile_urls: https://download.geofabrik.de/europe/germany-latest.osm.pbf
-    ports:
-      - "0.0.0.0:8096:8002"
+      tile_urls: ${VALHALLA_TILE_URL}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8002/status"]
       interval: 10s
@@ -40,24 +38,85 @@ services:
       OVERPASS_DIFF_URL: https://planet.openstreetmap.org/replication/minute/
     volumes:
       - /mnt/opentraffic/overpass:/db
-    ports:
-      - "0.0.0.0:8097:80"
 
-  api:
-    image: ${APP_IMAGE:-opentrafficdb:latest}
-    build: .
+  ingest:
+    image: ${INGEST_IMAGE:-registry.gitlab.com/opentrafficdb/ingest:latest}
     restart: unless-stopped
-    ports:
-      - "0.0.0.0:8095:8080"
     environment:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: >-
         Host=postgres;Port=5432;Database=opentrafficdb;
-        Username=opentraffic;Password=${POSTGRES_PASSWORD:-changeme}
-      Valhalla__BaseUrl: http://localhost:8096
-      Overpass__BaseUrl: http://localhost:8097
+        Username=opentraffic;Password=${POSTGRES_PASSWORD}
+      Jwt__Key: ${JWT_KEY}
+      Security__IpHashPepper: ${IP_HASH_PEPPER}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  aggregate:
+    image: ${AGGREGATE_IMAGE:-registry.gitlab.com/opentrafficdb/aggregate:latest}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: >-
+        Host=postgres;Port=5432;Database=opentrafficdb;
+        Username=opentraffic;Password=${POSTGRES_PASSWORD}
+      Jwt__Key: ${JWT_KEY}
+      Security__IpHashPepper: ${IP_HASH_PEPPER}
+      Valhalla__BaseUrl: http://valhalla:8002
+      Overpass__BaseUrl: http://overpass:80
     depends_on:
       postgres:
         condition: service_healthy
       valhalla:
+        condition: service_started
+
+  routing:
+    image: ${ROUTING_IMAGE:-registry.gitlab.com/opentrafficdb/routing:latest}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: >-
+        Host=postgres;Port=5432;Database=opentrafficdb;
+        Username=opentraffic;Password=${POSTGRES_PASSWORD}
+      Jwt__Key: ${JWT_KEY}
+      Security__IpHashPepper: ${IP_HASH_PEPPER}
+      Valhalla__BaseUrl: http://valhalla:8002
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valhalla:
+        condition: service_started
+
+  api:
+    image: ${APP_IMAGE:-registry.gitlab.com/opentrafficdb/app:latest}
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:${APP_PORT:-8095}:8080"
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: >-
+        Host=postgres;Port=5432;Database=opentrafficdb;
+        Username=opentraffic;Password=${POSTGRES_PASSWORD}
+      Jwt__Key: ${JWT_KEY}
+      Security__IpHashPepper: ${IP_HASH_PEPPER}
+      BaseUrl: ${BASE_URL}
+      Email__SmtpHost: ${SMTP_HOST:-}
+      Email__SmtpPort: ${SMTP_PORT:-25}
+      Email__SmtpUser: ${SMTP_USER:-}
+      Email__SmtpPassword: ${SMTP_PASSWORD:-}
+      Email__EnableSsl: ${SMTP_SSL:-false}
+      Email__FromAddress: ${SMTP_FROM:-opentrafficdb@localhost}
+      Email__FromName: ${SMTP_FROM_NAME:-OpenTrafficDB}
+      Workers__Ingest__Urls__0: http://ingest:8080
+      Workers__Aggregate__Urls__0: http://aggregate:8080
+      Workers__Routing__Urls__0: http://routing:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ingest:
+        condition: service_started
+      aggregate:
+        condition: service_started
+      routing:
         condition: service_started
