@@ -85,7 +85,7 @@ services:
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       Valhalla__BaseUrl: http://valhalla:8002
       Osm__PbfPath: /data/map.osm.pbf
-      Osm__PbfUrl: ${OSM_PBF_URL}
+      Osm__PbfUrl: ${VALHALLA_TILE_URL}
     depends_on:
       pgbouncer:
         condition: service_started
