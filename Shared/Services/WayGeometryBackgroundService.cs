@@ -121,6 +121,7 @@ public class WayGeometryBackgroundService(
         }
 
         File.Move(tmp, path, overwrite: true);
+        await File.WriteAllTextAsync(MarkerPath, DateTime.UtcNow.ToString("O"), ct);
         sw.Stop();
         logger.LogInformation("PBF download complete: {Size:N0} MB in {Elapsed}", written / 1024 / 1024, sw.Elapsed);
     }
@@ -130,10 +131,44 @@ public class WayGeometryBackgroundService(
         logger.LogInformation("Starting OSM PBF geometry import from {Path}", PbfPath);
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        // ── Pass 1: index all nodes ───────────────────────────────────────────
-        logger.LogInformation("PBF pass 1: indexing nodes...");
-        var nodes    = new Dictionary<long, (float Lat, float Lon)>();
         var fileSize = new FileInfo(PbfPath).Length;
+
+        // ── Pass 1: collect node IDs referenced by ways ───────────────────────
+        // Only indexing nodes actually used by ways cuts memory dramatically
+        // (typically 20-40% of all nodes on regional extracts).
+        logger.LogInformation("PBF pass 1: collecting referenced node IDs...");
+        var neededNodeIds = new HashSet<long>();
+
+        await Task.Run(() =>
+        {
+            using var stream = File.OpenRead(PbfPath);
+            var source       = new PBFOsmStreamSource(stream);
+            var lastPct      = 0;
+
+            foreach (var element in source)
+            {
+                if (ct.IsCancellationRequested) break;
+                if (element.Type != OsmGeoType.Way) continue;
+                var way = (Way)element;
+                if (way.Nodes != null)
+                    foreach (var nodeId in way.Nodes)
+                        neededNodeIds.Add(nodeId);
+
+                var pct = (int)(stream.Position * 100 / fileSize);
+                if (pct >= lastPct + 10)
+                {
+                    lastPct = pct / 10 * 10;
+                    if (logger.IsEnabled(LogLevel.Information))
+                        logger.LogInformation("PBF pass 1: {Pct}% ({Count:N0} node IDs collected)", lastPct, neededNodeIds.Count);
+                }
+            }
+        }, ct);
+
+        logger.LogInformation("PBF pass 1 complete: {Count:N0} node IDs needed", neededNodeIds.Count);
+
+        // ── Pass 2: index only the needed nodes ───────────────────────────────
+        logger.LogInformation("PBF pass 2: indexing nodes...");
+        var nodes = new Dictionary<long, (float Lat, float Lon)>(neededNodeIds.Count);
 
         await Task.Run(() =>
         {
@@ -146,22 +181,27 @@ public class WayGeometryBackgroundService(
                 if (ct.IsCancellationRequested) break;
                 if (element.Type != OsmGeoType.Node) continue;
                 var n = (OsmSharp.Node)element;
-                if (n.Id.HasValue && n.Latitude.HasValue && n.Longitude.HasValue)
+                if (n.Id.HasValue && neededNodeIds.Contains(n.Id.Value) &&
+                    n.Latitude.HasValue && n.Longitude.HasValue)
                     nodes[n.Id.Value] = ((float)n.Latitude.Value, (float)n.Longitude.Value);
 
                 var pct = (int)(stream.Position * 100 / fileSize);
                 if (pct >= lastPct + 10)
                 {
                     lastPct = pct / 10 * 10;
-                    logger.LogInformation("PBF pass 1: {Pct}% ({Nodes:N0} nodes)", lastPct, nodes.Count);
+                    if (logger.IsEnabled(LogLevel.Information))
+                        logger.LogInformation("PBF pass 2: {Pct}% ({Nodes:N0} nodes indexed)", lastPct, nodes.Count);
                 }
             }
         }, ct);
 
-        logger.LogInformation("PBF pass 1 complete: {Count:N0} nodes indexed", nodes.Count);
+        // Free the ID set — no longer needed.
+        neededNodeIds.Clear();
 
-        // ── Pass 2: resolve ways (reader) + upsert (consumer) in parallel ─────
-        logger.LogInformation("PBF pass 2: resolving ways...");
+        logger.LogInformation("PBF pass 2 complete: {Count:N0} nodes indexed", nodes.Count);
+
+        // ── Pass 3: resolve ways (reader) + upsert (consumer) in parallel ─────
+        logger.LogInformation("PBF pass 3: resolving ways...");
 
         // Channel buffers up to 4 ready batches so the reader stays ahead of the DB writer.
         var channel = System.Threading.Channels.Channel.CreateBounded<List<WayGeometry>>(4);
@@ -193,7 +233,7 @@ public class WayGeometryBackgroundService(
                 if (ct.IsCancellationRequested) break;
                 if (element.Type != OsmGeoType.Way) continue;
 
-                var way = (OsmSharp.Way)element;
+                var way = (Way)element;
                 if (way.Id == null || way.Nodes == null || way.Nodes.Length < 2) continue;
 
                 var coords = new List<(float Lat, float Lon)>(way.Nodes.Length);
@@ -262,8 +302,6 @@ public class WayGeometryBackgroundService(
 
         sw.Stop();
         logger.LogInformation("PBF geometry import complete: {Total:N0} ways in {Elapsed}", total, sw.Elapsed);
-
-        await File.WriteAllTextAsync(MarkerPath, DateTime.UtcNow.ToString("O"), ct);
     }
 
     private static double? ParseMaxSpeed(string? raw)

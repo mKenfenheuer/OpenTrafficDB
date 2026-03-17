@@ -6,11 +6,36 @@
     "configurations": [
 
         {
-            "name": "C#: OpenTrafficDB Debug",
+            "name": "App",
             "type": "dotnet",
             "request": "launch",
             "projectPath": "${workspaceFolder}/App/OpenTrafficDB.App.csproj"
+        },
+        {
+            "name": "IngestWorker",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}/IngestWorker/OpenTrafficDB.IngestWorker.csproj"
+        },
+        {
+            "name": "RoutingWorker",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}/RoutingWorker/OpenTrafficDB.RoutingWorker.csproj"
+        },
+        {
+            "name": "AggregateWorker",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}/AggregateWorker/OpenTrafficDB.AggregateWorker.csproj"
         }
 
+    ],
+    "compounds": [
+        {
+            "name": "All Services",
+            "configurations": ["App", "IngestWorker", "RoutingWorker", "AggregateWorker"],
+            "stopAll": true
+        }
     ]
 }
