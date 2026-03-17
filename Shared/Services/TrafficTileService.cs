@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
+using NetTopologySuite.Geometries;
 using OpenTrafficDB.Shared.Data;
 
 namespace OpenTrafficDB.Shared.Services;
@@ -33,41 +34,43 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         // avoids passing a Geometry object as a parameter, which requires NTS type mapping
         // at the Npgsql data source level and fails with PgBouncer pooled connections.
         // The GIST index on BBox is still used by Postgres via the && operator.
-        var ways = await db.WayGeometries
-            .FromSqlInterpolated($"""
-                SELECT * FROM "WayGeometries"
-                WHERE "BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
+        var rows = await db.Database.SqlQuery<WayWithSummary>($"""
+                SELECT
+                    wg."OsmWayId",
+                    wg."Geometry",
+                    wg."MaxSpeedKmh",
+                    wss."FreeflowSpeed",
+                    wss."ConstrainedSpeed",
+                    wss."P50Speed",
+                    wss."P95Speed",
+                    wss."SpeedLimitKmh",
+                    wss."TotalSamples"
+                FROM "WayGeometries" wg
+                JOIN "WaySpeedSummaries" wss ON wss."OsmWayId" = wg."OsmWayId"
+                WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
                 """)
             .AsNoTracking()
             .ToListAsync(ct);
 
-        if (ways.Count == 0)
+        if (rows.Count == 0)
             return GzipCompress(MvtEncoder.Encode([new MvtLayer("traffic", [])]));
 
-        var wayIds = ways.Select(w => w.OsmWayId).ToList();
-        var summaries = await db.WaySpeedSummaries
-            .Where(s => wayIds.Contains(s.OsmWayId))
-            .AsNoTracking()
-            .ToDictionaryAsync(s => s.OsmWayId, ct);
+        var features = new List<MvtFeature>(rows.Count);
 
-        var features = new List<MvtFeature>(summaries.Count);
-
-        foreach (var way in ways)
+        foreach (var row in rows)
         {
-            if (!summaries.TryGetValue(way.OsmWayId, out var s)) continue;
-
-            if (way.Geometry == null) continue;
-            var pixels = way.Geometry.Coordinates
+            if (row.Geometry == null) continue;
+            var pixels = row.Geometry.Coordinates
                 .Select(c => TileMath.LatLonToPixel(c.Y, c.X, z, x, y))
                 .ToList();
 
             if (pixels.Count < 2) continue;
 
-            var speedKmh = s.ConstrainedSpeed ?? s.FreeflowSpeed;
-            var source   = s.ConstrainedSpeed.HasValue ? "live" : "historic";
+            var speedKmh = row.ConstrainedSpeed ?? row.FreeflowSpeed;
+            var source   = row.ConstrainedSpeed.HasValue ? "live" : "historic";
 
             double? delayFactor = null, jamEstimate = null;
-            var limit = s.SpeedLimitKmh ?? way.MaxSpeedKmh;
+            var limit = row.SpeedLimitKmh ?? row.MaxSpeedKmh;
             if (limit is > 0)
             {
                 var delay = Math.Clamp(1.0 - speedKmh / limit.Value, 0.0, 1.0);
@@ -77,13 +80,13 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
 
             var tags = new Dictionary<string, MvtValue>
             {
-                ["osm_way_id"]    = new MvtValue.Int64Value(way.OsmWayId),
+                ["osm_way_id"]    = new MvtValue.Int64Value(row.OsmWayId),
                 ["speed_kmh"]     = new MvtValue.DoubleValue(Math.Round(speedKmh, 1)),
-                ["freeflow_kmh"]  = new MvtValue.DoubleValue(s.FreeflowSpeed),
-                ["p50_kmh"]       = new MvtValue.DoubleValue(s.P50Speed),
-                ["p95_kmh"]       = new MvtValue.DoubleValue(s.P95Speed),
+                ["freeflow_kmh"]  = new MvtValue.DoubleValue(row.FreeflowSpeed),
+                ["p50_kmh"]       = new MvtValue.DoubleValue(row.P50Speed),
+                ["p95_kmh"]       = new MvtValue.DoubleValue(row.P95Speed),
                 ["source"]        = new MvtValue.StringValue(source),
-                ["total_samples"] = new MvtValue.Int64Value(s.TotalSamples),
+                ["total_samples"] = new MvtValue.Int64Value(row.TotalSamples),
             };
 
             if (limit.HasValue)          tags["speed_limit_kmh"] = new MvtValue.DoubleValue(limit.Value);
@@ -91,12 +94,27 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
             if (jamEstimate.HasValue)    tags["jam_estimate"]    = new MvtValue.DoubleValue(jamEstimate.Value);
 
             features.Add(new MvtFeature(
-                Id:       (ulong)Math.Abs(way.OsmWayId),
+                Id:       (ulong)Math.Abs(row.OsmWayId),
                 Geometry: pixels,
                 Tags:     tags));
         }
 
         return GzipCompress(MvtEncoder.Encode([new MvtLayer("traffic", features)]));
+    }
+
+    // Flat projection used by the single-query JOIN — avoids loading full entity graphs.
+    private sealed class WayWithSummary
+    {
+        public long     OsmWayId         { get; set; }
+        public Geometry? Geometry        { get; set; }
+        public double?  MaxSpeedKmh      { get; set; }
+        // WaySpeedSummary columns
+        public double   FreeflowSpeed    { get; set; }
+        public double?  ConstrainedSpeed { get; set; }
+        public double   P50Speed         { get; set; }
+        public double   P95Speed         { get; set; }
+        public double?  SpeedLimitKmh    { get; set; }
+        public int      TotalSamples     { get; set; }
     }
 
     private static byte[] GzipCompress(byte[] data)
