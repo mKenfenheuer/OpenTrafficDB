@@ -190,18 +190,24 @@ public class WayGeometryBackgroundService(
                 var maxspeedRaw = way.Tags != null && way.Tags.ContainsKey("maxspeed")
                     ? way.Tags["maxspeed"] : null;
 
+                // LineString coordinates: (lon, lat) = (x, y) per NTS convention
+                var lineCoords = coords
+                    .Select(c => new Coordinate(c.Lon, c.Lat))
+                    .ToArray();
+                var lineString = factory.CreateLineString(lineCoords);
+
                 batch.Add(new WayGeometry
                 {
-                    OsmWayId        = way.Id.Value,
-                    MinLat          = minLat,
-                    MinLon          = minLon,
-                    MaxLat          = maxLat,
-                    MaxLon          = maxLon,
-                    BBox            = bbox,
-                    EncodedPolyline = PolylineEncoder.Encode(coords.Select(c => ((double)c.Lat, (double)c.Lon))),
-                    MaxSpeedKmh     = ParseMaxSpeed(maxspeedRaw),
-                    NodeCount       = coords.Count,
-                    FetchedAt       = DateTime.UtcNow
+                    OsmWayId    = way.Id.Value,
+                    MinLat      = minLat,
+                    MinLon      = minLon,
+                    MaxLat      = maxLat,
+                    MaxLon      = maxLon,
+                    BBox        = bbox,
+                    Geometry    = lineString,
+                    MaxSpeedKmh = ParseMaxSpeed(maxspeedRaw),
+                    NodeCount   = coords.Count,
+                    FetchedAt   = DateTime.UtcNow
                 });
 
                 if (batch.Count >= UpsertBatchSize)
@@ -273,15 +279,15 @@ public class WayGeometryBackgroundService(
         {
             if (existing.TryGetValue(wg.OsmWayId, out var ex))
             {
-                ex.MinLat          = wg.MinLat;
-                ex.MinLon          = wg.MinLon;
-                ex.MaxLat          = wg.MaxLat;
-                ex.MaxLon          = wg.MaxLon;
-                ex.BBox            = wg.BBox;
-                ex.EncodedPolyline = wg.EncodedPolyline;
-                ex.MaxSpeedKmh     = wg.MaxSpeedKmh;
-                ex.NodeCount       = wg.NodeCount;
-                ex.FetchedAt       = wg.FetchedAt;
+                ex.MinLat      = wg.MinLat;
+                ex.MinLon      = wg.MinLon;
+                ex.MaxLat      = wg.MaxLat;
+                ex.MaxLon      = wg.MaxLon;
+                ex.BBox        = wg.BBox;
+                ex.Geometry    = wg.Geometry;
+                ex.MaxSpeedKmh = wg.MaxSpeedKmh;
+                ex.NodeCount   = wg.NodeCount;
+                ex.FetchedAt   = wg.FetchedAt;
             }
             else
             {

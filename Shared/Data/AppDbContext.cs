@@ -76,10 +76,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<WayGeometry>(e =>
         {
             e.HasIndex(g => g.OsmWayId).IsUnique();
-            // GIST index on BBox geometry — replaces the four-column B-tree index.
-            // Enables O(log n) ST_Intersects queries for tile bbox lookups.
             e.HasIndex(g => g.BBox).HasMethod("GIST");
             e.Property(g => g.BBox).HasColumnType("geometry(Polygon,4326)");
+            e.Property(g => g.Geometry).HasColumnType("geometry(LineString,4326)");
         });
 
         modelBuilder.Entity<WaySpeedSummary>(e =>

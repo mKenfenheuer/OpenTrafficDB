@@ -10,7 +10,8 @@ public class WayGeometry
     public double MinLon { get; set; }
     public double MaxLat { get; set; }
     public double MaxLon { get; set; }
-    public string EncodedPolyline { get; set; } = string.Empty;
+    /// <summary>Way geometry as a PostGIS LineString (SRID 4326, coordinates: lon/lat).</summary>
+    public Geometry? Geometry { get; set; }
     public double? MaxSpeedKmh { get; set; }
     public int NodeCount { get; set; }
     public DateTime FetchedAt { get; set; }

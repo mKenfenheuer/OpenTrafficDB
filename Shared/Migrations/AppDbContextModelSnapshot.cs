@@ -302,12 +302,11 @@ namespace OpenTrafficDB.Migrations
                     b.Property<Geometry>("BBox")
                         .HasColumnType("geometry(Polygon,4326)");
 
-                    b.Property<string>("EncodedPolyline")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.Property<DateTime>("FetchedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Geometry>("Geometry")
+                        .HasColumnType("geometry(LineString,4326)");
 
                     b.Property<double>("MaxLat")
                         .HasColumnType("double precision");

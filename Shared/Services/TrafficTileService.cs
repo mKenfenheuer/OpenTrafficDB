@@ -56,8 +56,9 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         {
             if (!summaries.TryGetValue(way.OsmWayId, out var s)) continue;
 
-            var pixels = PolylineEncoder.Decode(way.EncodedPolyline)
-                .Select(p => TileMath.LatLonToPixel(p.Lat, p.Lon, z, x, y))
+            if (way.Geometry == null) continue;
+            var pixels = way.Geometry.Coordinates
+                .Select(c => TileMath.LatLonToPixel(c.Y, c.X, z, x, y))
                 .ToList();
 
             if (pixels.Count < 2) continue;
