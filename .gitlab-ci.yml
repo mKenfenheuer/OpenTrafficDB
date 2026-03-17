@@ -1,5 +1,6 @@
 before_script:
   - export BRANCH_TAG=$(echo "$CI_COMMIT_REF_NAME" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+  - export IS_MAIN=$([[ "$CI_COMMIT_REF_NAME" == "main" ]] && echo "true" || echo "false")
 
 stages:
   - build
@@ -20,6 +21,7 @@ build_app:
     - docker image tag app-image $CI_REGISTRY_IMAGE/app:$BRANCH_TAG
     - docker image push $CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHORT_SHA
     - docker image push $CI_REGISTRY_IMAGE/app:$BRANCH_TAG
+    - if [ "$IS_MAIN" = "true" ]; then docker image tag app-image $CI_REGISTRY_IMAGE/app:latest && docker image push $CI_REGISTRY_IMAGE/app:latest; fi
     - docker image prune -f
 
 # ── IngestWorker ─────────────────────────────────────────────────────────────
@@ -37,6 +39,7 @@ build_ingest:
     - docker image tag ingest-image $CI_REGISTRY_IMAGE/ingest:$BRANCH_TAG
     - docker image push $CI_REGISTRY_IMAGE/ingest:$CI_COMMIT_SHORT_SHA
     - docker image push $CI_REGISTRY_IMAGE/ingest:$BRANCH_TAG
+    - if [ "$IS_MAIN" = "true" ]; then docker image tag ingest-image $CI_REGISTRY_IMAGE/ingest:latest && docker image push $CI_REGISTRY_IMAGE/ingest:latest; fi
     - docker image prune -f
 
 # ── AggregateWorker ──────────────────────────────────────────────────────────
@@ -54,6 +57,7 @@ build_aggregate:
     - docker image tag aggregate-image $CI_REGISTRY_IMAGE/aggregate:$BRANCH_TAG
     - docker image push $CI_REGISTRY_IMAGE/aggregate:$CI_COMMIT_SHORT_SHA
     - docker image push $CI_REGISTRY_IMAGE/aggregate:$BRANCH_TAG
+    - if [ "$IS_MAIN" = "true" ]; then docker image tag aggregate-image $CI_REGISTRY_IMAGE/aggregate:latest && docker image push $CI_REGISTRY_IMAGE/aggregate:latest; fi
     - docker image prune -f
 
 # ── RoutingWorker ─────────────────────────────────────────────────────────────
@@ -71,6 +75,7 @@ build_routing:
     - docker image tag routing-image $CI_REGISTRY_IMAGE/routing:$BRANCH_TAG
     - docker image push $CI_REGISTRY_IMAGE/routing:$CI_COMMIT_SHORT_SHA
     - docker image push $CI_REGISTRY_IMAGE/routing:$BRANCH_TAG
+    - if [ "$IS_MAIN" = "true" ]; then docker image tag routing-image $CI_REGISTRY_IMAGE/routing:latest && docker image push $CI_REGISTRY_IMAGE/routing:latest; fi
     - docker image prune -f
 
 # ── Production deployment ─────────────────────────────────────────────────────
