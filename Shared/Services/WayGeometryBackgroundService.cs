@@ -24,6 +24,20 @@ public class WayGeometryBackgroundService(
     private static readonly TimeSpan _reimportInterval = TimeSpan.FromDays(30);
     private const int UpsertBatchSize = 5_000;
 
+    // OSM highway values to import. Covers motorways, Bundesstraßen (primary),
+    // Landstraßen (secondary), main city roads (tertiary), and residential streets.
+    // Excludes footways, cycleways, paths, and service roads.
+    private static readonly HashSet<string> RelevantHighwayTypes =
+    [
+        "motorway", "motorway_link",
+        "trunk",    "trunk_link",
+        "primary",  "primary_link",
+        "secondary","secondary_link",
+        "tertiary", "tertiary_link",
+        "unclassified",
+        "residential",
+    ];
+
     private string PbfPath   => config["Osm:PbfPath"] ?? "/data/map.osm.pbf";
     private string? PbfUrl   => config["Osm:PbfUrl"];
 
@@ -150,9 +164,9 @@ public class WayGeometryBackgroundService(
                 if (ct.IsCancellationRequested) break;
                 if (element.Type != OsmGeoType.Way) continue;
                 var way = (Way)element;
-                if (way.Nodes != null)
-                    foreach (var nodeId in way.Nodes)
-                        neededNodeIds.Add(nodeId);
+                if (way.Nodes == null || way.Tags == null || !RelevantHighwayTypes.Contains(way.Tags?["highway"] ?? "")) continue;
+                foreach (var nodeId in way.Nodes)
+                    neededNodeIds.Add(nodeId);
 
                 var pct = (int)(stream.Position * 100 / fileSize);
                 if (pct >= lastPct + 10)
@@ -235,6 +249,7 @@ public class WayGeometryBackgroundService(
 
                 var way = (Way)element;
                 if (way.Id == null || way.Nodes == null || way.Nodes.Length < 2) continue;
+                if (way.Tags == null || !RelevantHighwayTypes.Contains(way.Tags?["highway"] ?? "")) continue;
 
                 var coords = new List<(float Lat, float Lon)>(way.Nodes.Length);
                 foreach (var nodeId in way.Nodes)
