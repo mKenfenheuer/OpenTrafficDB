@@ -96,8 +96,10 @@ public class WayGeometryBackgroundService(
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
 
-        var total   = response.Content.Headers.ContentLength;
-        var written = 0L;
+        var total      = response.Content.Headers.ContentLength;
+        var written    = 0L;
+        var lastLogMb  = 0L;
+        const long logEveryMb = 50;
 
         await using (var src  = await response.Content.ReadAsStreamAsync(ct))
         await using (var dest = File.Create(tmp))
@@ -108,9 +110,13 @@ public class WayGeometryBackgroundService(
             {
                 await dest.WriteAsync(buf.AsMemory(0, read), ct);
                 written += read;
-                if (total.HasValue && written % (50 * 1024 * 1024) < buf.Length)
+                var currentMb = written / 1024 / 1024;
+                if (total.HasValue && currentMb >= lastLogMb + logEveryMb)
+                {
+                    lastLogMb = currentMb / logEveryMb * logEveryMb;
                     logger.LogInformation("PBF download: {Done:N0} / {Total:N0} MB",
-                        written / 1024 / 1024, total.Value / 1024 / 1024);
+                        currentMb, total.Value / 1024 / 1024);
+                }
             }
         }
 
@@ -126,12 +132,15 @@ public class WayGeometryBackgroundService(
 
         // ── Pass 1: index all nodes ───────────────────────────────────────────
         logger.LogInformation("PBF pass 1: indexing nodes...");
-        var nodes = new Dictionary<long, (float Lat, float Lon)>();
+        var nodes    = new Dictionary<long, (float Lat, float Lon)>();
+        var fileSize = new FileInfo(PbfPath).Length;
 
         await Task.Run(() =>
         {
             using var stream = File.OpenRead(PbfPath);
-            var source = new PBFOsmStreamSource(stream);
+            var source       = new PBFOsmStreamSource(stream);
+            var lastPct      = 0;
+
             foreach (var element in source)
             {
                 if (ct.IsCancellationRequested) break;
@@ -139,20 +148,43 @@ public class WayGeometryBackgroundService(
                 var n = (OsmSharp.Node)element;
                 if (n.Id.HasValue && n.Latitude.HasValue && n.Longitude.HasValue)
                     nodes[n.Id.Value] = ((float)n.Latitude.Value, (float)n.Longitude.Value);
+
+                var pct = (int)(stream.Position * 100 / fileSize);
+                if (pct >= lastPct + 10)
+                {
+                    lastPct = pct / 10 * 10;
+                    logger.LogInformation("PBF pass 1: {Pct}% ({Nodes:N0} nodes)", lastPct, nodes.Count);
+                }
             }
         }, ct);
 
         logger.LogInformation("PBF pass 1 complete: {Count:N0} nodes indexed", nodes.Count);
 
-        // ── Pass 2: resolve ways and upsert in batches ────────────────────────
+        // ── Pass 2: resolve ways (reader) + upsert (consumer) in parallel ─────
         logger.LogInformation("PBF pass 2: resolving ways...");
 
-        var factory = new GeometryFactory(new PrecisionModel(), 4326);
-        var batch   = new List<WayGeometry>(UpsertBatchSize);
-        int total   = 0;
+        // Channel buffers up to 4 ready batches so the reader stays ahead of the DB writer.
+        var channel = System.Threading.Channels.Channel.CreateBounded<List<WayGeometry>>(4);
+        var total   = 0;
 
+        // Consumer: upserts batches from the channel as fast as the DB can accept them.
+        var consumer = Task.Run(async () =>
+        {
+            await foreach (var batch in channel.Reader.ReadAllAsync(ct))
+            {
+                await UpsertBatchAsync(batch, ct);
+                total += batch.Count;
+                logger.LogInformation("PBF import progress: {Total:N0} ways upserted", total);
+            }
+        }, ct);
+
+        // Producer: reads PBF, resolves coordinates, writes complete batches to channel.
         await Task.Run(async () =>
         {
+            var factory  = new GeometryFactory(new PrecisionModel(), 4326);
+            var batch    = new List<WayGeometry>(UpsertBatchSize);
+            var lastPct  = 0;
+
             using var stream = File.OpenRead(PbfPath);
             var source = new PBFOsmStreamSource(stream);
 
@@ -164,7 +196,6 @@ public class WayGeometryBackgroundService(
                 var way = (OsmSharp.Way)element;
                 if (way.Id == null || way.Nodes == null || way.Nodes.Length < 2) continue;
 
-                // Resolve node coordinates
                 var coords = new List<(float Lat, float Lon)>(way.Nodes.Length);
                 foreach (var nodeId in way.Nodes)
                 {
@@ -190,11 +221,8 @@ public class WayGeometryBackgroundService(
                 var maxspeedRaw = way.Tags != null && way.Tags.ContainsKey("maxspeed")
                     ? way.Tags["maxspeed"] : null;
 
-                // LineString coordinates: (lon, lat) = (x, y) per NTS convention
-                var lineCoords = coords
-                    .Select(c => new Coordinate(c.Lon, c.Lat))
-                    .ToArray();
-                var lineString = factory.CreateLineString(lineCoords);
+                var lineString = factory.CreateLineString(
+                    coords.Select(c => new Coordinate(c.Lon, c.Lat)).ToArray());
 
                 batch.Add(new WayGeometry
                 {
@@ -212,24 +240,29 @@ public class WayGeometryBackgroundService(
 
                 if (batch.Count >= UpsertBatchSize)
                 {
-                    await UpsertBatchAsync(batch, ct);
-                    total += batch.Count;
-                    logger.LogInformation("PBF import progress: {Total:N0} ways upserted", total);
-                    batch.Clear();
+                    await channel.Writer.WriteAsync(batch, ct);
+                    batch = new List<WayGeometry>(UpsertBatchSize);
+                }
+
+                var pct = (int)(stream.Position * 100 / fileSize);
+                if (pct >= lastPct + 10)
+                {
+                    lastPct = pct / 10 * 10;
+                    logger.LogInformation("PBF pass 2: {Pct}%", lastPct);
                 }
             }
 
             if (batch.Count > 0)
-            {
-                await UpsertBatchAsync(batch, ct);
-                total += batch.Count;
-            }
+                await channel.Writer.WriteAsync(batch, ct);
+
+            channel.Writer.Complete();
         }, ct);
+
+        await consumer;
 
         sw.Stop();
         logger.LogInformation("PBF geometry import complete: {Total:N0} ways in {Elapsed}", total, sw.Elapsed);
 
-        // Write marker so we don't re-import until next cycle.
         await File.WriteAllTextAsync(MarkerPath, DateTime.UtcNow.ToString("O"), ct);
     }
 
