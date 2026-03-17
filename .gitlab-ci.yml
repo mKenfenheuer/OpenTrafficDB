@@ -60,6 +60,24 @@ build_aggregate:
     - if [ "$IS_MAIN" = "true" ]; then docker image tag aggregate-image $CI_REGISTRY_IMAGE/aggregate:latest && docker image push $CI_REGISTRY_IMAGE/aggregate:latest; fi
     - docker image prune -f
 
+# ── OsmWayImporter ───────────────────────────────────────────────────────────
+build_osm_importer:
+  stage: build
+  tags: [docker, build, linux, shell]
+  rules:
+    - changes:
+        - OsmWayImporter/**/*
+        - Shared/**/*
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -f OsmWayImporter/Dockerfile -t osm-importer-image .
+    - docker image tag osm-importer-image $CI_REGISTRY_IMAGE/osm-importer:$CI_COMMIT_SHORT_SHA
+    - docker image tag osm-importer-image $CI_REGISTRY_IMAGE/osm-importer:$BRANCH_TAG
+    - docker image push $CI_REGISTRY_IMAGE/osm-importer:$CI_COMMIT_SHORT_SHA
+    - docker image push $CI_REGISTRY_IMAGE/osm-importer:$BRANCH_TAG
+    - if [ "$IS_MAIN" = "true" ]; then docker image tag osm-importer-image $CI_REGISTRY_IMAGE/osm-importer:latest && docker image push $CI_REGISTRY_IMAGE/osm-importer:latest; fi
+    - docker image prune -f
+
 # ── RoutingWorker ─────────────────────────────────────────────────────────────
 build_routing:
   stage: build
@@ -90,6 +108,8 @@ deploy_production:
       optional: true
     - job: build_routing
       optional: true
+    - job: build_osm_importer
+      optional: true
   allow_failure: false
   rules:
     - if: $CI_COMMIT_REF_NAME == "main"
@@ -98,6 +118,7 @@ deploy_production:
         - IngestWorker/**/*
         - AggregateWorker/**/*
         - RoutingWorker/**/*
+        - OsmWayImporter/**/*
         - Shared/**/*
         - docker-compose.yml
         - .gitlab-ci.yml
@@ -106,11 +127,12 @@ deploy_production:
     name: prod
   tags: [docker, linux, no-gpu]
   script:
-    - mkdir -p /mnt/opentraffic/valhalla /mnt/opentraffic/postgres /mnt/opentraffic/osm
+    - mkdir -p /mnt/opentraffic/valhalla /mnt/opentraffic/postgres /mnt/opentraffic/osm /mnt/opentraffic/redis
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - export APP_IMAGE=$CI_REGISTRY_IMAGE/app:latest
     - export INGEST_IMAGE=$CI_REGISTRY_IMAGE/ingest:latest
     - export AGGREGATE_IMAGE=$CI_REGISTRY_IMAGE/aggregate:latest
     - export ROUTING_IMAGE=$CI_REGISTRY_IMAGE/routing:latest
+    - export OSM_IMPORTER_IMAGE=$CI_REGISTRY_IMAGE/osm-importer:latest
     - docker compose pull --ignore-pull-failures
     - docker compose up -d

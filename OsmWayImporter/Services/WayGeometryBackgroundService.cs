@@ -5,7 +5,7 @@ using OsmSharp.Streams;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Models;
 
-namespace OpenTrafficDB.AggregateWorker.Services;
+namespace OpenTrafficDB.OsmWayImporter.Services;
 
 /// <summary>
 /// Downloads the configured OSM PBF file and imports way geometries into the

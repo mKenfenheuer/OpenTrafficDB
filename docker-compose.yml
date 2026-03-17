@@ -74,8 +74,6 @@ services:
   aggregate:
     image: ${AGGREGATE_IMAGE:-registry.gitlab.com/opentrafficdb/aggregate:latest}
     restart: unless-stopped
-    volumes:
-      - /mnt/opentraffic/osm:/data
     environment:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
@@ -84,8 +82,6 @@ services:
       Jwt__Key: ${JWT_KEY}
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       Valhalla__BaseUrl: http://valhalla:8002
-      Osm__PbfPath: /data/map.osm.pbf
-      Osm__PbfUrl: ${VALHALLA_TILE_URL}
     depends_on:
       pgbouncer:
         condition: service_started
@@ -94,7 +90,56 @@ services:
       valhalla:
         condition: service_started
 
+  aggregate-2:
+    image: ${AGGREGATE_IMAGE:-registry.gitlab.com/opentrafficdb/aggregate:latest}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
+      ConnectionStrings__ReadConnection: "Host=${READ_DB_HOST:-pgbouncer};Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD}"
+      Jwt__Key: ${JWT_KEY}
+      Security__IpHashPepper: ${IP_HASH_PEPPER}
+      Valhalla__BaseUrl: http://valhalla:8002
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      valhalla:
+        condition: service_started
+
+  osm-importer:
+    image: ${OSM_IMPORTER_IMAGE:-registry.gitlab.com/opentrafficdb/osm-importer:latest}
+    restart: unless-stopped
+    volumes:
+      - /mnt/opentraffic/osm:/data
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=5;No Reset On Close=true"
+      Osm__PbfPath: /data/map.osm.pbf
+      Osm__PbfUrl: ${VALHALLA_TILE_URL}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+
   routing:
+    image: ${ROUTING_IMAGE:-registry.gitlab.com/opentrafficdb/routing:latest}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
+      ConnectionStrings__ReadConnection: "Host=${READ_DB_HOST:-pgbouncer};Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
+      Jwt__Key: ${JWT_KEY}
+      Security__IpHashPepper: ${IP_HASH_PEPPER}
+      Valhalla__BaseUrl: http://valhalla:8002
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      valhalla:
+        condition: service_started
+
+  routing-2:
     image: ${ROUTING_IMAGE:-registry.gitlab.com/opentrafficdb/routing:latest}
     restart: unless-stopped
     environment:
@@ -130,7 +175,9 @@ services:
       Email__FromName: ${SMTP_FROM_NAME:-OpenTrafficDB}
       Workers__Ingest__Urls__0: http://ingest:8080
       Workers__Aggregate__Urls__0: http://aggregate:8080
+      Workers__Aggregate__Urls__1: http://aggregate-2:8080
       Workers__Routing__Urls__0: http://routing:8080
+      Workers__Routing__Urls__1: http://routing-2:8080
     depends_on:
       pgbouncer:
         condition: service_started
@@ -140,4 +187,3 @@ services:
         condition: service_started
       routing:
         condition: service_started
-
