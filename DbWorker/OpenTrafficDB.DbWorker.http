@@ -1,0 +1,6 @@
+@OpenTrafficDB.DbWorker_HostAddress = http://localhost:5001
+
+GET {{OpenTrafficDB.DbWorker_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

@@ -1,0 +1,6 @@
+@OpenTrafficDB.RoutingWorker_HostAddress = http://localhost:5085
+
+GET {{OpenTrafficDB.RoutingWorker_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
