@@ -1,6 +1,6 @@
 using OpenTrafficDB.Shared.Data;
 
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDB.AggregateWorker.Services;
 
 /// <summary>
 /// Background service that runs every 5 minutes:

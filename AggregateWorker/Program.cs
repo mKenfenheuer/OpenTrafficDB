@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using OpenTrafficDB.Shared.Data;
+using OpenTrafficDB.AggregateWorker.Services;
 using OpenTrafficDB.Shared.Services;
 
 JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();

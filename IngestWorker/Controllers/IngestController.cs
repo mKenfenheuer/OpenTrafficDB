@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Models;
 using OpenTrafficDB.Shared.Models.DTOs;
+using OpenTrafficDB.IngestWorker.Services;
 using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.IngestWorker.Controllers;

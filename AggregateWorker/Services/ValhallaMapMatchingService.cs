@@ -6,8 +6,9 @@ using H3.Model;
 using Microsoft.EntityFrameworkCore;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Models;
+using OpenTrafficDB.Shared.Services;
 
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDB.AggregateWorker.Services;
 
 /// <summary>
 /// Performs server-side map matching of GPS observations to OSM road segments

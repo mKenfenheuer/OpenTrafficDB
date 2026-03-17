@@ -6,8 +6,9 @@ using Microsoft.EntityFrameworkCore;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Models;
 using OpenTrafficDB.Shared.Models.DTOs;
+using OpenTrafficDB.Shared.Services;
 
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDB.RoutingWorker.Services;
 
 /// <summary>
 /// Proxies Valhalla /route requests and enriches the response with
@@ -310,7 +311,7 @@ public class ValhallaRoutingService(
                 else if (s.P50Speed < s.FreeflowSpeed)
                 {
                     live    = s.P50Speed;
-                    hasData = true;                    
+                    hasData = true;
                 }
                 else
                 {
@@ -538,7 +539,7 @@ public class ValhallaRoutingService(
         try
         {
             using var response = await client.PostAsync($"{_valhallaBaseUrl}/route", body, ct);
-            if (!response.IsSuccessStatusCode) 
+            if (!response.IsSuccessStatusCode)
             {
                 string data = await response.Content.ReadAsStringAsync();
                 return [];

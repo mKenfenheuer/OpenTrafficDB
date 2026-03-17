@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OpenTrafficDB.Shared.Models.DTOs;
-using OpenTrafficDB.Shared.Services;
+using OpenTrafficDB.AggregateWorker.Services;
 
 namespace OpenTrafficDB.AggregateWorker.Controllers;
 

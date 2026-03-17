@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using OpenTrafficDB.Shared.Services;
+using OpenTrafficDB.AggregateWorker.Services;
 
 namespace OpenTrafficDB.AggregateWorker.Controllers;
 

@@ -3,8 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Models;
 using OpenTrafficDB.Shared.Models.DTOs;
+using OpenTrafficDB.Shared.Services;
 
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDB.AggregateWorker.Services;
 
 public class TrafficAggregationService(AppDbContext db)
 {
