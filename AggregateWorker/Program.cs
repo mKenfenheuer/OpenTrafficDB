@@ -29,7 +29,6 @@ builder.Services.AddDbContext<ReadOnlyAppDbContext>(options =>
 builder.Services.AddScoped<TrafficAggregationService>();
 builder.Services.AddScoped<ValhallaMapMatchingService>();
 builder.Services.AddScoped<TrafficTileService>();
-builder.Services.AddScoped<WayGeometryService>();
 builder.Services.AddHostedService<AggregationBackgroundService>();
 builder.Services.AddHostedService<WayGeometryBackgroundService>();
 builder.Services.AddTransient<RateLimitRetryHandler>();
@@ -39,11 +38,11 @@ builder.Services.AddHttpClient("valhalla", client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 }).AddHttpMessageHandler<RateLimitRetryHandler>();
 
-builder.Services.AddHttpClient("overpass", client =>
+builder.Services.AddHttpClient("pbf", client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(60);
+    client.Timeout = Timeout.InfiniteTimeSpan;
     client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenTrafficDB/1.0");
-}).AddHttpMessageHandler<RateLimitRetryHandler>();
+});
 
 // ── Internal JWT Authentication ───────────────────────────────────────────────
 var jwtKey = builder.Configuration["Jwt:Key"]

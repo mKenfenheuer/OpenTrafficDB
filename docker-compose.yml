@@ -58,15 +58,6 @@ services:
       timeout: 3s
       retries: 10
 
-  overpass:
-    image: wiktorn/overpass-api
-    restart: unless-stopped
-    environment:
-      OVERPASS_META: "no"
-      OVERPASS_MODE: clone
-      OVERPASS_DIFF_URL: https://planet.openstreetmap.org/replication/minute/
-    volumes:
-      - /mnt/opentraffic/overpass:/db
 
   ingest:
     image: ${INGEST_IMAGE:-registry.gitlab.com/opentrafficdb/ingest:latest}
@@ -83,6 +74,8 @@ services:
   aggregate:
     image: ${AGGREGATE_IMAGE:-registry.gitlab.com/opentrafficdb/aggregate:latest}
     restart: unless-stopped
+    volumes:
+      - /mnt/opentraffic/osm:/data
     environment:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
@@ -91,7 +84,8 @@ services:
       Jwt__Key: ${JWT_KEY}
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       Valhalla__BaseUrl: http://valhalla:8002
-      Overpass__BaseUrl: http://overpass:80
+      Osm__PbfPath: /data/map.osm.pbf
+      Osm__PbfUrl: ${OSM_PBF_URL}
     depends_on:
       pgbouncer:
         condition: service_started
@@ -146,3 +140,4 @@ services:
         condition: service_started
       routing:
         condition: service_started
+

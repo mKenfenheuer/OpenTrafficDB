@@ -106,7 +106,7 @@ deploy_production:
     name: prod
   tags: [docker, linux, no-gpu]
   script:
-    - mkdir -p /mnt/opentraffic/valhalla /mnt/opentraffic/postgres /mnt/opentraffic/overpass
+    - mkdir -p /mnt/opentraffic/valhalla /mnt/opentraffic/postgres /mnt/opentraffic/osm
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - export APP_IMAGE=$CI_REGISTRY_IMAGE/app:latest
     - export INGEST_IMAGE=$CI_REGISTRY_IMAGE/ingest:latest
