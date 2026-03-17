@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using OpenTrafficDB.Shared.Services;
 
@@ -9,8 +10,56 @@ namespace OpenTrafficDB.App.Controllers;
 /// </summary>
 [ApiController]
 [Route("tiles")]
-public class TileController(WorkerClient workers) : ControllerBase
+[EnableCors("Tiles")]
+public class TileController(WorkerClient workers, IConfiguration config) : ControllerBase
 {
+    /// <summary>
+    /// TileJSON 3.0 metadata for the current traffic overlay.
+    /// Compatible with MapLibre GL, Maputnik, and any TileJSON-aware client.
+    /// </summary>
+    [HttpGet("traffic/current.json")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetTileJson()
+    {
+        var baseUrl = config["BaseUrl"]?.TrimEnd('/') ?? $"{Request.Scheme}://{Request.Host}";
+        return Ok(new
+        {
+            tilejson    = "3.0.0",
+            name        = "OpenTrafficDB — Current Traffic",
+            description = "Live and historic traffic speeds map-matched to OpenStreetMap way geometries.",
+            version     = "1.0.0",
+            attribution = "© OpenTrafficDB contributors, © OpenStreetMap contributors",
+            scheme      = "xyz",
+            tiles       = new[] { $"{baseUrl}/tiles/traffic/current/{{z}}/{{x}}/{{y}}" },
+            minzoom     = 6,
+            maxzoom     = 16,
+            bounds      = new[] { -180.0, -85.0511, 180.0, 85.0511 },
+            vector_layers = new[]
+            {
+                new
+                {
+                    id          = "traffic",
+                    description = "Road segments with speed and congestion data.",
+                    minzoom     = 6,
+                    maxzoom     = 16,
+                    fields      = new Dictionary<string, string>
+                    {
+                        ["osm_way_id"]    = "OSM way ID",
+                        ["speed_kmh"]     = "Current speed in km/h",
+                        ["freeflow_kmh"]  = "Historic free-flow speed in km/h",
+                        ["p50_kmh"]       = "Median observed speed in km/h",
+                        ["p95_kmh"]       = "95th-percentile speed in km/h",
+                        ["speed_limit_kmh"] = "Speed limit in km/h (when available)",
+                        ["delay_factor"]  = "Delay ratio 0–1 (0 = free flow, 1 = standstill)",
+                        ["jam_estimate"]  = "Congestion estimate 0–1",
+                        ["source"]        = "live | historic",
+                        ["total_samples"] = "Number of observations used",
+                    }
+                }
+            }
+        });
+    }
+
     /// <summary>
     /// Current traffic overlay tile in Mapbox Vector Tile format (gzip-compressed protobuf).
     /// </summary>

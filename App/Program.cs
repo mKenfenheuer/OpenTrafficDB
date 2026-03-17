@@ -132,7 +132,10 @@ public class Program
 
         // ── CORS ────────────────────────────────────────────────────────────────
         builder.Services.AddCors(options =>
-            options.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+        {
+            options.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+            options.AddPolicy("Tiles", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+        });
 
         var app = builder.Build();
 
