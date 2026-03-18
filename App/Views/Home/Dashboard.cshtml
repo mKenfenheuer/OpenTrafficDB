@@ -17,33 +17,6 @@
         </div>
     </div>
 
-    <!-- Global stats -->
-    <div class="section">
-        <div class="section-title">Platform Statistics</div>
-        <div class="stats-grid" id="global-stats">
-            <div class="stat-card">
-                <div class="stat-label">Total Observations</div>
-                <div class="stat-value accent" id="gs-total">—</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Last 24 h</div>
-                <div class="stat-value success" id="gs-24h">—</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Active Users</div>
-                <div class="stat-value" id="gs-users">—</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Contributors</div>
-                <div class="stat-value contributor" id="gs-contributors">—</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Aggregated Ways</div>
-                <div class="stat-value" id="gs-ways">—</div>
-            </div>
-        </div>
-    </div>
-
     <div class="dash-grid">
         <!-- Left column: personal stats -->
         <div>
@@ -154,17 +127,6 @@
             document.getElementById('rank-remaining').textContent = session.contributionsToNextRank;
         } else {
             document.getElementById('rank-achieved').classList.remove('hidden');
-        }
-
-        // ── Global stats ─────────────────────────────────────────────────────────
-        const statsRes = await web('GET', '/stats');
-        if (statsRes?.ok) {
-            const s = statsRes.data;
-            document.getElementById('gs-total').textContent = s.totalObservations.toLocaleString();
-            document.getElementById('gs-24h').textContent = s.observationsLast24h.toLocaleString();
-            document.getElementById('gs-users').textContent = s.totalUsers.toLocaleString();
-            document.getElementById('gs-contributors').textContent = s.contributorCount.toLocaleString();
-            document.getElementById('gs-ways').textContent = s.aggregatedWays.toLocaleString();
         }
     </script>
 }

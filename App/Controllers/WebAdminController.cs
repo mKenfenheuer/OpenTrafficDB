@@ -29,55 +29,6 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     [ProducesResponseType(typeof(WorkerServiceInfo[]), StatusCodes.Status200OK)]
     public IActionResult GetWorkers() => Ok(workerHealth.GetAllStatuses());
 
-    // ── Stats ─────────────────────────────────────────────────────────────────
-
-    /// <summary>Get service-wide statistics.</summary>
-    [HttpGet("stats")]
-    [ProducesResponseType(typeof(AdminStatsResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetStats(CancellationToken ct)
-    {
-        // Use raw ADO.NET to avoid EF's subquery wrapper (which blocks planner optimisations).
-        // TotalObservations reads pg_class.reltuples — instant estimate, updated by autovacuum.
-        // COUNT(*) on millions of rows would take 30-60 s due to PostgreSQL MVCC.
-        const string sql = """
-            SELECT
-                (SELECT reltuples::bigint FROM pg_class WHERE relname = 'SpeedObservations'),
-                (SELECT COUNT(*) FROM "SpeedObservations" WHERE "CreatedAt" >= NOW() - INTERVAL '24 hours'),
-                (SELECT COUNT(*) FROM "Users"),
-                (SELECT COUNT(*) FROM "Users" WHERE "IsActive" = true AND "Role" = 'User'),
-                (SELECT COUNT(*) FROM "Users" WHERE "IsActive" = true AND "Role" = 'Contributor'),
-                (SELECT COUNT(*) FROM "Users" WHERE "IsActive" = true AND "Role" = 'Admin'),
-                (SELECT COUNT(*) FROM "ApiKeys" WHERE "IsActive" = true),
-                (SELECT COUNT(DISTINCT "OsmWayId") FROM "WaySpeedAggregates"),
-                (SELECT COUNT(*) FROM "BlockedIps" WHERE "ExpiresAt" IS NULL OR "ExpiresAt" > NOW())
-            """;
-
-        var conn = db.Database.GetDbConnection();
-        if (conn.State != ConnectionState.Open)
-            await conn.OpenAsync(ct);
-
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        await reader.ReadAsync(ct);
-
-        var result = new AdminStatsResponse
-        {
-            TotalObservations    = reader.GetInt64(0),
-            ObservationsLast24h  = reader.GetInt64(1),
-            TotalUsers           = (int)reader.GetInt64(2),
-            UserCount            = (int)reader.GetInt64(3),
-            ContributorCount     = (int)reader.GetInt64(4),
-            AdminCount           = (int)reader.GetInt64(5),
-            ActiveApiKeys        = (int)reader.GetInt64(6),
-            AggregatedWays       = (int)reader.GetInt64(7),
-            BlockedIps           = (int)reader.GetInt64(8),
-        };
-
-        return Ok(result);
-    }
-
     // ── Users ─────────────────────────────────────────────────────────────────
 
     /// <summary>List all user accounts.</summary>

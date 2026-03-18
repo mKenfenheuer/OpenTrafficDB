@@ -36,45 +36,33 @@ public class TrafficAggregationService(AppDbContext db)
     /// Returns the number of observations processed.
     /// </summary>
     public async Task<AggregateJobResult> ReaggregateRangeAsync(
-        string[] tripIds, CancellationToken ct = default)
+        long[] wayIds, CancellationToken ct = default)
     {
-        // Collect affected way IDs before marking rows aggregated.
-        var affectedWayIds = await db.SpeedObservations
-            .Where(o => !o.IsAggregated && o.OsmWayId != null && tripIds.Contains(o.TripId))
-            .Select(o => o.OsmWayId!.Value)
-            .Distinct()
-            .ToListAsync(ct);
+        if (wayIds.Length == 0) return new AggregateJobResult(0);
 
-        if (affectedWayIds.Count == 0) return new AggregateJobResult(0);
-
-        // Upsert way-level aggregates entirely in SQL — no rows loaded into .NET.
-        // ORDER BY in the subquery ensures all concurrent transactions acquire index locks
-        // in consistent key order, preventing deadlocks on WaySpeedAggregates.
+        // Chunks are partitioned by way ID at the coordinator, so no two concurrent jobs
+        // share a way — no deadlocks possible on WaySpeedAggregates.
         await db.Database.ExecuteSqlAsync($"""
             INSERT INTO "WaySpeedAggregates"
                 ("OsmWayId", "DayOfWeek", "FiveMinuteBucket",
                  "SumSpeedKmh", "SampleCount", "SpeedLimitKmh", "LastUpdated", "FirstSeenAt")
-            SELECT way_id, dow, bucket, sum_speed, sample_count, speed_limit, NOW(), NOW()
-            FROM (
-                SELECT
-                    "OsmWayId"                                                        AS way_id,
-                    EXTRACT(DOW FROM "Timestamp")::int                                AS dow,
-                    (EXTRACT(HOUR FROM "Timestamp")::int * 60
-                        + EXTRACT(MINUTE FROM "Timestamp")::int) / 5                 AS bucket,
-                    SUM("SpeedMs" * 3.6)                                              AS sum_speed,
-                    COUNT(*)::int                                                     AS sample_count,
-                    MAX("SpeedLimitKmh")                                              AS speed_limit
-                FROM "SpeedObservations"
-                WHERE NOT "IsAggregated"
-                  AND "OsmWayId" IS NOT NULL
-                  AND "TripId"   = ANY({tripIds})
-                GROUP BY
-                    "OsmWayId",
-                    EXTRACT(DOW FROM "Timestamp"),
-                    (EXTRACT(HOUR FROM "Timestamp")::int * 60
-                        + EXTRACT(MINUTE FROM "Timestamp")::int) / 5
-                ORDER BY way_id, dow, bucket
-            ) agg
+            SELECT
+                "OsmWayId",
+                EXTRACT(DOW FROM "Timestamp")::int,
+                (EXTRACT(HOUR FROM "Timestamp")::int * 60
+                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5,
+                SUM("SpeedMs" * 3.6),
+                COUNT(*)::int,
+                MAX("SpeedLimitKmh"),
+                NOW(), NOW()
+            FROM "SpeedObservations"
+            WHERE NOT "IsAggregated"
+              AND "OsmWayId" = ANY({wayIds})
+            GROUP BY
+                "OsmWayId",
+                EXTRACT(DOW FROM "Timestamp"),
+                (EXTRACT(HOUR FROM "Timestamp")::int * 60
+                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5
             ON CONFLICT ("OsmWayId", "DayOfWeek", "FiveMinuteBucket") DO UPDATE SET
                 "SumSpeedKmh"   = "WaySpeedAggregates"."SumSpeedKmh"  + EXCLUDED."SumSpeedKmh",
                 "SampleCount"   = "WaySpeedAggregates"."SampleCount"  + EXCLUDED."SampleCount",
@@ -82,12 +70,11 @@ public class TrafficAggregationService(AppDbContext db)
                 "LastUpdated"   = NOW()
             """, ct);
 
-        // Mark all processed observations aggregated with a single UPDATE.
         var processed = await db.SpeedObservations
-            .Where(o => !o.IsAggregated && o.OsmWayId != null && tripIds.Contains(o.TripId))
+            .Where(o => !o.IsAggregated && o.OsmWayId != null && wayIds.Contains(o.OsmWayId.Value))
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.IsAggregated, true), ct);
 
-        await RebuildSummariesAsync(affectedWayIds, ct);
+        await RebuildSummariesAsync([.. wayIds], ct);
 
         return new AggregateJobResult(processed);
     }

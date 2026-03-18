@@ -87,12 +87,3 @@ public class ResetPasswordRequest
     [Required]
     public string PasswordConfirm { get; set; } = string.Empty;
 }
-
-public class WebStatsResponse
-{
-    public long TotalObservations    { get; set; }
-    public long ObservationsLast24h  { get; set; }
-    public int  TotalUsers           { get; set; }
-    public int  ContributorCount     { get; set; }
-    public int  AggregatedWays      { get; set; }
-}

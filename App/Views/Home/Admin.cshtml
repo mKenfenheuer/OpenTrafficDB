@@ -25,15 +25,6 @@
         </div>
       </div>
 
-      <!-- Stats -->
-      <div class="section">
-        <div class="section-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          Statistics
-        </div>
-        <div class="stats-grid" id="stats-grid"></div>
-      </div>
-
       <!-- Users -->
       <div class="section">
         <div class="section-title d-flex justify-between align-center">
@@ -237,33 +228,6 @@
       container.innerHTML = res.data.map(renderService).join('');
       document.getElementById('workers-last-refresh').textContent =
         'Updated ' + new Date().toLocaleTimeString();
-    }
-
-    // ── Stats ──────────────────────────────────────────────────────────────────
-
-    async function loadStats() {
-      const res = await web('GET', '/admin/stats');
-      if (!res?.ok) return;
-      const d = res.data;
-
-      document.getElementById('stats-grid').innerHTML = [
-        stat('Total observations', d.totalObservations.toLocaleString(), 'accent'),
-        stat('Last 24 hours',      d.observationsLast24h.toLocaleString(), 'success'),
-        stat('Total users',        d.totalUsers.toLocaleString()),
-        stat('Users',              d.userCount.toLocaleString()),
-        stat('Contributors',       d.contributorCount.toLocaleString(), 'contributor'),
-        stat('Admins',             d.adminCount.toLocaleString(), 'admin'),
-        stat('Active keys',        d.activeApiKeys.toLocaleString(), 'accent'),
-        stat('Aggregated ways',   d.aggregatedWays.toLocaleString()),
-        stat('Blocked IPs',        d.blockedIps.toLocaleString(), d.blockedIps > 0 ? 'danger' : ''),
-      ].join('');
-
-      document.getElementById('loading').classList.add('hidden');
-      document.getElementById('content').classList.remove('hidden');
-    }
-
-    function stat(label, value, cls = '') {
-      return `<div class="stat-card"><div class="stat-label">${label}</div><div class="stat-value ${cls}">${value}</div></div>`;
     }
 
     // ── Users ──────────────────────────────────────────────────────────────────

@@ -201,27 +201,6 @@ td {
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--surface2); }
 
-/* ── Stat cards ─────────────────────────────────────── */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
-}
-.stat-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-}
-.stat-label { font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-.stat-value { font-size: 2rem; font-weight: 700; line-height: 1; }
-.stat-value.accent { color: var(--accent); }
-.stat-value.success { color: var(--success); }
-.stat-value.contributor { color: var(--role-contributor); }
-.stat-value.admin { color: var(--role-admin); }
-.stat-value.danger { color: var(--danger); }
-
 /* ── Code block ─────────────────────────────────────── */
 .code-block {
   background: var(--surface2);
@@ -429,8 +408,7 @@ tr:hover td { background: var(--surface2); }
 /* the track — and the page — wider than the viewport.       */
 .dash-grid > *,
 .features > *,
-.steps > *,
-.stats-grid > * {
+.steps > * {
   min-width: 0;
 }
 
@@ -615,9 +593,6 @@ footer a:hover { color: var(--text); }
 
   /* Section-title action rows: stack on very small screens */
   .section-title.d-flex { gap: 8px 12px; }
-
-  /* Stats grid: 2 columns on small screens */
-  .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
 }
 
 @media (max-width: 768px) {

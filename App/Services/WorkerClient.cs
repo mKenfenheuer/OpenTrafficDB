@@ -204,7 +204,7 @@ public class WorkerClient(
         }
     }
 
-    /// <summary>Sends an aggregate job to a specific worker URL. Returns null on failure.</summary>
+    /// <summary>Sends an aggregate job (partitioned by way ID) to a specific worker URL. Returns null on failure.</summary>
     public async Task<AggregateJobResult?> SendAggregateJobAsync(string workerUrl, AggregateJobRequest req, CancellationToken ct = default)
     {
         var token = jwtService.CreateServiceToken();

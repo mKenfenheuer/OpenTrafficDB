@@ -14,11 +14,11 @@ var builder = WebApplication.CreateBuilder(args);
 // ── Database ──────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
-        o => o.UseNetTopologySuite()));
+        o => { o.UseNetTopologySuite(); o.CommandTimeout(300); }));
 
 builder.Services.AddDbContextFactory<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
-        o => o.UseNetTopologySuite()),
+        o => { o.UseNetTopologySuite(); o.CommandTimeout(300); }),
     ServiceLifetime.Scoped);
 
 var readConn = builder.Configuration.GetConnectionString("ReadConnection")

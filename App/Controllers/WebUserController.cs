@@ -149,25 +149,6 @@ public class WebUserController(
         return Ok(new { message = "A confirmation link has been sent to your new email address. Click it to complete the change." });
     }
 
-    // ── Stats ─────────────────────────────────────────────────────────────────
-
-    /// <summary>Global platform statistics shown on the dashboard.</summary>
-    [HttpGet("stats")]
-    [ProducesResponseType(typeof(WebStatsResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetStats()
-    {
-        var yesterday = DateTime.UtcNow.AddHours(-24);
-
-        return Ok(new WebStatsResponse
-        {
-            TotalObservations   = await db.SpeedObservations.LongCountAsync(),
-            ObservationsLast24h = await db.SpeedObservations.LongCountAsync(o => o.CreatedAt >= yesterday),
-            TotalUsers          = await db.Users.CountAsync(u => u.IsActive),
-            ContributorCount    = await db.Users.CountAsync(u => u.IsActive && u.Role == UserRole.Contributor),
-            AggregatedWays     = await db.WaySpeedAggregates.Select(a => a.OsmWayId).Distinct().CountAsync()
-        });
-    }
-
     // ── API Keys ──────────────────────────────────────────────────────────────
 
     /// <summary>List all API keys for the current user.</summary>

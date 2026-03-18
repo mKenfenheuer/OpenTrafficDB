@@ -61,19 +61,6 @@ public class BlockIpRequest
     public DateTime? ExpiresAt { get; set; }
 }
 
-public class AdminStatsResponse
-{
-    public long TotalObservations { get; set; }
-    public long ObservationsLast24h { get; set; }
-    public int TotalUsers { get; set; }
-    public int UserCount { get; set; }
-    public int ContributorCount { get; set; }
-    public int AdminCount { get; set; }
-    public int ActiveApiKeys { get; set; }
-    public int AggregatedWays { get; set; }
-    public int BlockedIps { get; set; }
-}
-
 public class AdminUserResponse
 {
     public int Id { get; set; }
