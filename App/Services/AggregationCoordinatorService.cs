@@ -45,12 +45,14 @@ public class AggregationCoordinatorService(
         var workerUrls = workerClient.GetUrls("Aggregate");
         if (workerUrls is null || workerUrls.Length == 0)
         {
-            logger.LogDebug("No Aggregate worker URLs configured — skipping cycle.");
+            logger.LogWarning("No Aggregate worker URLs configured (Workers:Aggregate:Urls) — skipping cycle.");
             return;
         }
 
         // ── 1. Matching phase ─────────────────────────────────────────────────
         var matchSlots = await GetUnmatchedSlotsAsync(ct);
+        logger.LogInformation("Cycle: {MatchSlots} match slots, workers: [{Workers}].",
+            matchSlots.Count, string.Join(", ", workerUrls));
         if (matchSlots.Count > 0)
         {
             logger.LogInformation("Dispatching {Count} match slots to {Workers} workers.",
@@ -74,6 +76,7 @@ public class AggregationCoordinatorService(
 
         // ── 2. Aggregation phase ──────────────────────────────────────────────
         var aggregateSlots = await GetUnaggregatedSlotsAsync(ct);
+        logger.LogInformation("Cycle: {AggSlots} aggregate slots.", aggregateSlots.Count);
         if (aggregateSlots.Count > 0)
         {
             logger.LogInformation("Dispatching {Count} aggregate slots to {Workers} workers.",
@@ -152,12 +155,13 @@ public class AggregationCoordinatorService(
 
     private static List<TimeSlot> Partition(DateTime min, DateTime max, TimeSpan slotWidth)
     {
-        var slots = new List<TimeSlot>();
+        var slots  = new List<TimeSlot>();
         var cursor = min;
-        while (cursor < max)
+        var ceil   = max.Add(TimeSpan.FromSeconds(1)); // ensure the max timestamp is included
+        while (cursor < ceil)
         {
             var end = cursor + slotWidth;
-            slots.Add(new TimeSlot(cursor, end > max ? max.Add(TimeSpan.FromSeconds(1)) : end));
+            slots.Add(new TimeSlot(cursor, end < ceil ? end : ceil));
             cursor = end;
         }
         return slots;
