@@ -48,28 +48,33 @@ public class TrafficAggregationService(AppDbContext db)
         if (affectedWayIds.Count == 0) return new AggregateJobResult(0);
 
         // Upsert way-level aggregates entirely in SQL — no rows loaded into .NET.
+        // ORDER BY in the subquery ensures all concurrent transactions acquire index locks
+        // in consistent key order, preventing deadlocks on WaySpeedAggregates.
         await db.Database.ExecuteSqlAsync($"""
             INSERT INTO "WaySpeedAggregates"
                 ("OsmWayId", "DayOfWeek", "FiveMinuteBucket",
                  "SumSpeedKmh", "SampleCount", "SpeedLimitKmh", "LastUpdated", "FirstSeenAt")
-            SELECT
-                "OsmWayId",
-                EXTRACT(DOW FROM "Timestamp")::int,
-                (EXTRACT(HOUR FROM "Timestamp")::int * 60
-                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5,
-                SUM("SpeedMs" * 3.6),
-                COUNT(*)::int,
-                MAX("SpeedLimitKmh"),
-                NOW(), NOW()
-            FROM "SpeedObservations"
-            WHERE NOT "IsAggregated"
-              AND "OsmWayId" IS NOT NULL
-              AND "TripId"   = ANY({tripIds})
-            GROUP BY
-                "OsmWayId",
-                EXTRACT(DOW FROM "Timestamp"),
-                (EXTRACT(HOUR FROM "Timestamp")::int * 60
-                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5
+            SELECT way_id, dow, bucket, sum_speed, sample_count, speed_limit, NOW(), NOW()
+            FROM (
+                SELECT
+                    "OsmWayId"                                                        AS way_id,
+                    EXTRACT(DOW FROM "Timestamp")::int                                AS dow,
+                    (EXTRACT(HOUR FROM "Timestamp")::int * 60
+                        + EXTRACT(MINUTE FROM "Timestamp")::int) / 5                 AS bucket,
+                    SUM("SpeedMs" * 3.6)                                              AS sum_speed,
+                    COUNT(*)::int                                                     AS sample_count,
+                    MAX("SpeedLimitKmh")                                              AS speed_limit
+                FROM "SpeedObservations"
+                WHERE NOT "IsAggregated"
+                  AND "OsmWayId" IS NOT NULL
+                  AND "TripId"   = ANY({tripIds})
+                GROUP BY
+                    "OsmWayId",
+                    EXTRACT(DOW FROM "Timestamp"),
+                    (EXTRACT(HOUR FROM "Timestamp")::int * 60
+                        + EXTRACT(MINUTE FROM "Timestamp")::int) / 5
+                ORDER BY way_id, dow, bucket
+            ) agg
             ON CONFLICT ("OsmWayId", "DayOfWeek", "FiveMinuteBucket") DO UPDATE SET
                 "SumSpeedKmh"   = "WaySpeedAggregates"."SumSpeedKmh"  + EXCLUDED."SumSpeedKmh",
                 "SampleCount"   = "WaySpeedAggregates"."SampleCount"  + EXCLUDED."SampleCount",
