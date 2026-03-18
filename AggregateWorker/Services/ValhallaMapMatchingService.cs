@@ -135,11 +135,10 @@ public class ValhallaMapMatchingService(
     /// Returns the number of observations matched.
     /// </summary>
     public async Task<MatchJobResult> ProcessRangeAsync(
-        DateTime from, DateTime to, AppDbContext db, CancellationToken ct = default)
+        string[] tripIds, AppDbContext db, CancellationToken ct = default)
     {
         var unmatched = await db.SpeedObservations
-            .Where(o => o.OsmWayId == null && !o.IsAggregated
-                     && o.Timestamp >= from && o.Timestamp < to)
+            .Where(o => o.OsmWayId == null && !o.IsAggregated && tripIds.Contains(o.TripId))
             .AsNoTracking()
             .OrderBy(o => o.Timestamp)
             .ToListAsync(ct);

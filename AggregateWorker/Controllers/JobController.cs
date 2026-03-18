@@ -17,14 +17,14 @@ public class JobController(
     [HttpPost("match")]
     public async Task<IActionResult> Match([FromBody] MatchJobRequest req, CancellationToken ct)
     {
-        var result = await matchingService.ProcessRangeAsync(req.From, req.To, db, ct);
+        var result = await matchingService.ProcessRangeAsync(req.TripIds, db, ct);
         return Ok(result);
     }
 
     [HttpPost("aggregate")]
     public async Task<IActionResult> Aggregate([FromBody] AggregateJobRequest req, CancellationToken ct)
     {
-        var result = await aggregationService.ReaggregateRangeAsync(req.From, req.To, ct);
+        var result = await aggregationService.ReaggregateRangeAsync(req.TripIds, ct);
         return Ok(result);
     }
 

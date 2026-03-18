@@ -7,11 +7,12 @@ using OpenTrafficDB.Shared.Services;
 namespace OpenTrafficDB.App.Services;
 
 /// <summary>
-/// Coordinator that partitions unmatched/unaggregated observations into time-window slots
-/// and fans them out to all healthy AggregateWorker instances concurrently.
+/// Coordinator that queries all pending trip IDs, splits them evenly across all
+/// healthy AggregateWorker instances, and dispatches non-overlapping job chunks.
+/// Workers never process the same trip — no DB conflicts possible.
 ///
 /// Config keys:
-///   Coordinator:SlotMinutes     — width of each time slot (default: 60)
+///   Coordinator:ChunkSize       — trips per job chunk (default: 200)
 ///   Coordinator:IntervalSeconds — how often the coordinator scans for work (default: 30)
 /// </summary>
 public class AggregationCoordinatorService(
@@ -21,12 +22,12 @@ public class AggregationCoordinatorService(
     ILogger<AggregationCoordinatorService> logger) : BackgroundService
 {
     private TimeSpan Interval  => TimeSpan.FromSeconds(double.Parse(config["Coordinator:IntervalSeconds"] ?? "30"));
-    private TimeSpan SlotWidth => TimeSpan.FromMinutes(double.Parse(config["Coordinator:SlotMinutes"]     ?? "60"));
+    private int      ChunkSize => int.Parse(config["Coordinator:ChunkSize"] ?? "200");
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        logger.LogInformation("Aggregation coordinator started. Interval: {Interval}, SlotWidth: {Slot}.",
-            Interval, SlotWidth);
+        logger.LogInformation("Aggregation coordinator started. Interval: {Interval}, ChunkSize: {Chunk}.",
+            Interval, ChunkSize);
 
         await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
@@ -50,122 +51,103 @@ public class AggregationCoordinatorService(
         }
 
         // ── 1. Matching phase ─────────────────────────────────────────────────
-        var matchSlots = await GetUnmatchedSlotsAsync(ct);
-        logger.LogInformation("Cycle: {MatchSlots} match slots, workers: [{Workers}].",
-            matchSlots.Count, string.Join(", ", workerUrls));
-        if (matchSlots.Count > 0)
+        var unmatchedTrips = await GetUnmatchedTripIdsAsync(ct);
+        logger.LogInformation("Cycle: {Unmatched} unmatched trips, {Workers} workers.",
+            unmatchedTrips.Count, workerUrls.Length);
+
+        if (unmatchedTrips.Count > 0)
         {
-            logger.LogInformation("Dispatching {Count} match slots to {Workers} workers.",
-                matchSlots.Count, workerUrls.Length);
-            await DispatchSlotsAsync(
-                matchSlots,
-                workerUrls,
-                async (url, slot, token) =>
+            var chunks = Chunk(unmatchedTrips, ChunkSize);
+            logger.LogInformation("Dispatching {Chunks} match chunks.", chunks.Count);
+            await DispatchAsync(chunks, workerUrls,
+                async (url, tripIds, token) =>
                 {
-                    var result = await workerClient.SendMatchJobAsync(
-                        url, new MatchJobRequest(slot.From, slot.To), token);
+                    var result = await workerClient.SendMatchJobAsync(url, new MatchJobRequest(tripIds), token);
                     if (result is not null)
-                        logger.LogDebug("Match slot [{From} – {To}] on {Url}: {Matched} matched.",
-                            slot.From, slot.To, url, result.Matched);
+                        logger.LogDebug("Match chunk ({Count} trips) on {Url}: {Matched} matched.",
+                            tripIds.Length, url, result.Matched);
                     else
-                        logger.LogWarning("Match slot [{From} – {To}] on {Url} failed.",
-                            slot.From, slot.To, url);
-                },
-                ct);
+                        logger.LogWarning("Match chunk ({Count} trips) on {Url} failed.", tripIds.Length, url);
+                }, ct);
         }
 
         // ── 2. Aggregation phase ──────────────────────────────────────────────
-        var aggregateSlots = await GetUnaggregatedSlotsAsync(ct);
-        logger.LogInformation("Cycle: {AggSlots} aggregate slots.", aggregateSlots.Count);
-        if (aggregateSlots.Count > 0)
-        {
-            logger.LogInformation("Dispatching {Count} aggregate slots to {Workers} workers.",
-                aggregateSlots.Count, workerUrls.Length);
-            await DispatchSlotsAsync(
-                aggregateSlots,
-                workerUrls,
-                async (url, slot, token) =>
-                {
-                    var result = await workerClient.SendAggregateJobAsync(
-                        url, new AggregateJobRequest(slot.From, slot.To), token);
-                    if (result is not null)
-                        logger.LogDebug("Aggregate slot [{From} – {To}] on {Url}: {Processed} processed.",
-                            slot.From, slot.To, url, result.Processed);
-                    else
-                        logger.LogWarning("Aggregate slot [{From} – {To}] on {Url} failed.",
-                            slot.From, slot.To, url);
-                },
-                ct);
+        var unaggregatedTrips = await GetUnaggregatedTripIdsAsync(ct);
+        logger.LogInformation("Cycle: {Unaggregated} unaggregated trips.", unaggregatedTrips.Count);
 
-            // Finalize on the first worker after all aggregation slots complete
+        if (unaggregatedTrips.Count > 0)
+        {
+            var chunks = Chunk(unaggregatedTrips, ChunkSize);
+            logger.LogInformation("Dispatching {Chunks} aggregate chunks.", chunks.Count);
+            await DispatchAsync(chunks, workerUrls,
+                async (url, tripIds, token) =>
+                {
+                    var result = await workerClient.SendAggregateJobAsync(url, new AggregateJobRequest(tripIds), token);
+                    if (result is not null)
+                        logger.LogDebug("Aggregate chunk ({Count} trips) on {Url}: {Processed} processed.",
+                            tripIds.Length, url, result.Processed);
+                    else
+                        logger.LogWarning("Aggregate chunk ({Count} trips) on {Url} failed.", tripIds.Length, url);
+                }, ct);
+
+            // Finalize on the first worker after all aggregation chunks complete.
             await workerClient.SendFinalizeAsync(workerUrls[0], ct);
         }
     }
 
     /// <summary>
-    /// Distribute slots across workers: each worker runs one slot at a time,
-    /// pulling the next from the channel as soon as it finishes.
+    /// Fan-out chunks across workers: fills a channel, each worker pulls chunks
+    /// sequentially so no two workers ever receive the same chunk.
     /// </summary>
-    private static async Task DispatchSlotsAsync(
-        List<TimeSlot> slots,
+    private static async Task DispatchAsync(
+        List<string[]> chunks,
         string[] workerUrls,
-        Func<string, TimeSlot, CancellationToken, Task> send,
+        Func<string, string[], CancellationToken, Task> send,
         CancellationToken ct)
     {
-        var channel = Channel.CreateUnbounded<TimeSlot>();
-        foreach (var slot in slots) channel.Writer.TryWrite(slot);
+        var channel = Channel.CreateUnbounded<string[]>();
+        foreach (var chunk in chunks) channel.Writer.TryWrite(chunk);
         channel.Writer.Complete();
 
         await Task.WhenAll(workerUrls.Select(url => Task.Run(async () =>
         {
-            await foreach (var slot in channel.Reader.ReadAllAsync(ct))
-                await send(url, slot, ct);
+            await foreach (var chunk in channel.Reader.ReadAllAsync(ct))
+                await send(url, chunk, ct);
         }, ct)));
     }
 
-    // ── Slot discovery ────────────────────────────────────────────────────────
+    // ── Trip ID discovery ────────────────────────────────────────────────────
 
-    private async Task<List<TimeSlot>> GetUnmatchedSlotsAsync(CancellationToken ct)
+    private async Task<List<string>> GetUnmatchedTripIdsAsync(CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var range = await db.SpeedObservations
+        return await db.SpeedObservations
             .Where(o => o.OsmWayId == null && !o.IsAggregated)
-            .GroupBy(_ => 1)
-            .Select(g => new { Min = g.Min(o => o.Timestamp), Max = g.Max(o => o.Timestamp) })
-            .FirstOrDefaultAsync(ct);
-
-        return range is null ? [] : Partition(range.Min, range.Max, SlotWidth);
+            .Select(o => o.TripId)
+            .Distinct()
+            .ToListAsync(ct);
     }
 
-    private async Task<List<TimeSlot>> GetUnaggregatedSlotsAsync(CancellationToken ct)
+    private async Task<List<string>> GetUnaggregatedTripIdsAsync(CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var range = await db.SpeedObservations
+        return await db.SpeedObservations
             .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null)
-            .GroupBy(_ => 1)
-            .Select(g => new { Min = g.Min(o => o.Timestamp), Max = g.Max(o => o.Timestamp) })
-            .FirstOrDefaultAsync(ct);
-
-        return range is null ? [] : Partition(range.Min, range.Max, SlotWidth);
+            .Select(o => o.TripId)
+            .Distinct()
+            .ToListAsync(ct);
     }
 
-    private static List<TimeSlot> Partition(DateTime min, DateTime max, TimeSpan slotWidth)
+    /// <summary>Splits a list into chunks of at most <paramref name="size"/> elements.</summary>
+    private static List<string[]> Chunk(List<string> items, int size)
     {
-        var slots  = new List<TimeSlot>();
-        var cursor = min;
-        var ceil   = max.Add(TimeSpan.FromSeconds(1)); // ensure the max timestamp is included
-        while (cursor < ceil)
-        {
-            var end = cursor + slotWidth;
-            slots.Add(new TimeSlot(cursor, end < ceil ? end : ceil));
-            cursor = end;
-        }
-        return slots;
+        var chunks = new List<string[]>();
+        for (int i = 0; i < items.Count; i += size)
+            chunks.Add(items.Skip(i).Take(size).ToArray());
+        return chunks;
     }
-
-    private record TimeSlot(DateTime From, DateTime To);
 }

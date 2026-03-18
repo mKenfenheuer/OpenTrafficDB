@@ -36,12 +36,12 @@ public class TrafficAggregationService(AppDbContext db)
     /// Returns the number of observations processed.
     /// </summary>
     public async Task<AggregateJobResult> ReaggregateRangeAsync(
-        DateTime from, DateTime to, CancellationToken ct = default)
+        string[] tripIds, CancellationToken ct = default)
     {
         // Collect affected way IDs before marking rows aggregated.
         var affectedWayIds = await db.SpeedObservations
             .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null
-                     && o.Timestamp >= from && o.Timestamp < to)
+                     && tripIds.Contains(o.TripId))
             .Select(o => o.OsmWayId!.Value)
             .Distinct()
             .ToListAsync(ct);
@@ -66,8 +66,7 @@ public class TrafficAggregationService(AppDbContext db)
             WHERE NOT "IsAggregated"
               AND "OsmWayId"    IS NOT NULL
               AND "H3CellIndex" IS NOT NULL
-              AND "Timestamp"   >= {from}
-              AND "Timestamp"   <  {to}
+              AND "TripId"      = ANY({tripIds})
             GROUP BY
                 "OsmWayId",
                 EXTRACT(DOW FROM "Timestamp"),
@@ -97,8 +96,7 @@ public class TrafficAggregationService(AppDbContext db)
             WHERE NOT "IsAggregated"
               AND "OsmWayId"    IS NOT NULL
               AND "H3CellIndex" IS NOT NULL
-              AND "Timestamp"   >= {from}
-              AND "Timestamp"   <  {to}
+              AND "TripId"      = ANY({tripIds})
             GROUP BY
                 "H3CellIndex",
                 EXTRACT(DOW FROM "Timestamp"),
@@ -113,7 +111,7 @@ public class TrafficAggregationService(AppDbContext db)
         // Mark all processed observations aggregated with a single UPDATE.
         var processed = await db.SpeedObservations
             .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null
-                     && o.Timestamp >= from && o.Timestamp < to)
+                     && tripIds.Contains(o.TripId))
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.IsAggregated, true), ct);
 
         await RebuildSummariesAsync(affectedWayIds, ct);
