@@ -4,6 +4,8 @@ using System.Text.Json.Serialization;
 using H3;
 using H3.Model;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using NpgsqlTypes;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Models;
 using OpenTrafficDB.Shared.Models.DTOs;
@@ -211,32 +213,34 @@ public class ValhallaMapMatchingService(
         }
 
         // Bulk UPDATE matched observations using unnest — one round-trip for all rows.
+        // Use ExecuteSqlRawAsync + explicit NpgsqlParameter so Npgsql knows the array element types.
         if (matchedIds.Count > 0)
         {
-            await db.Database.ExecuteSqlAsync($"""
+            await db.Database.ExecuteSqlRawAsync("""
                 UPDATE "SpeedObservations" o
                 SET    "OsmWayId"      = v.way_id,
                        "H3CellIndex"   = v.h3,
                        "SpeedLimitKmh" = v.speed_limit
-                FROM   unnest(
-                           {matchedIds.ToArray()},
-                           {matchedWayIds.ToArray()},
-                           {matchedH3s.ToArray()},
-                           {matchedLimits.ToArray()}
-                       ) AS v(obs_id, way_id, h3, speed_limit)
+                FROM   unnest(@ids, @way_ids, @h3s, @limits) AS v(obs_id, way_id, h3, speed_limit)
                 WHERE  o."Id" = v.obs_id
-                """, ct);
+                """,
+                ct,
+                new NpgsqlParameter("ids",     NpgsqlDbType.Array | NpgsqlDbType.Bigint)  { Value = matchedIds.ToArray() },
+                new NpgsqlParameter("way_ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint)  { Value = matchedWayIds.ToArray() },
+                new NpgsqlParameter("h3s",     NpgsqlDbType.Array | NpgsqlDbType.Bigint)  { Value = matchedH3s.ToArray() },
+                new NpgsqlParameter("limits",  NpgsqlDbType.Array | NpgsqlDbType.Double)  { Value = matchedLimits.ToArray() });
         }
 
         // Mark stale unmatched observations so they are cleaned up in FinalizeAsync.
         if (staleIds.Count > 0)
         {
-            var staleArr = staleIds.ToArray();
-            await db.Database.ExecuteSqlAsync($"""
+            await db.Database.ExecuteSqlRawAsync("""
                 UPDATE "SpeedObservations"
                 SET    "IsAggregated" = TRUE
-                WHERE  "Id" = ANY({staleArr})
-                """, ct);
+                WHERE  "Id" = ANY(@ids)
+                """,
+                ct,
+                new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = staleIds.ToArray() });
         }
 
         _logMapMatched(logger, matchedIds.Count, null);
