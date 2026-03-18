@@ -31,141 +31,94 @@ public class TrafficAggregationService(AppDbContext db)
     // ── Hybrid aggregation ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// Aggregates matched observations in [from, to) time window.
+    /// Aggregates matched observations in [from, to) time window using server-side SQL upserts.
     /// Does NOT run cleanup — call <see cref="FinalizeAsync"/> after all slots complete.
     /// Returns the number of observations processed.
     /// </summary>
     public async Task<AggregateJobResult> ReaggregateRangeAsync(
         DateTime from, DateTime to, CancellationToken ct = default)
     {
-        var newlyMatched = await db.SpeedObservations
+        // Collect affected way IDs before marking rows aggregated.
+        var affectedWayIds = await db.SpeedObservations
             .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null
                      && o.Timestamp >= from && o.Timestamp < to)
-            .OrderBy(o => o.Id)
+            .Select(o => o.OsmWayId!.Value)
+            .Distinct()
             .ToListAsync(ct);
 
-        if (newlyMatched.Count == 0) return new AggregateJobResult(0);
+        if (affectedWayIds.Count == 0) return new AggregateJobResult(0);
 
-        var roadWorksWayIds = newlyMatched
-            .Where(o => o.RoadWorks && o.SpeedLimitKmh > 0)
-            .Select(o => o.OsmWayId!.Value)
-            .ToHashSet();
+        // Upsert way-level aggregates entirely in SQL — no rows loaded into .NET.
+        await db.Database.ExecuteSqlAsync($"""
+            INSERT INTO "WaySpeedAggregates"
+                ("OsmWayId", "DayOfWeek", "FiveMinuteBucket",
+                 "SumSpeedKmh", "SampleCount", "SpeedLimitKmh", "LastUpdated", "FirstSeenAt")
+            SELECT
+                "OsmWayId",
+                EXTRACT(DOW FROM "Timestamp")::int,
+                (EXTRACT(HOUR FROM "Timestamp")::int * 60
+                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5,
+                SUM("SpeedMs" * 3.6),
+                COUNT(*)::int,
+                MAX("SpeedLimitKmh"),
+                NOW(), NOW()
+            FROM "SpeedObservations"
+            WHERE NOT "IsAggregated"
+              AND "OsmWayId"    IS NOT NULL
+              AND "H3CellIndex" IS NOT NULL
+              AND "Timestamp"   >= {from}
+              AND "Timestamp"   <  {to}
+            GROUP BY
+                "OsmWayId",
+                EXTRACT(DOW FROM "Timestamp"),
+                (EXTRACT(HOUR FROM "Timestamp")::int * 60
+                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5
+            ON CONFLICT ("OsmWayId", "DayOfWeek", "FiveMinuteBucket") DO UPDATE SET
+                "SumSpeedKmh"   = "WaySpeedAggregates"."SumSpeedKmh"  + EXCLUDED."SumSpeedKmh",
+                "SampleCount"   = "WaySpeedAggregates"."SampleCount"  + EXCLUDED."SampleCount",
+                "SpeedLimitKmh" = COALESCE(EXCLUDED."SpeedLimitKmh", "WaySpeedAggregates"."SpeedLimitKmh"),
+                "LastUpdated"   = NOW()
+            """, ct);
 
-        Dictionary<(long WayId, int Dow, int Bucket), double>  existingAvgByKey   = [];
-        Dictionary<(long WayId, int Dow, int Bucket), double?> existingLimitByKey = [];
-        if (roadWorksWayIds.Count > 0)
-        {
-            var existing = await db.WaySpeedAggregates
-                .Where(a => roadWorksWayIds.Contains(a.OsmWayId) && a.SampleCount > 0)
-                .AsNoTracking()
-                .ToListAsync(ct);
-            existingAvgByKey   = existing.ToDictionary(a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket), a => a.SumSpeedKmh / a.SampleCount);
-            existingLimitByKey = existing.ToDictionary(a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket), a => a.SpeedLimitKmh);
-        }
+        // Upsert H3-level aggregates entirely in SQL.
+        await db.Database.ExecuteSqlAsync($"""
+            INSERT INTO "H3SpeedAggregates"
+                ("H3CellIndex", "DayOfWeek", "FiveMinuteBucket",
+                 "SumSpeedKmh", "SampleCount", "LastUpdated", "FirstSeenAt")
+            SELECT
+                "H3CellIndex",
+                EXTRACT(DOW FROM "Timestamp")::int,
+                (EXTRACT(HOUR FROM "Timestamp")::int * 60
+                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5,
+                SUM("SpeedMs" * 3.6),
+                COUNT(*)::int,
+                NOW(), NOW()
+            FROM "SpeedObservations"
+            WHERE NOT "IsAggregated"
+              AND "OsmWayId"    IS NOT NULL
+              AND "H3CellIndex" IS NOT NULL
+              AND "Timestamp"   >= {from}
+              AND "Timestamp"   <  {to}
+            GROUP BY
+                "H3CellIndex",
+                EXTRACT(DOW FROM "Timestamp"),
+                (EXTRACT(HOUR FROM "Timestamp")::int * 60
+                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5
+            ON CONFLICT ("H3CellIndex", "DayOfWeek", "FiveMinuteBucket") DO UPDATE SET
+                "SumSpeedKmh" = "H3SpeedAggregates"."SumSpeedKmh" + EXCLUDED."SumSpeedKmh",
+                "SampleCount" = "H3SpeedAggregates"."SampleCount" + EXCLUDED."SampleCount",
+                "LastUpdated" = NOW()
+            """, ct);
 
-        var wayBuckets = new Dictionary<(long WayId, int Dow, int Bucket), (double Sum, int Count, double? SpeedLimit)>();
-        var h3Buckets  = new Dictionary<(long Cell, int Dow, int Bucket), (double Sum, int Count)>();
+        // Mark all processed observations aggregated with a single UPDATE.
+        var processed = await db.SpeedObservations
+            .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null
+                     && o.Timestamp >= from && o.Timestamp < to)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.IsAggregated, true), ct);
 
-        foreach (var obs in newlyMatched)
-        {
-            var ts     = obs.Timestamp.ToUniversalTime();
-            var dow    = (int)ts.DayOfWeek;
-            var bucket = ToFiveMinuteBucket(ts);
-            var kmh    = obs.SpeedMs * 3.6;
+        await RebuildSummariesAsync(affectedWayIds, ct);
 
-            if (obs.RoadWorks && obs.SpeedLimitKmh > 0)
-            {
-                var threshold = obs.SpeedLimitKmh.Value * 0.7;
-                var existingKey = (obs.OsmWayId!.Value, dow, bucket);
-                var currentAvg = existingAvgByKey.GetValueOrDefault(existingKey, double.MaxValue);
-                var currentSpeedLimit = existingLimitByKey.GetValueOrDefault(existingKey);
-                if (currentSpeedLimit != null && currentSpeedLimit < obs.SpeedLimitKmh)
-                    threshold = currentSpeedLimit.Value * 0.7;
-                if (currentAvg >= threshold)
-                    kmh = threshold;
-            }
-
-            var eKey = (obs.OsmWayId!.Value, dow, bucket);
-            wayBuckets[eKey] = wayBuckets.TryGetValue(eKey, out var ea)
-                ? (ea.Sum + kmh, ea.Count + 1, obs.SpeedLimitKmh ?? ea.SpeedLimit)
-                : (kmh, 1, obs.SpeedLimitKmh);
-
-            var hKey = (obs.H3CellIndex!.Value, dow, bucket);
-            h3Buckets[hKey] = h3Buckets.TryGetValue(hKey, out var ha)
-                ? (ha.Sum + kmh, ha.Count + 1) : (kmh, 1);
-        }
-
-        var now = DateTime.UtcNow;
-
-        var affectedWayIds = wayBuckets.Keys.Select(k => k.WayId).ToHashSet();
-        var existingWayAggs = await db.WaySpeedAggregates
-            .Where(a => affectedWayIds.Contains(a.OsmWayId))
-            .ToDictionaryAsync(a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket), ct);
-
-        foreach (var (key, (sum, count, speedLimit)) in wayBuckets)
-        {
-            var (wayId, dow, bucket) = key;
-            if (existingWayAggs.TryGetValue(key, out var existing))
-            {
-                existing.SumSpeedKmh  += sum;
-                existing.SampleCount  += count;
-                existing.SpeedLimitKmh = speedLimit ?? existing.SpeedLimitKmh;
-                existing.LastUpdated   = now;
-            }
-            else
-            {
-                var row = new WaySpeedAggregate
-                {
-                    OsmWayId         = wayId,
-                    DayOfWeek        = dow,
-                    FiveMinuteBucket = bucket,
-                    SumSpeedKmh      = sum,
-                    SampleCount      = count,
-                    SpeedLimitKmh    = speedLimit,
-                    LastUpdated      = now,
-                    FirstSeenAt      = now
-                };
-                db.WaySpeedAggregates.Add(row);
-                existingWayAggs[key] = row;
-            }
-        }
-
-        var affectedCells = h3Buckets.Keys.Select(k => k.Cell).ToHashSet();
-        var existingH3Aggs = await db.H3SpeedAggregates
-            .Where(a => affectedCells.Contains(a.H3CellIndex))
-            .ToDictionaryAsync(a => (a.H3CellIndex, a.DayOfWeek, a.FiveMinuteBucket), ct);
-
-        foreach (var (key, (sum, count)) in h3Buckets)
-        {
-            var (cell, dow, bucket) = key;
-            if (existingH3Aggs.TryGetValue(key, out var existing))
-            {
-                existing.SumSpeedKmh += sum;
-                existing.SampleCount += count;
-                existing.LastUpdated  = now;
-            }
-            else
-            {
-                db.H3SpeedAggregates.Add(new H3SpeedAggregate
-                {
-                    H3CellIndex      = cell,
-                    DayOfWeek        = dow,
-                    FiveMinuteBucket = bucket,
-                    SumSpeedKmh      = sum,
-                    SampleCount      = count,
-                    LastUpdated      = now,
-                    FirstSeenAt      = now
-                });
-            }
-        }
-
-        foreach (var obs in newlyMatched)
-            obs.IsAggregated = true;
-
-        await db.SaveChangesAsync(ct);
-        await RebuildSummariesAsync(affectedWayIds.ToList(), ct);
-
-        return new AggregateJobResult(newlyMatched.Count);
+        return new AggregateJobResult(processed);
     }
 
     /// <summary>
@@ -440,61 +393,42 @@ public class TrafficAggregationService(AppDbContext db)
         return sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
     }
 
-    private async Task RebuildSummariesAsync(IReadOnlyList<long> wayIds, CancellationToken ct)
+    /// <summary>
+    /// Rebuilds WaySpeedSummary rows for the given ways using server-side
+    /// percentile_cont — avoids loading all aggregate buckets into .NET.
+    /// </summary>
+    private async Task RebuildSummariesAsync(List<long> wayIds, CancellationToken ct)
     {
-        var allBuckets = await db.WaySpeedAggregates
-            .Where(a => wayIds.Contains(a.OsmWayId) && a.SampleCount > 0)
-            .AsNoTracking()
-            .Select(a => new { a.OsmWayId, a.SumSpeedKmh, a.SampleCount, a.SpeedLimitKmh, a.FirstSeenAt })
-            .ToListAsync(ct);
+        if (wayIds.Count == 0) return;
 
-        // Pre-load all existing summaries in one query
-        var existingSummaries = await db.WaySpeedSummaries
-            .Where(s => wayIds.Contains(s.OsmWayId))
-            .ToDictionaryAsync(s => s.OsmWayId, ct);
+        var wayIdArray = wayIds.ToArray();
 
-        var byWay = allBuckets.GroupBy(a => a.OsmWayId);
-        var now   = DateTime.UtcNow;
-
-        foreach (var g in byWay)
-        {
-            var rawAvgs      = g.Select(a => a.SumSpeedKmh / a.SampleCount).OrderBy(v => v).ToList();
-            var totalSamples = g.Sum(a => a.SampleCount);
-            var speedLimit   = g.FirstOrDefault(a => a.SpeedLimitKmh != null)?.SpeedLimitKmh;
-
-            var freeflow = Percentile(rawAvgs, 0.85);
-            if (speedLimit is > 0)
-                freeflow = Math.Max(freeflow, speedLimit.Value * 0.75);
-
-            var blendedAvgs = g.Select(a => BlendedAvg(a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt, freeflow)).OrderBy(v => v).ToList();
-            var p50 = Percentile(blendedAvgs, 0.50);
-            var p95 = Percentile(blendedAvgs, 0.95);
-
-            if (existingSummaries.TryGetValue(g.Key, out var existing))
-            {
-                existing.FreeflowSpeed = Math.Round(freeflow, 1);
-                existing.P50Speed      = Math.Round(p50, 1);
-                existing.P95Speed      = Math.Round(p95, 1);
-                existing.SpeedLimitKmh = speedLimit ?? existing.SpeedLimitKmh;
-                existing.TotalSamples  = totalSamples;
-                existing.LastUpdated   = now;
-            }
-            else
-            {
-                db.WaySpeedSummaries.Add(new WaySpeedSummary
-                {
-                    OsmWayId      = g.Key,
-                    FreeflowSpeed = Math.Round(freeflow, 1),
-                    P50Speed      = Math.Round(p50, 1),
-                    P95Speed      = Math.Round(p95, 1),
-                    SpeedLimitKmh = speedLimit,
-                    TotalSamples  = totalSamples,
-                    LastUpdated   = now
-                });
-            }
-        }
-
-        await db.SaveChangesAsync(ct);
+        await db.Database.ExecuteSqlAsync($"""
+            INSERT INTO "WaySpeedSummaries"
+                ("OsmWayId", "FreeflowSpeed", "P50Speed", "P95Speed",
+                 "SpeedLimitKmh", "TotalSamples", "LastUpdated")
+            SELECT
+                "OsmWayId",
+                GREATEST(
+                    percentile_cont(0.85) WITHIN GROUP (ORDER BY "SumSpeedKmh" / NULLIF("SampleCount", 0)),
+                    COALESCE(MAX("SpeedLimitKmh"), 0) * 0.75
+                ),
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY "SumSpeedKmh" / NULLIF("SampleCount", 0)),
+                percentile_cont(0.95) WITHIN GROUP (ORDER BY "SumSpeedKmh" / NULLIF("SampleCount", 0)),
+                MAX("SpeedLimitKmh"),
+                SUM("SampleCount")::int,
+                NOW()
+            FROM "WaySpeedAggregates"
+            WHERE "OsmWayId" = ANY({wayIdArray}) AND "SampleCount" > 0
+            GROUP BY "OsmWayId"
+            ON CONFLICT ("OsmWayId") DO UPDATE SET
+                "FreeflowSpeed" = EXCLUDED."FreeflowSpeed",
+                "P50Speed"      = EXCLUDED."P50Speed",
+                "P95Speed"      = EXCLUDED."P95Speed",
+                "SpeedLimitKmh" = COALESCE(EXCLUDED."SpeedLimitKmh", "WaySpeedSummaries"."SpeedLimitKmh"),
+                "TotalSamples"  = EXCLUDED."TotalSamples",
+                "LastUpdated"   = NOW()
+            """, ct);
     }
 
     /// <summary>

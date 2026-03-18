@@ -127,7 +127,7 @@ public class ValhallaMapMatchingService(
         }
     }
 
-    private const int MaxConcurrentValhalla = 4;
+    private const int MaxConcurrentValhalla = 12;
 
     /// <summary>
     /// Match observations in [from, to) time window. Processes all trips in parallel
@@ -140,6 +140,7 @@ public class ValhallaMapMatchingService(
         var unmatched = await db.SpeedObservations
             .Where(o => o.OsmWayId == null && !o.IsAggregated
                      && o.Timestamp >= from && o.Timestamp < to)
+            .AsNoTracking()
             .OrderBy(o => o.Timestamp)
             .ToListAsync(ct);
 
@@ -177,7 +178,13 @@ public class ValhallaMapMatchingService(
             tripResults[i] = (segmentMatches, sorted);
         }));
 
-        int updatedCount = 0;
+        // Collect match results and stale IDs — no EF change tracking involved.
+        var matchedIds    = new List<long>();
+        var matchedWayIds = new List<long>();
+        var matchedH3s    = new List<long>();
+        var matchedLimits = new List<double?>();
+        var staleIds      = new List<long>();
+
         for (int i = 0; i < trips.Count; i++)
         {
             var (segmentMatches, sorted) = tripResults[i];
@@ -190,23 +197,51 @@ public class ValhallaMapMatchingService(
                 foreach (var (idx, match) in segmentMatches[si])
                 {
                     var obs = segment[idx];
-                    obs.OsmWayId      = match.OsmWayId;
-                    obs.H3CellIndex   = match.H3CellIndex;
-                    obs.SpeedLimitKmh = match.SpeedLimitKmh;
-                    updatedCount++;
+                    matchedIds.Add(obs.Id);
+                    matchedWayIds.Add(match.OsmWayId);
+                    matchedH3s.Add(match.H3CellIndex);
+                    matchedLimits.Add(match.SpeedLimitKmh);
                 }
             }
 
             foreach (var obs in sorted)
             {
                 if (obs.OsmWayId == null && obs.CreatedAt < staleCutoff)
-                    obs.IsAggregated = true;
+                    staleIds.Add(obs.Id);
             }
         }
 
-        await db.SaveChangesAsync(ct);
-        _logMapMatched(logger, updatedCount, null);
-        return new MatchJobResult(updatedCount);
+        // Bulk UPDATE matched observations using unnest — one round-trip for all rows.
+        if (matchedIds.Count > 0)
+        {
+            await db.Database.ExecuteSqlAsync($"""
+                UPDATE "SpeedObservations" o
+                SET    "OsmWayId"      = v.way_id,
+                       "H3CellIndex"   = v.h3,
+                       "SpeedLimitKmh" = v.speed_limit
+                FROM   unnest(
+                           {matchedIds.ToArray()},
+                           {matchedWayIds.ToArray()},
+                           {matchedH3s.ToArray()},
+                           {matchedLimits.ToArray()}
+                       ) AS v(obs_id, way_id, h3, speed_limit)
+                WHERE  o."Id" = v.obs_id
+                """, ct);
+        }
+
+        // Mark stale unmatched observations so they are cleaned up in FinalizeAsync.
+        if (staleIds.Count > 0)
+        {
+            var staleArr = staleIds.ToArray();
+            await db.Database.ExecuteSqlAsync($"""
+                UPDATE "SpeedObservations"
+                SET    "IsAggregated" = TRUE
+                WHERE  "Id" = ANY({staleArr})
+                """, ct);
+        }
+
+        _logMapMatched(logger, matchedIds.Count, null);
+        return new MatchJobResult(matchedIds.Count);
     }
 
     /// <summary>
