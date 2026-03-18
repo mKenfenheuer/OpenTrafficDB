@@ -17,13 +17,6 @@ namespace OpenTrafficDB.Migrations
                 ALTER TABLE "WaySpeedSummaries"  SET (fillfactor = 70);
                 """);
 
-            // VACUUM FULL rewrites the tables to immediately apply the new fillfactor.
-            // Must run outside a transaction.
-            migrationBuilder.Sql("""
-                VACUUM FULL "WaySpeedAggregates";
-                VACUUM FULL "WaySpeedSummaries";
-                """, suppressTransaction: true);
-
             // Index to support the tile query: WHERE wss."LastUpdated" >= NOW() - INTERVAL '30 minutes'
             migrationBuilder.CreateIndex(
                 name: "IX_WaySpeedSummaries_LastUpdated",
