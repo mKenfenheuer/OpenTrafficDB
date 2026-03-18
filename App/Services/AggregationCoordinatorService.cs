@@ -50,49 +50,60 @@ public class AggregationCoordinatorService(
             return;
         }
 
-        // ── 1. Matching phase ─────────────────────────────────────────────────
-        var unmatchedTrips = await GetUnmatchedTripIdsAsync(ct);
-        logger.LogInformation("Cycle: {Unmatched} unmatched trips, {Workers} workers.",
-            unmatchedTrips.Count, workerUrls.Length);
+        // Discover both sets upfront — they are disjoint (match=OsmWayId IS NULL,
+        // aggregate=OsmWayId IS NOT NULL) so the two dispatch phases are safe to run concurrently.
+        var unmatchedTrips     = await GetUnmatchedTripIdsAsync(ct);
+        var unaggregatedTrips  = await GetUnaggregatedTripIdsAsync(ct);
 
-        if (unmatchedTrips.Count > 0)
-        {
-            var chunks = Chunk(unmatchedTrips, ChunkSize);
-            logger.LogInformation("Dispatching {Chunks} match chunks.", chunks.Count);
-            await DispatchAsync(chunks, workerUrls,
-                async (url, tripIds, token) =>
-                {
-                    var result = await workerClient.SendMatchJobAsync(url, new MatchJobRequest(tripIds), token);
-                    if (result is not null)
-                        logger.LogDebug("Match chunk ({Count} trips) on {Url}: {Matched} matched.",
-                            tripIds.Length, url, result.Matched);
-                    else
-                        logger.LogWarning("Match chunk ({Count} trips) on {Url} failed.", tripIds.Length, url);
-                }, ct);
-        }
+        logger.LogInformation("Cycle: {Unmatched} unmatched, {Unaggregated} unaggregated trips, {Workers} workers.",
+            unmatchedTrips.Count, unaggregatedTrips.Count, workerUrls.Length);
 
-        // ── 2. Aggregation phase ──────────────────────────────────────────────
-        var unaggregatedTrips = await GetUnaggregatedTripIdsAsync(ct);
-        logger.LogInformation("Cycle: {Unaggregated} unaggregated trips.", unaggregatedTrips.Count);
+        // ── 1+2. Match and aggregate in parallel ──────────────────────────────
+        var matchTask = unmatchedTrips.Count > 0
+            ? DispatchMatchAsync(unmatchedTrips, workerUrls, ct)
+            : Task.CompletedTask;
 
+        var aggregateTask = unaggregatedTrips.Count > 0
+            ? DispatchAggregateAsync(unaggregatedTrips, workerUrls, ct)
+            : Task.CompletedTask;
+
+        await Task.WhenAll(matchTask, aggregateTask);
+
+        // ── 3. Finalize — only needed when aggregation ran ────────────────────
         if (unaggregatedTrips.Count > 0)
-        {
-            var chunks = Chunk(unaggregatedTrips, ChunkSize);
-            logger.LogInformation("Dispatching {Chunks} aggregate chunks.", chunks.Count);
-            await DispatchAsync(chunks, workerUrls,
-                async (url, tripIds, token) =>
-                {
-                    var result = await workerClient.SendAggregateJobAsync(url, new AggregateJobRequest(tripIds), token);
-                    if (result is not null)
-                        logger.LogDebug("Aggregate chunk ({Count} trips) on {Url}: {Processed} processed.",
-                            tripIds.Length, url, result.Processed);
-                    else
-                        logger.LogWarning("Aggregate chunk ({Count} trips) on {Url} failed.", tripIds.Length, url);
-                }, ct);
+            await workerClient.SendFinalizeAsync(ct);
+    }
 
-            // Finalize on the first worker after all aggregation chunks complete.
-            await workerClient.SendFinalizeAsync(workerUrls[0], ct);
-        }
+    private async Task DispatchMatchAsync(List<string> trips, string[] workerUrls, CancellationToken ct)
+    {
+        var chunks = Chunk(trips, ChunkSize);
+        logger.LogInformation("Dispatching {Chunks} match chunks.", chunks.Count);
+        await DispatchAsync(chunks, workerUrls,
+            async (url, tripIds, token) =>
+            {
+                var result = await workerClient.SendMatchJobAsync(url, new MatchJobRequest(tripIds), token);
+                if (result is not null)
+                    logger.LogDebug("Match chunk ({Count} trips) on {Url}: {Matched} matched.",
+                        tripIds.Length, url, result.Matched);
+                else
+                    logger.LogWarning("Match chunk ({Count} trips) on {Url} failed.", tripIds.Length, url);
+            }, ct);
+    }
+
+    private async Task DispatchAggregateAsync(List<string> trips, string[] workerUrls, CancellationToken ct)
+    {
+        var chunks = Chunk(trips, ChunkSize);
+        logger.LogInformation("Dispatching {Chunks} aggregate chunks.", chunks.Count);
+        await DispatchAsync(chunks, workerUrls,
+            async (url, tripIds, token) =>
+            {
+                var result = await workerClient.SendAggregateJobAsync(url, new AggregateJobRequest(tripIds), token);
+                if (result is not null)
+                    logger.LogDebug("Aggregate chunk ({Count} trips) on {Url}: {Processed} processed.",
+                        tripIds.Length, url, result.Processed);
+                else
+                    logger.LogWarning("Aggregate chunk ({Count} trips) on {Url} failed.", tripIds.Length, url);
+            }, ct);
     }
 
     /// <summary>

@@ -226,6 +226,18 @@ public class WorkerClient(
         }
     }
 
+    /// <summary>Sends a finalize request to a round-robin-picked Aggregate worker.</summary>
+    public Task SendFinalizeAsync(CancellationToken ct = default)
+    {
+        var url = PickUrl("Aggregate");
+        if (url is null)
+        {
+            logger.LogWarning("No Aggregate worker URLs configured — skipping finalize.");
+            return Task.CompletedTask;
+        }
+        return SendFinalizeAsync(url, ct);
+    }
+
     /// <summary>Sends a finalize request (refresh constrained speeds + delete old obs) to a specific worker.</summary>
     public async Task SendFinalizeAsync(string workerUrl, CancellationToken ct = default)
     {
