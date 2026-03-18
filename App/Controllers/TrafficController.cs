@@ -91,21 +91,6 @@ public class TrafficController(
     }
 
     /// <summary>
-    /// Historic H3-grid traffic CSV from pre-aggregated 5-minute buckets (full week).
-    /// </summary>
-    [HttpGet("historic/h3/csv")]
-    [Produces("text/csv")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<IActionResult> GetHistoricH3Csv(CancellationToken ct)
-    {
-        if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
-        await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/historic/h3/csv",
-            GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
-        return new EmptyResult();
-    }
-
-    /// <summary>
     /// Exports traffic data in Valhalla predicted-traffic CSV format.
     /// </summary>
     [HttpGet("valhalla/csv")]
@@ -116,21 +101,6 @@ public class TrafficController(
     {
         if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
         await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/valhalla/csv",
-            GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
-        return new EmptyResult();
-    }
-
-    /// <summary>
-    /// Live H3-grid traffic statistics as CSV (rolling 30-minute window, resolution 9).
-    /// </summary>
-    [HttpGet("live/h3/csv")]
-    [Produces("text/csv")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<IActionResult> GetLiveH3Csv(CancellationToken ct)
-    {
-        if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
-        await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/live/h3/csv",
             GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
         return new EmptyResult();
     }

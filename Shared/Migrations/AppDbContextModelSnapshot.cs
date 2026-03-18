@@ -101,45 +101,6 @@ namespace OpenTrafficDB.Migrations
                     b.ToTable("BlockedIps");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.H3SpeedAggregate", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<int>("DayOfWeek")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("FirstSeenAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("FiveMinuteBucket")
-                        .HasColumnType("integer");
-
-                    b.Property<long>("H3CellIndex")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("LastUpdated")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("SampleCount")
-                        .HasColumnType("integer");
-
-                    b.Property<double>("SumSpeedKmh")
-                        .HasColumnType("double precision");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("H3CellIndex");
-
-                    b.HasIndex("H3CellIndex", "DayOfWeek", "FiveMinuteBucket")
-                        .IsUnique();
-
-                    b.ToTable("H3SpeedAggregates");
-                });
-
             modelBuilder.Entity("OpenTrafficDB.Shared.Models.SpeedObservation", b =>
                 {
                     b.Property<long>("Id")
@@ -159,9 +120,6 @@ namespace OpenTrafficDB.Migrations
 
                     b.Property<float>("GpsAccuracyMeters")
                         .HasColumnType("real");
-
-                    b.Property<long?>("H3CellIndex")
-                        .HasColumnType("bigint");
 
                     b.Property<float?>("Heading")
                         .HasColumnType("real");
@@ -202,15 +160,14 @@ namespace OpenTrafficDB.Migrations
 
                     b.HasIndex("ApiKeyId");
 
-                    b.HasIndex("H3CellIndex")
-                        .HasFilter("\"H3CellIndex\" IS NOT NULL");
-
                     b.HasIndex("OsmWayId")
                         .HasFilter("\"OsmWayId\" IS NOT NULL");
 
                     b.HasIndex("Timestamp");
 
-                    b.HasIndex("TripId");
+                    b.HasIndex("TripId")
+                        .HasDatabaseName("IX_SpeedObservations_TripId_Unaggregated")
+                        .HasFilter("\"OsmWayId\" IS NOT NULL AND \"IsAggregated\" = FALSE");
 
                     b.HasIndex("IsAggregated", "CreatedAt");
 

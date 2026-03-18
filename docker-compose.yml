@@ -17,6 +17,8 @@ services:
       -c jit_above_cost=50000
       -c random_page_cost=1.1
       -c effective_io_concurrency=200
+      -c wal_buffers=64MB
+      -c synchronous_commit=off
       -c wal_compression=zstd
       -c checkpoint_completion_target=0.9
       -c default_statistics_target=200
@@ -127,6 +129,25 @@ services:
       valhalla:
         condition: service_started
 
+  aggregate-3:
+    image: ${AGGREGATE_IMAGE:-registry.gitlab.com/opentrafficdb/aggregate:latest}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
+      ConnectionStrings__ReadConnection: "Host=${READ_DB_HOST:-pgbouncer};Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD}"
+      Jwt__Key: ${JWT_KEY}
+      Security__IpHashPepper: ${IP_HASH_PEPPER}
+      Valhalla__BaseUrl: http://valhalla:8002
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      valhalla:
+        condition: service_started
+
   osm-importer:
     image: ${OSM_IMPORTER_IMAGE:-registry.gitlab.com/opentrafficdb/osm-importer:latest}
     restart: unless-stopped
@@ -194,6 +215,7 @@ services:
       Workers__Ingest__Urls__0: http://ingest:8080
       Workers__Aggregate__Urls__0: http://aggregate:8080
       Workers__Aggregate__Urls__1: http://aggregate-2:8080
+      Workers__Aggregate__Urls__2: http://aggregate-3:8080
       Workers__Routing__Urls__0: http://routing:8080
       Workers__Routing__Urls__1: http://routing-2:8080
     depends_on:
@@ -202,6 +224,8 @@ services:
       ingest:
         condition: service_started
       aggregate:
+        condition: service_started
+      aggregate-3:
         condition: service_started
       routing:
         condition: service_started

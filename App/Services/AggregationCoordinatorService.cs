@@ -21,7 +21,7 @@ public class AggregationCoordinatorService(
     IConfiguration config,
     ILogger<AggregationCoordinatorService> logger) : BackgroundService
 {
-    private TimeSpan Interval  => TimeSpan.FromSeconds(double.Parse(config["Coordinator:IntervalSeconds"] ?? "30"));
+    private TimeSpan Interval  => TimeSpan.FromSeconds(double.Parse(config["Coordinator:IntervalSeconds"] ?? "60"));
     private int      ChunkSize => int.Parse(config["Coordinator:ChunkSize"] ?? "200");
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -136,7 +136,7 @@ public class AggregationCoordinatorService(
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         return await db.SpeedObservations
-            .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null)
+            .Where(o => !o.IsAggregated && o.OsmWayId != null)
             .Select(o => o.TripId)
             .Distinct()
             .ToListAsync(ct);

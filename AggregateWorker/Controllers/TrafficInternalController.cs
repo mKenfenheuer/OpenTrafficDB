@@ -52,16 +52,6 @@ public class TrafficInternalController(TrafficAggregationService aggregation) : 
         return new EmptyResult();
     }
 
-    [HttpGet("historic/h3/csv")]
-    [Produces("text/csv")]
-    public async Task<IActionResult> GetHistoricH3Csv(CancellationToken ct)
-    {
-        Response.ContentType = "text/csv";
-        Response.Headers["Content-Disposition"] = "attachment; filename=\"historic_h3_traffic.csv\"";
-        await aggregation.WriteHistoricH3CsvAsync(Response.Body, ct);
-        return new EmptyResult();
-    }
-
     [HttpGet("valhalla/csv")]
     [Produces("text/csv")]
     public async Task<IActionResult> GetValhallaExportCsv(CancellationToken ct)
@@ -72,13 +62,4 @@ public class TrafficInternalController(TrafficAggregationService aggregation) : 
         return new EmptyResult();
     }
 
-    [HttpGet("live/h3/csv")]
-    [Produces("text/csv")]
-    public async Task<IActionResult> GetLiveH3Csv(CancellationToken ct)
-    {
-        Response.ContentType = "text/csv";
-        Response.Headers["Content-Disposition"] = "attachment; filename=\"live_h3_traffic.csv\"";
-        await aggregation.WriteLiveH3CsvAsync(Response.Body, ct);
-        return new EmptyResult();
-    }
 }

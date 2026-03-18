@@ -40,8 +40,7 @@ public class TrafficAggregationService(AppDbContext db)
     {
         // Collect affected way IDs before marking rows aggregated.
         var affectedWayIds = await db.SpeedObservations
-            .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null
-                     && tripIds.Contains(o.TripId))
+            .Where(o => !o.IsAggregated && o.OsmWayId != null && tripIds.Contains(o.TripId))
             .Select(o => o.OsmWayId!.Value)
             .Distinct()
             .ToListAsync(ct);
@@ -64,9 +63,8 @@ public class TrafficAggregationService(AppDbContext db)
                 NOW(), NOW()
             FROM "SpeedObservations"
             WHERE NOT "IsAggregated"
-              AND "OsmWayId"    IS NOT NULL
-              AND "H3CellIndex" IS NOT NULL
-              AND "TripId"      = ANY({tripIds})
+              AND "OsmWayId" IS NOT NULL
+              AND "TripId"   = ANY({tripIds})
             GROUP BY
                 "OsmWayId",
                 EXTRACT(DOW FROM "Timestamp"),
@@ -79,39 +77,9 @@ public class TrafficAggregationService(AppDbContext db)
                 "LastUpdated"   = NOW()
             """, ct);
 
-        // Upsert H3-level aggregates entirely in SQL.
-        await db.Database.ExecuteSqlAsync($"""
-            INSERT INTO "H3SpeedAggregates"
-                ("H3CellIndex", "DayOfWeek", "FiveMinuteBucket",
-                 "SumSpeedKmh", "SampleCount", "LastUpdated", "FirstSeenAt")
-            SELECT
-                "H3CellIndex",
-                EXTRACT(DOW FROM "Timestamp")::int,
-                (EXTRACT(HOUR FROM "Timestamp")::int * 60
-                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5,
-                SUM("SpeedMs" * 3.6),
-                COUNT(*)::int,
-                NOW(), NOW()
-            FROM "SpeedObservations"
-            WHERE NOT "IsAggregated"
-              AND "OsmWayId"    IS NOT NULL
-              AND "H3CellIndex" IS NOT NULL
-              AND "TripId"      = ANY({tripIds})
-            GROUP BY
-                "H3CellIndex",
-                EXTRACT(DOW FROM "Timestamp"),
-                (EXTRACT(HOUR FROM "Timestamp")::int * 60
-                    + EXTRACT(MINUTE FROM "Timestamp")::int) / 5
-            ON CONFLICT ("H3CellIndex", "DayOfWeek", "FiveMinuteBucket") DO UPDATE SET
-                "SumSpeedKmh" = "H3SpeedAggregates"."SumSpeedKmh" + EXCLUDED."SumSpeedKmh",
-                "SampleCount" = "H3SpeedAggregates"."SampleCount" + EXCLUDED."SampleCount",
-                "LastUpdated" = NOW()
-            """, ct);
-
         // Mark all processed observations aggregated with a single UPDATE.
         var processed = await db.SpeedObservations
-            .Where(o => !o.IsAggregated && o.OsmWayId != null && o.H3CellIndex != null
-                     && tripIds.Contains(o.TripId))
+            .Where(o => !o.IsAggregated && o.OsmWayId != null && tripIds.Contains(o.TripId))
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.IsAggregated, true), ct);
 
         await RebuildSummariesAsync(affectedWayIds, ct);
@@ -262,11 +230,6 @@ public class TrafficAggregationService(AppDbContext db)
 
     public async Task WriteHistoricWayCsvAsync(Stream output, CancellationToken ct = default)
     {
-        var aggregates = await db.WaySpeedAggregates
-            .OrderBy(a => a.OsmWayId).ThenBy(a => a.DayOfWeek).ThenBy(a => a.FiveMinuteBucket)
-            .AsNoTracking()
-            .ToListAsync(ct);
-
         var summaries = await db.WaySpeedSummaries
             .AsNoTracking()
             .ToDictionaryAsync(s => s.OsmWayId, ct);
@@ -274,7 +237,11 @@ public class TrafficAggregationService(AppDbContext db)
         await using var writer = new StreamWriter(output, Encoding.UTF8, leaveOpen: true);
         await writer.WriteLineAsync("osm_way_id,speed,time");
 
-        foreach (var a in aggregates)
+        await foreach (var a in db.WaySpeedAggregates
+            .OrderBy(a => a.OsmWayId).ThenBy(a => a.DayOfWeek).ThenBy(a => a.FiveMinuteBucket)
+            .AsNoTracking()
+            .AsAsyncEnumerable()
+            .WithCancellation(ct))
         {
             var speed = a.SampleCount > 0
                 ? BlendedAvg(a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt, summaries.TryGetValue(a.OsmWayId, out var s) ? s.FreeflowSpeed : (a.SpeedLimitKmh ?? 0))
@@ -283,29 +250,6 @@ public class TrafficAggregationService(AppDbContext db)
         }
     }
 
-    public async Task WriteHistoricH3CsvAsync(Stream output, CancellationToken ct = default)
-    {
-        var aggregates = await db.H3SpeedAggregates
-            .OrderBy(a => a.H3CellIndex).ThenBy(a => a.DayOfWeek).ThenBy(a => a.FiveMinuteBucket)
-            .AsNoTracking()
-            .ToListAsync(ct);
-
-        var freeflowByCell = aggregates
-            .Where(a => a.SampleCount > 0)
-            .GroupBy(a => a.H3CellIndex)
-            .ToDictionary(g => g.Key, g => Percentile(g.Select(a => a.SumSpeedKmh / a.SampleCount).OrderBy(v => v).ToList(), 0.85));
-
-        await using var writer = new StreamWriter(output, Encoding.UTF8, leaveOpen: true);
-        await writer.WriteLineAsync("h3_index,speed,time");
-
-        foreach (var a in aggregates)
-        {
-            var speed = a.SampleCount > 0
-                ? BlendedAvg(a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt, freeflowByCell.GetValueOrDefault(a.H3CellIndex, 0))
-                : 0.0;
-            await writer.WriteLineAsync($"{(ulong)a.H3CellIndex:x},{speed:F1},{a.DayOfWeek * 288 + a.FiveMinuteBucket}");
-        }
-    }
 
     public async Task<Dictionary<long, WayTrafficData>> GetCurrentWayTrafficAsync(IEnumerable<long> wayIds, CancellationToken ct = default)
     {
@@ -381,16 +325,6 @@ public class TrafficAggregationService(AppDbContext db)
         return (sumSpeedKmh + missing * freeflowSpeed) / (sampleCount + missing);
     }
 
-    private static double Percentile(List<double> sorted, double p)
-    {
-        if (sorted.Count == 0) return 0;
-        if (sorted.Count == 1) return sorted[0];
-        var idx = p * (sorted.Count - 1);
-        var lo  = (int)idx;
-        var hi  = Math.Min(lo + 1, sorted.Count - 1);
-        return sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
-    }
-
     /// <summary>
     /// Rebuilds WaySpeedSummary rows for the given ways using server-side
     /// percentile_cont — avoids loading all aggregate buckets into .NET.
@@ -451,17 +385,18 @@ public class TrafficAggregationService(AppDbContext db)
             WHERE s."OsmWayId" = live."OsmWayId"
             """, ct);
 
-        // Clear constrained speed for ways with no recent live data
+        // Clear constrained speed for ways with no recent live data.
+        // NOT EXISTS uses the (Timestamp, OsmWayId) index; avoids the full DISTINCT scan of NOT IN.
         await db.Database.ExecuteSqlRawAsync("""
-            UPDATE "WaySpeedSummaries"
+            UPDATE "WaySpeedSummaries" s
             SET    "ConstrainedSpeed" = NULL,
                    "LastUpdated"      = NOW()
-            WHERE  "ConstrainedSpeed" IS NOT NULL
-              AND  "OsmWayId" NOT IN (
-                       SELECT DISTINCT "OsmWayId"
-                       FROM   "SpeedObservations"
-                       WHERE  "Timestamp" >= NOW() - INTERVAL '30 minutes'
-                         AND  "OsmWayId"  IS NOT NULL
+            WHERE  s."ConstrainedSpeed" IS NOT NULL
+              AND  NOT EXISTS (
+                       SELECT 1
+                       FROM   "SpeedObservations" o
+                       WHERE  o."OsmWayId"  = s."OsmWayId"
+                         AND  o."Timestamp" >= NOW() - INTERVAL '30 minutes'
                    )
             """, ct);
     }
@@ -470,62 +405,58 @@ public class TrafficAggregationService(AppDbContext db)
 
     public async Task WriteValhallaExportCsvAsync(Stream output, CancellationToken ct = default)
     {
-        var allBuckets = await db.WaySpeedAggregates
-            .Where(a => a.SampleCount > 0)
-            .AsNoTracking()
-            .Select(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket, a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt })
-            .ToListAsync(ct);
-
         var summaries = await db.WaySpeedSummaries
             .AsNoTracking()
             .ToDictionaryAsync(s => s.OsmWayId, ct);
 
-        var bucketsByWay = allBuckets
-            .GroupBy(b => b.OsmWayId)
-            .ToDictionary(g => g.Key, g =>
-            {
-                summaries.TryGetValue(g.Key, out var sum);
-                var freeflow = sum?.FreeflowSpeed ?? 0;
-                return g.ToDictionary(
-                    b => ((b.DayOfWeek + 6) % 7) * 288 + b.FiveMinuteBucket,
-                    b => BlendedAvg(b.SumSpeedKmh, b.SampleCount, b.FirstSeenAt, freeflow));
-            });
-
-        var allWayIds = bucketsByWay.Keys.Union(summaries.Keys).Distinct().OrderBy(id => id);
-
         await using var writer = new StreamWriter(output, Encoding.UTF8, leaveOpen: true);
         await writer.WriteLineAsync("way_id,freeflow_speed,constrained_speed,historical_speeds");
 
-        var speedBuffer = new float[2016];
-        foreach (var wayId in allWayIds)
+        var speedBuffer    = new float[2016];
+        var slots          = new Dictionary<int, double>();
+        var writtenWays    = new HashSet<long>();
+        long? currentWayId = null;
+        double currentFreeflow = 0;
+
+        async Task FlushWayAsync(long wayId)
         {
             summaries.TryGetValue(wayId, out var summary);
             var freeflow    = summary is not null ? (int)Math.Round(summary.FreeflowSpeed) : 0;
             var constrained = summary is not null ? (int)Math.Round(summary.ConstrainedSpeed ?? summary.P50Speed) : freeflow;
-
-            bucketsByWay.TryGetValue(wayId, out var slots);
             var fill = (float)freeflow;
             for (var i = 0; i < 2016; i++)
-                speedBuffer[i] = slots is not null && slots.TryGetValue(i, out var sv) ? (float)sv : fill;
-
+                speedBuffer[i] = slots.TryGetValue(i, out var sv) ? (float)sv : fill;
             await writer.WriteLineAsync($"{wayId},{freeflow},{constrained},{ValhallaSpeedEncoder.Encode(speedBuffer)}");
+            writtenWays.Add(wayId);
+        }
+
+        // Stream aggregates ordered by way — accumulate slots per way, flush on boundary.
+        await foreach (var b in db.WaySpeedAggregates
+            .Where(a => a.SampleCount > 0)
+            .OrderBy(a => a.OsmWayId)
+            .AsNoTracking()
+            .Select(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket, a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt })
+            .AsAsyncEnumerable()
+            .WithCancellation(ct))
+        {
+            if (currentWayId != b.OsmWayId)
+            {
+                if (currentWayId.HasValue) await FlushWayAsync(currentWayId.Value);
+                currentWayId    = b.OsmWayId;
+                currentFreeflow = summaries.TryGetValue(b.OsmWayId, out var sum) ? sum.FreeflowSpeed : 0;
+                slots.Clear();
+            }
+            slots[(b.DayOfWeek + 6) % 7 * 288 + b.FiveMinuteBucket] =
+                BlendedAvg(b.SumSpeedKmh, b.SampleCount, b.FirstSeenAt, currentFreeflow);
+        }
+        if (currentWayId.HasValue) await FlushWayAsync(currentWayId.Value);
+
+        // Write summary-only ways (have a summary entry but no aggregate buckets yet).
+        foreach (var wayId in summaries.Keys.Where(id => !writtenWays.Contains(id)).OrderBy(id => id))
+        {
+            slots.Clear();
+            await FlushWayAsync(wayId);
         }
     }
 
-    public async Task WriteLiveH3CsvAsync(Stream output, CancellationToken ct = default)
-    {
-        var cutoff = DateTime.UtcNow.AddMinutes(-30);
-
-        var obs = await db.SpeedObservations
-            .Where(o => o.Timestamp >= cutoff && o.H3CellIndex != null)
-            .AsNoTracking()
-            .Select(o => new { o.H3CellIndex, o.SpeedMs })
-            .ToListAsync(ct);
-
-        await using var writer = new StreamWriter(output, Encoding.UTF8, leaveOpen: true);
-        await writer.WriteLineAsync("h3_index,avg_speed_kmh,sample_count");
-
-        foreach (var g in obs.GroupBy(o => o.H3CellIndex!.Value).OrderBy(g => g.Key))
-            await writer.WriteLineAsync($"{(ulong)g.Key:x},{g.Average(o => o.SpeedMs) * 3.6:F1},{g.Count()}");
-    }
 }

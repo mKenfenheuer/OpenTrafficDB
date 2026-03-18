@@ -18,7 +18,6 @@ public class AppDbContext : DbContext
     public DbSet<SpeedObservation> SpeedObservations => Set<SpeedObservation>();
     public DbSet<BlockedIp> BlockedIps => Set<BlockedIp>();
     public DbSet<WaySpeedAggregate> WaySpeedAggregates => Set<WaySpeedAggregate>();
-    public DbSet<H3SpeedAggregate> H3SpeedAggregates => Set<H3SpeedAggregate>();
     public DbSet<WayGeometry> WayGeometries => Set<WayGeometry>();
     public DbSet<WaySpeedSummary> WaySpeedSummaries => Set<WaySpeedSummary>();
 
@@ -51,10 +50,16 @@ public class AppDbContext : DbContext
             e.HasIndex(o => new { o.Timestamp, o.OsmWayId }).HasFilter("\"OsmWayId\" IS NOT NULL");
             e.HasIndex(o => new { o.Latitude, o.Longitude });
             e.HasIndex(o => o.OsmWayId).HasFilter("\"OsmWayId\" IS NOT NULL");
-            e.HasIndex(o => o.H3CellIndex).HasFilter("\"H3CellIndex\" IS NOT NULL");
             e.HasIndex(o => o.TripId);
             e.HasIndex(o => o.ApiKeyId);
             e.HasIndex(o => new { o.IsAggregated, o.CreatedAt });
+            // Partial indexes for coordinator trip-discovery queries — avoids full table scans every cycle.
+            e.HasIndex(o => o.TripId)
+             .HasDatabaseName("IX_SpeedObservations_TripId_Unmatched")
+             .HasFilter("\"OsmWayId\" IS NULL AND \"IsAggregated\" = FALSE");
+            e.HasIndex(o => o.TripId)
+             .HasDatabaseName("IX_SpeedObservations_TripId_Unaggregated")
+             .HasFilter("\"OsmWayId\" IS NOT NULL AND \"IsAggregated\" = FALSE");
         });
 
         modelBuilder.Entity<BlockedIp>(e =>
@@ -65,12 +70,6 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<WaySpeedAggregate>(e =>
         {
             e.HasIndex(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
-        });
-
-        modelBuilder.Entity<H3SpeedAggregate>(e =>
-        {
-            e.HasIndex(a => new { a.H3CellIndex, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
-            e.HasIndex(a => a.H3CellIndex);
         });
 
         modelBuilder.Entity<WayGeometry>(e =>

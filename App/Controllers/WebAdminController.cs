@@ -244,14 +244,14 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     // ── Danger Zone ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Purge all gathered traffic data: speed observations, way/H3 aggregates, and way speed summaries.
+    /// Purge all gathered traffic data: speed observations, way aggregates, and way speed summaries.
     /// Geometries, users, API keys, and blocked IPs are preserved.
     /// </summary>
     [HttpDelete("data")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> PurgeTrafficData()
     {
-        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"WaySpeedSummaries\", \"WaySpeedAggregates\", \"H3SpeedAggregates\", \"SpeedObservations\" RESTART IDENTITY");
+        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"WaySpeedSummaries\", \"WaySpeedAggregates\", \"SpeedObservations\" RESTART IDENTITY");
 
         // Reset contribution counters — the observations are gone
         await db.Users.ExecuteUpdateAsync(s => s.SetProperty(u => u.TotalContributions, 0));

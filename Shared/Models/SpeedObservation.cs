@@ -15,7 +15,6 @@ public class SpeedObservation
     public string TripId { get; set; } = string.Empty;
     public long? OsmWayId { get; set; }
     public double? SpeedLimitKmh { get; set; }
-    public long? H3CellIndex { get; set; }
     public bool IsAggregated { get; set; }
     public bool RoadWorks { get; set; }
     public string IpHash { get; set; } = string.Empty;

@@ -1,8 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using H3;
-using H3.Model;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using NpgsqlTypes;
@@ -34,7 +32,6 @@ public class ValhallaMapMatchingService(
     /// <summary>Result of matching a single GPS point to an OSM road segment.</summary>
     public record MatchResult(
         long OsmWayId,
-        long H3CellIndex,
         double? SpeedLimitKmh);
 
     /// <summary>
@@ -113,12 +110,9 @@ public class ValhallaMapMatchingService(
                 var way = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
                 if (way?.WayId is null || way.IsExcluded) continue;
 
-                var h3 = H3Index.FromLatLng(new LatLng(mp.Lat.Value, mp.Lon.Value), 9);
-
                 results[i] = new MatchResult(
-                    OsmWayId:       way.WayId.Value,
-                    H3CellIndex:    (long)(ulong)h3,
-                    SpeedLimitKmh:  way.Speed);
+                    OsmWayId:      way.WayId.Value,
+                    SpeedLimitKmh: way.Speed);
             }
             return results;
         }
@@ -182,7 +176,6 @@ public class ValhallaMapMatchingService(
         // Collect match results and stale IDs — no EF change tracking involved.
         var matchedIds    = new List<long>();
         var matchedWayIds = new List<long>();
-        var matchedH3s    = new List<long>();
         var matchedLimits = new List<double?>();
         var staleIds      = new List<long>();
 
@@ -200,7 +193,6 @@ public class ValhallaMapMatchingService(
                     var obs = segment[idx];
                     matchedIds.Add(obs.Id);
                     matchedWayIds.Add(match.OsmWayId);
-                    matchedH3s.Add(match.H3CellIndex);
                     matchedLimits.Add(match.SpeedLimitKmh);
                 }
             }
@@ -219,15 +211,13 @@ public class ValhallaMapMatchingService(
             await db.Database.ExecuteSqlRawAsync("""
                 UPDATE "SpeedObservations" o
                 SET    "OsmWayId"      = v.way_id,
-                       "H3CellIndex"   = v.h3,
                        "SpeedLimitKmh" = v.speed_limit
-                FROM   unnest(@ids, @way_ids, @h3s, @limits) AS v(obs_id, way_id, h3, speed_limit)
+                FROM   unnest(@ids, @way_ids, @limits) AS v(obs_id, way_id, speed_limit)
                 WHERE  o."Id" = v.obs_id
                 """,
                 ct,
                 new NpgsqlParameter("ids",     NpgsqlDbType.Array | NpgsqlDbType.Bigint)  { Value = matchedIds.ToArray() },
                 new NpgsqlParameter("way_ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint)  { Value = matchedWayIds.ToArray() },
-                new NpgsqlParameter("h3s",     NpgsqlDbType.Array | NpgsqlDbType.Bigint)  { Value = matchedH3s.ToArray() },
                 new NpgsqlParameter("limits",  NpgsqlDbType.Array | NpgsqlDbType.Double)  { Value = matchedLimits.ToArray() });
         }
 
