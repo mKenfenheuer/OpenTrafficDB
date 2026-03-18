@@ -215,10 +215,13 @@ public class ValhallaMapMatchingService(
                 FROM   unnest(@ids, @way_ids, @limits) AS v(obs_id, way_id, speed_limit)
                 WHERE  o."Id" = v.obs_id
                 """,
-                ct,
-                new NpgsqlParameter("ids",     NpgsqlDbType.Array | NpgsqlDbType.Bigint)  { Value = matchedIds.ToArray() },
-                new NpgsqlParameter("way_ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint)  { Value = matchedWayIds.ToArray() },
-                new NpgsqlParameter("limits",  NpgsqlDbType.Array | NpgsqlDbType.Double)  { Value = matchedLimits.ToArray() });
+                new object[]
+                {
+                    new NpgsqlParameter("ids",     NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = matchedIds.ToArray() },
+                    new NpgsqlParameter("way_ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = matchedWayIds.ToArray() },
+                    new NpgsqlParameter("limits",  NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = matchedLimits.ToArray() },
+                },
+                ct);
         }
 
         // Mark stale unmatched observations so they are cleaned up in FinalizeAsync.
@@ -229,8 +232,8 @@ public class ValhallaMapMatchingService(
                 SET    "IsAggregated" = TRUE
                 WHERE  "Id" = ANY(@ids)
                 """,
-                ct,
-                new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = staleIds.ToArray() });
+                new object[] { new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = staleIds.ToArray() } },
+                ct);
         }
 
         _logMapMatched(logger, matchedIds.Count, null);
