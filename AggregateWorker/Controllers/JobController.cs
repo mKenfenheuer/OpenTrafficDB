@@ -24,7 +24,7 @@ public class JobController(
     [HttpPost("aggregate")]
     public async Task<IActionResult> Aggregate([FromBody] AggregateJobRequest req, CancellationToken ct)
     {
-        var result = await aggregationService.ReaggregateRangeAsync(req.TripIds, ct);
+        var result = await aggregationService.ReaggregateRangeAsync(req.WayIds, ct);
         return Ok(result);
     }
 
