@@ -83,6 +83,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<WaySpeedSummary>(e =>
         {
             e.HasIndex(s => s.OsmWayId).IsUnique();
+            // Used by the tile query: WHERE wss."LastUpdated" >= NOW() - INTERVAL '30 minutes'
+            e.HasIndex(s => s.LastUpdated);
         });
     }
 }

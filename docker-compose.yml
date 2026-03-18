@@ -22,6 +22,9 @@ services:
       -c wal_compression=zstd
       -c checkpoint_completion_target=0.9
       -c default_statistics_target=200
+      -c autovacuum_vacuum_scale_factor=0.01
+      -c autovacuum_analyze_scale_factor=0.005
+      -c autovacuum_vacuum_cost_delay=2ms
     environment:
       POSTGRES_DB: opentrafficdb
       POSTGRES_USER: opentraffic
