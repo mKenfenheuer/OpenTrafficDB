@@ -24,7 +24,9 @@ public class ValhallaMapMatchingService(
     IConfiguration config,
     ILogger<ValhallaMapMatchingService> logger)
 {
-    private readonly string _valhallaBaseUrl = config["Valhalla:BaseUrl"] ?? "http://localhost:8002";
+    private readonly string _valhallaBaseUrl        = config["Valhalla:BaseUrl"] ?? "http://localhost:8002";
+    private          int    MaxConcurrentValhalla   => int.Parse(config["Valhalla:MaxConcurrent"] ?? "12");
+    private          int    ValhallaTimeoutSeconds  => int.Parse(config["Valhalla:TimeoutSeconds"] ?? "30");
 
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
         LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
@@ -80,7 +82,7 @@ public class ValhallaMapMatchingService(
 
         var json = JsonSerializer.Serialize(request);
         var client = httpClientFactory.CreateClient("valhalla");
-        client.Timeout = Timeout.InfiniteTimeSpan;
+        client.Timeout = TimeSpan.FromSeconds(ValhallaTimeoutSeconds);
 
         try
         {
@@ -123,8 +125,6 @@ public class ValhallaMapMatchingService(
         }
     }
 
-    private const int MaxConcurrentValhalla = 12;
-
     /// <summary>
     /// Match observations in [from, to) time window. Processes all trips in parallel
     /// (up to <see cref="MaxConcurrentValhalla"/> concurrent Valhalla calls).
@@ -145,7 +145,8 @@ public class ValhallaMapMatchingService(
         var trips       = unmatched.GroupBy(o => o.TripId).ToList();
 
         var tripResults = new (List<(int Idx, MatchResult Match)>[] SegmentMatches,
-                               List<SpeedObservation>              Sorted)[trips.Count];
+                               List<SpeedObservation>              Sorted,
+                               List<List<SpeedObservation>>        Segments)[trips.Count];
 
         using var sem = new SemaphoreSlim(MaxConcurrentValhalla);
 
@@ -170,7 +171,7 @@ public class ValhallaMapMatchingService(
                 finally { sem.Release(); }
             }));
 
-            tripResults[i] = (segmentMatches, sorted);
+            tripResults[i] = (segmentMatches, sorted, segments);
         }));
 
         // Collect match results and stale IDs — no EF change tracking involved.
@@ -181,8 +182,7 @@ public class ValhallaMapMatchingService(
 
         for (int i = 0; i < trips.Count; i++)
         {
-            var (segmentMatches, sorted) = tripResults[i];
-            var segments = SplitTrace(sorted);
+            var (segmentMatches, sorted, segments) = tripResults[i];
 
             for (int si = 0; si < segments.Count; si++)
             {

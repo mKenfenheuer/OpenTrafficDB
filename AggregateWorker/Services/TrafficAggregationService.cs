@@ -365,9 +365,9 @@ public class TrafficAggregationService(AppDbContext db)
 
             // FreeflowSpeed: sequential EMA of observations within 20% of speed limit
             // (i.e. not in congestion). Falls back to all observations when no limit is known.
-            List<dynamic> freeflowObs = speedLimit is > 0
-                ? [.. group.Where(o => o.SpeedKmh >= speedLimit.Value * 0.8)]
-                : [.. group];
+            var freeflowObs = speedLimit is > 0
+                ? group.Where(o => o.SpeedKmh >= speedLimit.Value * 0.8).ToList()
+                : group.ToList();
 
             double emaFreeflow = seed?.FreeflowSpeed ?? (freeflowObs.Count > 0 ? freeflowObs[0].SpeedKmh : emaConstrained);
             foreach (var o in freeflowObs)

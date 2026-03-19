@@ -69,10 +69,13 @@ public class AggregationCoordinatorService(
             return;
         }
 
-        // Discover both sets upfront — they are disjoint (match=OsmWayId IS NULL,
-        // aggregate=OsmWayId IS NOT NULL) so the two dispatch phases are safe to run concurrently.
-        var unmatchedTrips    = await GetUnmatchedTripIdsAsync(ct);
-        var unaggregatedWays  = await GetUnaggregatedWayIdsAsync(ct);
+        // Discover both sets in parallel — they are disjoint (match=OsmWayId IS NULL,
+        // aggregate=OsmWayId IS NOT NULL) so the two discovery queries are independent.
+        var unmatchedTask  = GetUnmatchedTripIdsAsync(ct);
+        var unaggregatedTask = GetUnaggregatedWayIdsAsync(ct);
+        await Task.WhenAll(unmatchedTask, unaggregatedTask);
+        var unmatchedTrips   = unmatchedTask.Result;
+        var unaggregatedWays = unaggregatedTask.Result;
 
         _logCycle(logger, unmatchedTrips.Count, unaggregatedWays.Count, workerUrls.Length, null);
 
@@ -159,9 +162,10 @@ public class AggregationCoordinatorService(
     /// <summary>Splits a list into chunks of at most <paramref name="size"/> elements.</summary>
     private static List<T[]> Chunk<T>(List<T> items, int size)
     {
-        var chunks = new List<T[]>();
-        for (int i = 0; i < items.Count; i += size)
-            chunks.Add(items.Skip(i).Take(size).ToArray());
+        var arr    = items.Count > 0 ? System.Runtime.InteropServices.CollectionsMarshal.AsSpan(items) : default;
+        var chunks = new List<T[]>((items.Count + size - 1) / size);
+        for (int i = 0; i < arr.Length; i += size)
+            chunks.Add(arr.Slice(i, Math.Min(size, arr.Length - i)).ToArray());
         return chunks;
     }
 }
