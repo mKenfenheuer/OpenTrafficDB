@@ -373,6 +373,9 @@ namespace OpenTrafficDB.Migrations
                     b.Property<double?>("ConstrainedSpeed")
                         .HasColumnType("double precision");
 
+                    b.Property<string>("EncodedSpeeds")
+                        .HasColumnType("text");
+
                     b.Property<double>("FreeflowSpeed")
                         .HasColumnType("double precision");
 

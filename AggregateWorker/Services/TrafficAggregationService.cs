@@ -9,7 +9,10 @@ using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.AggregateWorker.Services;
 
-public class TrafficAggregationService(AppDbContext db, ILogger<TrafficAggregationService> logger)
+public class TrafficAggregationService(
+    AppDbContext db,
+    ReadOnlyAppDbContext readDb,
+    ILogger<TrafficAggregationService> logger)
 {
 
     // ── Traffic jam estimation ───────────────────────────────────────────────────
@@ -125,9 +128,9 @@ public class TrafficAggregationService(AppDbContext db, ILogger<TrafficAggregati
 
     private const double EmaAlpha = 0.8;
 
-    private static double BlendedAvg(double sumSpeedKmh, int sampleCount, DateTime firstSeenAt, double freeflowSpeed)
+    private static double BlendedAvg(double sumSpeedKmh, int sampleCount, DateTime firstSeenAt, double freeflowSpeed, DateTime now)
     {
-        var totalSlots = Math.Max(1, (int)Math.Ceiling((DateTime.UtcNow - firstSeenAt).TotalDays / 7.0));
+        var totalSlots = Math.Max(1, (int)Math.Ceiling((now - firstSeenAt).TotalDays / 7.0));
         var missing    = Math.Max(0, totalSlots - sampleCount);
         return (sumSpeedKmh + missing * freeflowSpeed) / (sampleCount + missing);
     }
@@ -142,6 +145,8 @@ public class TrafficAggregationService(AppDbContext db, ILogger<TrafficAggregati
     private async Task UpdateSummariesEmaAsync(long[] wayIds, CancellationToken ct)
     {
         if (wayIds.Length == 0) return;
+
+        var now = DateTime.UtcNow;
 
         // Load existing summaries as EMA seeds.
         var seeds = await db.WaySpeedSummaries
@@ -158,12 +163,6 @@ public class TrafficAggregationService(AppDbContext db, ILogger<TrafficAggregati
             .ToListAsync(ct);
 
         if (obs.Count == 0) return;
-
-        var wayIds_out   = new List<long>();
-        var constrained  = new List<double>();
-        var freeflow     = new List<double>();
-        var speedLimits  = new List<double?>();
-        var lastUpdated  = new List<DateTime>();
 
         var groups = obs.GroupBy(o => o.WayId).ToArray();
         logger.LogDebug("Updating EMA summaries for {WayCount} ways from {ObsCount} observations", groups.Length, obs.Count);
@@ -198,93 +197,96 @@ public class TrafficAggregationService(AppDbContext db, ILogger<TrafficAggregati
                           speedLimit, group.Max(o => o.Timestamp));
         });
 
-        foreach (var r in results)
+        // Load current aggregate buckets for these ways (post-upsert state) to compute encoded speeds.
+        var aggregates = await db.WaySpeedAggregates
+            .Where(a => wayIds.Contains(a.OsmWayId) && a.SampleCount > 0)
+            .AsNoTracking()
+            .Select(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket, a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt })
+            .ToListAsync(ct);
+
+        var aggregatesByWay = aggregates
+            .GroupBy(a => a.OsmWayId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // Encode per-way speed patterns in parallel — each iteration is CPU-bound and independent.
+        var encodedSpeeds = new string[results.Length];
+        Parallel.For(0, results.Length, i =>
         {
-            wayIds_out  .Add(r.WayId);
-            constrained .Add(r.Constrained);
-            freeflow    .Add(r.Freeflow);
-            speedLimits .Add(r.SpeedLimit);
-            lastUpdated .Add(r.LastUpdated);
+            var r    = results[i];
+            var buf  = new float[2016];
+            var fill = (float)r.Freeflow;
+            Array.Fill(buf, fill);
+            if (aggregatesByWay.TryGetValue(r.WayId, out var wayAggs))
+            {
+                foreach (var a in wayAggs)
+                    buf[(a.DayOfWeek + 6) % 7 * 288 + a.FiveMinuteBucket] =
+                        (float)BlendedAvg(a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt, r.Freeflow, now);
+            }
+            encodedSpeeds[i] = ValhallaSpeedEncoder.Encode(buf);
+        });
+
+        var wayIds_out  = new long  [results.Length];
+        var constrained = new double[results.Length];
+        var freeflow    = new double[results.Length];
+        var speedLimits = new double?[results.Length];
+        var lastUpdated = new DateTime[results.Length];
+        for (var i = 0; i < results.Length; i++)
+        {
+            var r = results[i];
+            wayIds_out [i] = r.WayId;
+            constrained[i] = r.Constrained;
+            freeflow   [i] = r.Freeflow;
+            speedLimits[i] = r.SpeedLimit;
+            lastUpdated[i] = r.LastUpdated;
         }
 
         // Bulk upsert via unnest — one round-trip for all ways.
         await db.Database.ExecuteSqlRawAsync("""
             INSERT INTO "WaySpeedSummaries"
-                ("OsmWayId", "ConstrainedSpeed", "FreeflowSpeed", "SpeedLimitKmh", "LastUpdated")
-            SELECT v.way_id, v.constrained, v.freeflow, v.speed_limit, v.last_updated
-            FROM   unnest(@way_ids, @constrained, @freeflow, @speed_limits, @last_updated)
-                   AS v(way_id, constrained, freeflow, speed_limit, last_updated)
+                ("OsmWayId", "ConstrainedSpeed", "FreeflowSpeed", "SpeedLimitKmh", "LastUpdated", "EncodedSpeeds")
+            SELECT v.way_id, v.constrained, v.freeflow, v.speed_limit, v.last_updated, v.encoded_speeds
+            FROM   unnest(@way_ids, @constrained, @freeflow, @speed_limits, @last_updated, @encoded_speeds)
+                   AS v(way_id, constrained, freeflow, speed_limit, last_updated, encoded_speeds)
             ON CONFLICT ("OsmWayId") DO UPDATE SET
                 "ConstrainedSpeed" = EXCLUDED."ConstrainedSpeed",
                 "FreeflowSpeed"    = EXCLUDED."FreeflowSpeed",
                 "SpeedLimitKmh"    = COALESCE(EXCLUDED."SpeedLimitKmh", "WaySpeedSummaries"."SpeedLimitKmh"),
-                "LastUpdated"      = EXCLUDED."LastUpdated"
+                "LastUpdated"      = EXCLUDED."LastUpdated",
+                "EncodedSpeeds"    = EXCLUDED."EncodedSpeeds"
             """,
             [
-                new NpgsqlParameter("way_ids",      NpgsqlDbType.Array | NpgsqlDbType.Bigint)                   { Value = wayIds_out .ToArray() },
-                new NpgsqlParameter("constrained",  NpgsqlDbType.Array | NpgsqlDbType.Double)                   { Value = constrained.ToArray() },
-                new NpgsqlParameter("freeflow",     NpgsqlDbType.Array | NpgsqlDbType.Double)                   { Value = freeflow   .ToArray() },
-                new NpgsqlParameter("speed_limits", NpgsqlDbType.Array | NpgsqlDbType.Double)                   { Value = speedLimits.ToArray() },
-                new NpgsqlParameter("last_updated", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz)              { Value = lastUpdated.ToArray() },
+                new NpgsqlParameter("way_ids",       NpgsqlDbType.Array | NpgsqlDbType.Bigint)      { Value = wayIds_out  },
+                new NpgsqlParameter("constrained",   NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = constrained },
+                new NpgsqlParameter("freeflow",      NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = freeflow    },
+                new NpgsqlParameter("speed_limits",  NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = speedLimits },
+                new NpgsqlParameter("last_updated",  NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = lastUpdated },
+                new NpgsqlParameter("encoded_speeds",NpgsqlDbType.Array | NpgsqlDbType.Text)        { Value = encodedSpeeds },
             ],
             ct);
     }
 
     // ── Valhalla CSV export ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Streams the Valhalla predicted-traffic CSV from pre-computed encoded speeds in WaySpeedSummaries.
+    /// No DCT computation at export time — encoding happens during aggregation.
+    /// </summary>
     public async Task WriteValhallaExportCsvAsync(Stream output, CancellationToken ct = default)
     {
-        var summaries = await db.WaySpeedSummaries
-            .AsNoTracking()
-            .ToDictionaryAsync(s => s.OsmWayId, ct);
-
         await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 65536, leaveOpen: true);
         writer.WriteLine("way_id,freeflow_speed,constrained_speed,historical_speeds");
 
-        var speedBuffer    = new float[2016];
-        var slots          = new Dictionary<int, double>(2016);
-        var writtenWays    = new HashSet<long>();
-        long? currentWayId = null;
-        double currentFreeflow = 0;
-
-        void FlushWay(long wayId)
-        {
-            summaries.TryGetValue(wayId, out var summary);
-            var freeflow    = summary is not null ? (int)Math.Round(summary.FreeflowSpeed) : 0;
-            var constrained = summary is not null ? (int)Math.Round(summary.ConstrainedSpeed ?? summary.FreeflowSpeed) : freeflow;
-            var fill = (float)freeflow;
-            for (var i = 0; i < 2016; i++)
-                speedBuffer[i] = slots.TryGetValue(i, out var sv) ? (float)sv : fill;
-            writer.WriteLine($"{wayId},{freeflow},{constrained},{ValhallaSpeedEncoder.Encode(speedBuffer)}");
-            writtenWays.Add(wayId);
-        }
-
-        // Stream aggregates ordered by way — accumulate slots per way, flush on boundary.
-        await foreach (var b in db.WaySpeedAggregates
-            .Where(a => a.SampleCount > 0)
-            .OrderBy(a => a.OsmWayId)
+        await foreach (var s in readDb.WaySpeedSummaries
+            .Where(s => s.EncodedSpeeds != null)
+            .OrderBy(s => s.OsmWayId)
             .AsNoTracking()
-            .Select(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket, a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt })
+            .Select(s => new { s.OsmWayId, s.FreeflowSpeed, s.ConstrainedSpeed, s.EncodedSpeeds })
             .AsAsyncEnumerable()
             .WithCancellation(ct))
         {
-            if (currentWayId != b.OsmWayId)
-            {
-                if (currentWayId.HasValue) FlushWay(currentWayId.Value);
-                currentWayId    = b.OsmWayId;
-                currentFreeflow = summaries.TryGetValue(b.OsmWayId, out var sum) ? sum.FreeflowSpeed : 0;
-                slots.Clear();
-            }
-            slots[(b.DayOfWeek + 6) % 7 * 288 + b.FiveMinuteBucket] =
-                BlendedAvg(b.SumSpeedKmh, b.SampleCount, b.FirstSeenAt, currentFreeflow);
-        }
-        if (currentWayId.HasValue) FlushWay(currentWayId.Value);
-
-        // Write summary-only ways (have a summary entry but no aggregate buckets yet).
-        foreach (var wayId in summaries.Keys.Where(id => !writtenWays.Contains(id)).OrderBy(id => id))
-        {
-            slots.Clear();
-            FlushWay(wayId);
+            var freeflow    = (int)Math.Round(s.FreeflowSpeed);
+            var constrained = (int)Math.Round(s.ConstrainedSpeed ?? s.FreeflowSpeed);
+            writer.WriteLine($"{s.OsmWayId},{freeflow},{constrained},{s.EncodedSpeeds}");
         }
     }
 

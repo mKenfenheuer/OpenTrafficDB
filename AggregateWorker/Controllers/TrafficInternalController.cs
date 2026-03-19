@@ -100,14 +100,19 @@ internal sealed class TeeStream(Stream first, Stream second) : Stream
 
     public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct)
     {
-        await first .WriteAsync(buffer.AsMemory(offset, count), ct);
-        await second.WriteAsync(buffer.AsMemory(offset, count), ct);
+        var mem = buffer.AsMemory(offset, count);
+        var t1  = first .WriteAsync(mem, ct);
+        var t2  = second.WriteAsync(mem, ct);
+        await t1;
+        await t2;
     }
 
     public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
     {
-        await first .WriteAsync(buffer, ct);
-        await second.WriteAsync(buffer, ct);
+        var t1 = first .WriteAsync(buffer, ct);
+        var t2 = second.WriteAsync(buffer, ct);
+        await t1;
+        await t2;
     }
 
     public override void Flush()
@@ -118,8 +123,10 @@ internal sealed class TeeStream(Stream first, Stream second) : Stream
 
     public override async Task FlushAsync(CancellationToken ct)
     {
-        await first .FlushAsync(ct);
-        await second.FlushAsync(ct);
+        var t1 = first .FlushAsync(ct);
+        var t2 = second.FlushAsync(ct);
+        await t1;
+        await t2;
     }
 
     public override int  Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();

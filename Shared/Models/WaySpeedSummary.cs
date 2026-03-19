@@ -8,4 +8,6 @@ public class WaySpeedSummary
     public double? ConstrainedSpeed { get; set; }
     public double? SpeedLimitKmh { get; set; }
     public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
+    /// <summary>Pre-computed Valhalla DCT-encoded speed string. Null until first aggregation.</summary>
+    public string? EncodedSpeeds { get; set; }
 }
