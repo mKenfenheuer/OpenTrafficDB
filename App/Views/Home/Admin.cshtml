@@ -150,6 +150,9 @@
     if (!session)              { window.location.href = '/';             throw new Error(); }
     if (session.role !== 'Admin') { window.location.href = '/Home/Dashboard'; throw new Error(); }
 
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('content').classList.remove('hidden');
+
     // ── Pipeline Stats ─────────────────────────────────────────────────────────
 
     function statKpi(label, value, sub = '', cls = '') {
