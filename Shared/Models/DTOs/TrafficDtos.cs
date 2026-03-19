@@ -16,32 +16,6 @@ public class LiveSpeedPoint
     public DateTime Timestamp { get; set; }
 }
 
-public class LiveTrafficResponse
-{
-    public List<LiveSpeedPoint> Points { get; set; } = [];
-    public DateTime AsOf { get; set; } = DateTime.UtcNow;
-    public int TotalPoints { get; set; }
-}
-
-public class LiveTrafficQuery
-{
-    [Required, Range(-90.0, 90.0)]
-    public double MinLat { get; set; }
-
-    [Required, Range(-90.0, 90.0)]
-    public double MaxLat { get; set; }
-
-    [Required, Range(-180.0, 180.0)]
-    public double MinLon { get; set; }
-
-    [Required, Range(-180.0, 180.0)]
-    public double MaxLon { get; set; }
-
-    [Range(1, 60)]
-    public int MaxAgeMinutes { get; set; } = 15;
-}
-
-
 public class BlockIpRequest
 {
     [Required]

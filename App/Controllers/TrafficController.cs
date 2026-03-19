@@ -17,35 +17,7 @@ public class TrafficController(
     AbuseDetectionService abuseDetection,
     WorkerClient workers) : ControllerBase
 {
-    /// <summary>
-    /// Get recent speed observations within a geographic bounding box for live traffic display.
-    /// Returns GPS-level speed points. Maximum bounding box: 1° × 1°. Maximum age: 60 minutes.
-    /// </summary>
-    [HttpGet("live")]
-    [ProducesResponseType(typeof(LiveTrafficResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<IActionResult> GetLiveSpeeds([FromQuery] LiveTrafficQuery query, CancellationToken ct)
-    {
-        var ip    = GetIp();
-        var keyId = User.FindFirstValue("keyId") ?? string.Empty;
-
-        if (!abuseDetection.CheckReadRate(ip, keyId))
-            return StatusCode(429, new { error = "Rate limit exceeded." });
-
-        if (query.MinLat >= query.MaxLat || query.MinLon >= query.MaxLon)
-            return BadRequest(new { error = "Invalid bounding box: min values must be less than max values." });
-
-        if (Math.Abs(query.MaxLat - query.MinLat) > 1.0 || Math.Abs(query.MaxLon - query.MinLon) > 1.0)
-            return BadRequest(new { error = "Bounding box too large. Maximum size is 1° × 1°." });
-
-        var qs = $"?minLat={query.MinLat}&maxLat={query.MaxLat}&minLon={query.MinLon}&maxLon={query.MaxLon}";
-        await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/live",
-            GetUserId(), keyId, string.Empty, null, Response, query: qs, ct: ct);
-        return new EmptyResult();
-    }
-
-    /// <summary>
+    /// <summary> 
     /// Exports traffic data in Valhalla predicted-traffic CSV format.
     /// </summary>
     [HttpGet("valhalla/csv")]
