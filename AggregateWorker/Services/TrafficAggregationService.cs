@@ -392,10 +392,12 @@ public class TrafficAggregationService(AppDbContext db)
                 "SpeedLimitKmh"    = COALESCE(EXCLUDED."SpeedLimitKmh", "WaySpeedSummaries"."SpeedLimitKmh"),
                 "LastUpdated"      = NOW()
             """,
-            new NpgsqlParameter("way_ids",     NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = wayIds_out  .ToArray() },
-            new NpgsqlParameter("constrained", NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = constrained .ToArray() },
-            new NpgsqlParameter("freeflow",    NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = freeflow    .ToArray() },
-            new NpgsqlParameter("speed_limits",NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = speedLimits .ToArray() },
+            [
+                new NpgsqlParameter("way_ids",      NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = wayIds_out .ToArray() },
+                new NpgsqlParameter("constrained",  NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = constrained.ToArray() },
+                new NpgsqlParameter("freeflow",     NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = freeflow   .ToArray() },
+                new NpgsqlParameter("speed_limits", NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = speedLimits.ToArray() },
+            ],
             ct);
     }
 
