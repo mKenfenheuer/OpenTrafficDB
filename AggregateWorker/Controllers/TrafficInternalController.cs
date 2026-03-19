@@ -22,36 +22,6 @@ public class TrafficInternalController(TrafficAggregationService aggregation) : 
         return Ok(await aggregation.GetLiveSpeedsAsync(query, ct));
     }
 
-    [HttpGet("current/csv")]
-    [Produces("text/csv")]
-    public async Task<IActionResult> GetCurrentWayCsv(CancellationToken ct)
-    {
-        Response.ContentType = "text/csv";
-        Response.Headers["Content-Disposition"] = "attachment; filename=\"current_way_traffic.csv\"";
-        await aggregation.WriteCurrentWayCsvAsync(Response.Body, ct);
-        return new EmptyResult();
-    }
-
-    [HttpGet("live/way/csv")]
-    [Produces("text/csv")]
-    public async Task<IActionResult> GetLiveWayCsv(CancellationToken ct)
-    {
-        Response.ContentType = "text/csv";
-        Response.Headers["Content-Disposition"] = "attachment; filename=\"live_way_traffic.csv\"";
-        await aggregation.WriteLiveWayCsvAsync(Response.Body, ct);
-        return new EmptyResult();
-    }
-
-    [HttpGet("historic/way/csv")]
-    [Produces("text/csv")]
-    public async Task<IActionResult> GetHistoricWayCsv(CancellationToken ct)
-    {
-        Response.ContentType = "text/csv";
-        Response.Headers["Content-Disposition"] = "attachment; filename=\"historic_way_traffic.csv\"";
-        await aggregation.WriteHistoricWayCsvAsync(Response.Body, ct);
-        return new EmptyResult();
-    }
-
     [HttpGet("valhalla/csv")]
     [Produces("text/csv")]
     public async Task<IActionResult> GetValhallaExportCsv(CancellationToken ct)

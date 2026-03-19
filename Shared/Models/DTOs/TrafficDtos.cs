@@ -41,14 +41,6 @@ public class LiveTrafficQuery
     public int MaxAgeMinutes { get; set; } = 15;
 }
 
-public record WayTrafficData(
-    double  SpeedKmh,
-    double? SpeedLimitKmh,
-    double? DelayFactor,
-    double? JamEstimate,
-    string  Source,
-    int     LiveSamples,
-    int     HistoricSamples);
 
 public class BlockIpRequest
 {

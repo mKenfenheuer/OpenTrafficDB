@@ -46,51 +46,6 @@ public class TrafficController(
     }
 
     /// <summary>
-    /// Current per-way traffic as CSV.
-    /// </summary>
-    [HttpGet("current/csv")]
-    [Produces("text/csv")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<IActionResult> GetCurrentWayCsv(CancellationToken ct)
-    {
-        if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
-        await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/current/csv",
-            GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
-        return new EmptyResult();
-    }
-
-    /// <summary>
-    /// Live way-level traffic statistics as CSV (rolling 30-minute window).
-    /// </summary>
-    [HttpGet("live/way/csv")]
-    [Produces("text/csv")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<IActionResult> GetLiveWayCsv(CancellationToken ct)
-    {
-        if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
-        await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/live/way/csv",
-            GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
-        return new EmptyResult();
-    }
-
-    /// <summary>
-    /// Historic way traffic as CSV from pre-aggregated 5-minute buckets (full week).
-    /// </summary>
-    [HttpGet("historic/way/csv")]
-    [Produces("text/csv")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<IActionResult> GetHistoricWayCsv(CancellationToken ct)
-    {
-        if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
-        await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/historic/way/csv",
-            GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
-        return new EmptyResult();
-    }
-
-    /// <summary>
     /// Exports traffic data in Valhalla predicted-traffic CSV format.
     /// </summary>
     [HttpGet("valhalla/csv")]
