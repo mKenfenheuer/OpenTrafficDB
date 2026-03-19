@@ -22,6 +22,30 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     private int CurrentUserId =>
         int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "0");
 
+    // ── Stats ─────────────────────────────────────────────────────────────────
+
+    /// <summary>Queue depths and ingest/processing rates for the aggregation pipeline.</summary>
+    [HttpGet("stats")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetStats(CancellationToken ct)
+    {
+        var ingestCutoff = DateTime.UtcNow.AddMinutes(-5);
+
+        var totalQueue     = await db.SpeedObservations.CountAsync(o => !o.IsAggregated || o.OsmWayId == null, ct);
+        var matchingQueue  = await db.SpeedObservations.CountAsync(o => o.OsmWayId == null, ct);
+        var aggregateQueue = await db.SpeedObservations.CountAsync(o => !o.IsAggregated, ct);
+        var ingestLast5Min = await db.SpeedObservations.CountAsync(o => o.CreatedAt >= ingestCutoff, ct);
+
+        return Ok(new
+        {
+            totalQueue,
+            matchingQueue,
+            aggregateQueue,
+            ingestPer5Min  = ingestLast5Min,
+            ingestPerMin   = ingestLast5Min / 5,
+        });
+    }
+
     // ── Workers ───────────────────────────────────────────────────────────────
 
     /// <summary>Get health and metrics for all worker services.</summary>

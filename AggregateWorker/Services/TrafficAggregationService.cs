@@ -55,7 +55,8 @@ public class TrafficAggregationService(AppDbContext db)
                 SUM("SpeedMs" * 3.6),
                 COUNT(*)::int,
                 MAX("SpeedLimitKmh"),
-                NOW(), NOW()
+                MAX("Timestamp"),
+                MIN("Timestamp")
             FROM "SpeedObservations"
             WHERE NOT "IsAggregated"
               AND "OsmWayId" = ANY({wayIds})
@@ -68,7 +69,7 @@ public class TrafficAggregationService(AppDbContext db)
                 "SumSpeedKmh"   = "WaySpeedAggregates"."SumSpeedKmh"  + EXCLUDED."SumSpeedKmh",
                 "SampleCount"   = "WaySpeedAggregates"."SampleCount"  + EXCLUDED."SampleCount",
                 "SpeedLimitKmh" = COALESCE(EXCLUDED."SpeedLimitKmh", "WaySpeedAggregates"."SpeedLimitKmh"),
-                "LastUpdated"   = NOW()
+                "LastUpdated"   = EXCLUDED."LastUpdated"
             """, ct);
 
         // Apply EMA to WaySpeedSummaries before observations are deleted, then delete.
@@ -340,16 +341,17 @@ public class TrafficAggregationService(AppDbContext db)
         var obs = await db.SpeedObservations
             .Where(o => !o.IsAggregated && o.OsmWayId != null && wayIds.Contains(o.OsmWayId.Value))
             .OrderBy(o => o.Timestamp)
-            .Select(o => new { WayId = o.OsmWayId!.Value, SpeedKmh = o.SpeedMs * 3.6, o.SpeedLimitKmh })
+            .Select(o => new { WayId = o.OsmWayId!.Value, SpeedKmh = o.SpeedMs * 3.6, o.SpeedLimitKmh, o.Timestamp })
             .AsNoTracking()
             .ToListAsync(ct);
 
         if (obs.Count == 0) return;
 
-        var wayIds_out  = new List<long>();
-        var constrained = new List<double>();
-        var freeflow    = new List<double>();
-        var speedLimits = new List<double?>();
+        var wayIds_out   = new List<long>();
+        var constrained  = new List<double>();
+        var freeflow     = new List<double>();
+        var speedLimits  = new List<double?>();
+        var lastUpdated  = new List<DateTime>();
 
         foreach (var group in obs.GroupBy(o => o.WayId))
         {
@@ -377,26 +379,28 @@ public class TrafficAggregationService(AppDbContext db)
             constrained .Add(Math.Round(emaConstrained, 1));
             freeflow    .Add(Math.Round(emaFreeflow,    1));
             speedLimits .Add(speedLimit);
+            lastUpdated .Add(group.Max(o => o.Timestamp));
         }
 
         // Bulk upsert via unnest — one round-trip for all ways.
         await db.Database.ExecuteSqlRawAsync("""
             INSERT INTO "WaySpeedSummaries"
                 ("OsmWayId", "ConstrainedSpeed", "FreeflowSpeed", "SpeedLimitKmh", "LastUpdated")
-            SELECT v.way_id, v.constrained, v.freeflow, v.speed_limit, NOW()
-            FROM   unnest(@way_ids, @constrained, @freeflow, @speed_limits)
-                   AS v(way_id, constrained, freeflow, speed_limit)
+            SELECT v.way_id, v.constrained, v.freeflow, v.speed_limit, v.last_updated
+            FROM   unnest(@way_ids, @constrained, @freeflow, @speed_limits, @last_updated)
+                   AS v(way_id, constrained, freeflow, speed_limit, last_updated)
             ON CONFLICT ("OsmWayId") DO UPDATE SET
                 "ConstrainedSpeed" = EXCLUDED."ConstrainedSpeed",
                 "FreeflowSpeed"    = EXCLUDED."FreeflowSpeed",
                 "SpeedLimitKmh"    = COALESCE(EXCLUDED."SpeedLimitKmh", "WaySpeedSummaries"."SpeedLimitKmh"),
-                "LastUpdated"      = NOW()
+                "LastUpdated"      = EXCLUDED."LastUpdated"
             """,
             [
-                new NpgsqlParameter("way_ids",      NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = wayIds_out .ToArray() },
-                new NpgsqlParameter("constrained",  NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = constrained.ToArray() },
-                new NpgsqlParameter("freeflow",     NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = freeflow   .ToArray() },
-                new NpgsqlParameter("speed_limits", NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = speedLimits.ToArray() },
+                new NpgsqlParameter("way_ids",      NpgsqlDbType.Array | NpgsqlDbType.Bigint)                   { Value = wayIds_out .ToArray() },
+                new NpgsqlParameter("constrained",  NpgsqlDbType.Array | NpgsqlDbType.Double)                   { Value = constrained.ToArray() },
+                new NpgsqlParameter("freeflow",     NpgsqlDbType.Array | NpgsqlDbType.Double)                   { Value = freeflow   .ToArray() },
+                new NpgsqlParameter("speed_limits", NpgsqlDbType.Array | NpgsqlDbType.Double)                   { Value = speedLimits.ToArray() },
+                new NpgsqlParameter("last_updated", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz)              { Value = lastUpdated.ToArray() },
             ],
             ct);
     }

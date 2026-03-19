@@ -11,6 +11,20 @@
         <p class="text-muted">Service statistics, user management, and IP controls</p>
       </div>
 
+      <!-- Pipeline Stats -->
+      <div class="section">
+        <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span style="display:flex;align-items:center;gap:8px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Aggregation Pipeline
+          </span>
+          <span id="stats-last-refresh" class="text-muted" style="font-size:0.78rem;font-weight:400"></span>
+        </div>
+        <div id="stats-container" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px">
+          <div class="text-muted" style="padding:16px">Loading…</div>
+        </div>
+      </div>
+
       <!-- Workers -->
       <div class="section">
         <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -135,6 +149,33 @@
     const session = await getSession();
     if (!session)              { window.location.href = '/';             throw new Error(); }
     if (session.role !== 'Admin') { window.location.href = '/Home/Dashboard'; throw new Error(); }
+
+    // ── Pipeline Stats ─────────────────────────────────────────────────────────
+
+    function statKpi(label, value, sub = '', cls = '') {
+      return `<div class="card" style="padding:14px 16px">
+        <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">${label}</div>
+        <div style="font-size:1.5rem;font-weight:700${cls ? `;color:var(--${cls})` : ''}">${value}</div>
+        ${sub ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px">${sub}</div>` : ''}
+      </div>`;
+    }
+
+    async function loadStats() {
+      const res = await web('GET', '/admin/stats');
+      const container = document.getElementById('stats-container');
+      if (!res?.ok) {
+        container.innerHTML = '<div class="text-danger" style="padding:12px">Failed to load stats.</div>';
+        return;
+      }
+      const d = res.data;
+      const queueCls = d.totalQueue > 500_000 ? 'danger' : d.totalQueue > 100_000 ? 'warning' : '';
+      container.innerHTML =
+        statKpi('Total queue',      d.totalQueue.toLocaleString(),      'unmatched or unaggregated', queueCls) +
+        statKpi('Matching queue',   d.matchingQueue.toLocaleString(),   'no OSM way yet') +
+        statKpi('Aggregate queue',  d.aggregateQueue.toLocaleString(),  'matched, pending agg.') +
+        statKpi('Ingest rate',      d.ingestPerMin.toLocaleString() + ' /min', `${d.ingestPer5Min.toLocaleString()} in last 5 min`);
+      document.getElementById('stats-last-refresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    }
 
     // ── Workers ────────────────────────────────────────────────────────────────
 
@@ -407,7 +448,8 @@
       return `<tr><td colspan="${cols}" class="text-muted" style="text-align:center;padding:24px">${msg}</td></tr>`;
     }
 
-    Promise.all([loadWorkers(), loadStats(), loadUsers(), loadBlocked()]);
+    Promise.all([loadStats(), loadWorkers(), loadUsers(), loadBlocked()]);
+    setInterval(loadStats,   15_000);
     setInterval(loadWorkers, 10_000);
   </script>
 }
