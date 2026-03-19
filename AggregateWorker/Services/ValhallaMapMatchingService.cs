@@ -197,9 +197,19 @@ public class ValhallaMapMatchingService(
                 }
             }
 
+            // Build per-trip matched ID set: in-memory OsmWayId is always null (loaded before
+            // Valhalla ran), so we must exclude matched IDs from the stale list explicitly.
+            var tripMatchedIds = new HashSet<long>();
+            for (int si = 0; si < segments.Count; si++)
+            {
+                if (segmentMatches[si] is null) continue;
+                foreach (var (idx, _) in segmentMatches[si])
+                    tripMatchedIds.Add(segments[si][idx].Id);
+            }
+
             foreach (var obs in sorted)
             {
-                if (obs.OsmWayId == null && obs.CreatedAt < staleCutoff)
+                if (!tripMatchedIds.Contains(obs.Id) && obs.CreatedAt < staleCutoff)
                     staleIds.Add(obs.Id);
             }
         }

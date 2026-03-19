@@ -31,9 +31,12 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     {
         var cutoff5 = DateTime.UtcNow.AddMinutes(-5);
 
-        var totalQueue      = await db.SpeedObservations.CountAsync(o => !o.IsAggregated || o.OsmWayId == null, ct);
-        var matchingQueue   = await db.SpeedObservations.CountAsync(o => o.OsmWayId == null, ct);
-        var aggregateQueue  = await db.SpeedObservations.CountAsync(o => !o.IsAggregated, ct);
+        // matchingQueue: unmatched AND not yet given up on (actionable by coordinator)
+        // aggregateQueue: matched but not yet aggregated
+        // totalQueue: union of the two
+        var matchingQueue   = await db.SpeedObservations.CountAsync(o => o.OsmWayId == null && !o.IsAggregated, ct);
+        var aggregateQueue  = await db.SpeedObservations.CountAsync(o => o.OsmWayId != null && !o.IsAggregated, ct);
+        var totalQueue      = matchingQueue + aggregateQueue;
         var ingestLast5Min  = await db.SpeedObservations.CountAsync(o => o.CreatedAt >= cutoff5, ct);
         var processedLast5Min = await db.AggregationMetrics
             .Where(m => m.ProcessedAt >= cutoff5)

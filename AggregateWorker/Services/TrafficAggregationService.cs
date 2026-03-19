@@ -102,12 +102,14 @@ public class TrafficAggregationService(AppDbContext db, ILogger<TrafficAggregati
     /// </summary>
     public async Task FinalizeAsync(CancellationToken ct = default)
     {
-        // Delete stale unmatched observations (Valhalla never found a way for them).
-        // Aggregated observations are deleted eagerly in ReaggregateRangeAsync.
+        // Delete stale unmatched observations:
+        // - IsAggregated=true && OsmWayId==null: explicitly given up on by the matching pipeline — delete immediately.
+        // - OsmWayId==null && old: never processed (shouldn't happen in normal operation) — delete after retention window.
+        // Aggregated observations with OsmWayId set are deleted eagerly in ReaggregateRangeAsync.
         var unmatchedCutoff = DateTime.UtcNow - UnmatchedRetention;
 
         var deleted = await db.SpeedObservations
-            .Where(o => o.OsmWayId == null && o.CreatedAt < unmatchedCutoff)
+            .Where(o => o.OsmWayId == null && (o.IsAggregated || o.CreatedAt < unmatchedCutoff))
             .ExecuteDeleteAsync(ct);
 
         if (deleted > 0)
