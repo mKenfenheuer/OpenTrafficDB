@@ -121,45 +121,6 @@ public class TrafficAggregationService(AppDbContext db, ILogger<TrafficAggregati
             .ExecuteDeleteAsync(ct);
     }
 
-    // ── Live traffic (rolling 30-minute window) ─────────────────────────────────
-
-    public async Task<LiveTrafficResponse> GetLiveSpeedsAsync(LiveTrafficQuery query, CancellationToken ct = default)
-    {
-        var cutoff = DateTime.UtcNow.AddMinutes(-query.MaxAgeMinutes);
-
-        var obs = await db.SpeedObservations
-            .Where(o => o.Timestamp >= cutoff
-                && o.Latitude >= query.MinLat && o.Latitude <= query.MaxLat
-                && o.Longitude >= query.MinLon && o.Longitude <= query.MaxLon)
-            .OrderByDescending(o => o.Timestamp)
-            .Take(10_000)
-            .AsNoTracking()
-            .Select(o => new LiveSpeedPoint
-            {
-                Latitude      = o.Latitude,
-                Longitude     = o.Longitude,
-                SpeedMs       = o.SpeedMs,
-                SpeedKmh      = Math.Round(o.SpeedMs * 3.6, 1),
-                Heading       = o.Heading,
-                OsmWayId      = o.OsmWayId,
-                SpeedLimitKmh = o.SpeedLimitKmh,
-                Timestamp     = o.Timestamp
-            })
-            .ToListAsync(ct);
-
-        foreach (var pt in obs)
-        {
-            if (pt.SpeedLimitKmh is > 0)
-            {
-                var delay = Math.Clamp(1.0 - pt.SpeedKmh / pt.SpeedLimitKmh.Value, 0.0, 1.0);
-                pt.DelayFactor = Math.Round(delay, 3);
-                pt.JamEstimate = Math.Round(ComputeJam(delay), 3);
-            }
-        }
-
-        return new LiveTrafficResponse { Points = obs, TotalPoints = obs.Count, AsOf = DateTime.UtcNow };
-    }
-
     // ── WaySpeedSummary EMA maintenance ─────────────────────────────────────────
 
     private const double EmaAlpha = 0.8;
