@@ -1,5 +1,7 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using NpgsqlTypes;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Models;
 using OpenTrafficDB.Shared.Models.DTOs;
@@ -25,7 +27,6 @@ public class TrafficAggregationService(AppDbContext db)
     private static int ToFiveMinuteBucket(DateTime utc)
         => (utc.Hour * 60 + utc.Minute) / 5;
 
-    private static readonly TimeSpan LiveRetention      = TimeSpan.FromHours(1);
     private static readonly TimeSpan UnmatchedRetention = TimeSpan.FromHours(24);
 
     // ── Hybrid aggregation ──────────────────────────────────────────────────────
@@ -70,11 +71,12 @@ public class TrafficAggregationService(AppDbContext db)
                 "LastUpdated"   = NOW()
             """, ct);
 
+        // Apply EMA to WaySpeedSummaries before observations are deleted, then delete.
+        await UpdateSummariesEmaAsync(wayIds, ct);
+
         var processed = await db.SpeedObservations
             .Where(o => !o.IsAggregated && o.OsmWayId != null && wayIds.Contains(o.OsmWayId.Value))
-            .ExecuteUpdateAsync(s => s.SetProperty(o => o.IsAggregated, true), ct);
-
-        await RebuildSummariesAsync([.. wayIds], ct);
+            .ExecuteDeleteAsync(ct);
 
         return new AggregateJobResult(processed);
     }
@@ -85,14 +87,12 @@ public class TrafficAggregationService(AppDbContext db)
     /// </summary>
     public async Task FinalizeAsync(CancellationToken ct = default)
     {
-        await RefreshConstrainedSpeedsAsync(ct);
-
-        var liveWindow      = DateTime.UtcNow - LiveRetention;
+        // Delete stale unmatched observations (Valhalla never found a way for them).
+        // Aggregated observations are deleted eagerly in ReaggregateRangeAsync.
         var unmatchedCutoff = DateTime.UtcNow - UnmatchedRetention;
 
         await db.SpeedObservations
-            .Where(o => (o.IsAggregated && o.CreatedAt < liveWindow)
-                     || (o.OsmWayId == null && o.CreatedAt < unmatchedCutoff))
+            .Where(o => o.OsmWayId == null && o.CreatedAt < unmatchedCutoff)
             .ExecuteDeleteAsync(ct);
     }
 
@@ -308,7 +308,9 @@ public class TrafficAggregationService(AppDbContext db)
         return result;
     }
 
-    // ── WaySpeedSummary maintenance ─────────────────────────────────────────────
+    // ── WaySpeedSummary EMA maintenance ─────────────────────────────────────────
+
+    private const double EmaAlpha = 0.8;
 
     private static double BlendedAvg(double sumSpeedKmh, int sampleCount, DateTime firstSeenAt, double freeflowSpeed)
     {
@@ -318,79 +320,83 @@ public class TrafficAggregationService(AppDbContext db)
     }
 
     /// <summary>
-    /// Rebuilds WaySpeedSummary rows for the given ways using server-side
-    /// percentile_cont — avoids loading all aggregate buckets into .NET.
+    /// Updates WaySpeedSummaries for the given ways using an exponential moving average (α=0.8).
+    /// Observations are applied oldest-first so the most recent reading has the highest weight.
+    /// All summary fields (ConstrainedSpeed, FreeflowSpeed) are updated
+    /// with the same rolling pattern: new = old * 0.2 + batch_value * 0.8.
+    /// Must be called before the observations are deleted.
     /// </summary>
-    private async Task RebuildSummariesAsync(List<long> wayIds, CancellationToken ct)
+    private async Task UpdateSummariesEmaAsync(long[] wayIds, CancellationToken ct)
     {
-        if (wayIds.Count == 0) return;
+        if (wayIds.Length == 0) return;
 
-        var wayIdArray = wayIds.ToArray();
+        // Load existing summaries as EMA seeds.
+        var seeds = await db.WaySpeedSummaries
+            .Where(s => wayIds.Contains(s.OsmWayId))
+            .AsNoTracking()
+            .ToDictionaryAsync(s => s.OsmWayId, ct);
 
-        await db.Database.ExecuteSqlAsync($"""
+        // Load all pending observations ordered oldest-first for sequential EMA application.
+        var obs = await db.SpeedObservations
+            .Where(o => !o.IsAggregated && o.OsmWayId != null && wayIds.Contains(o.OsmWayId.Value))
+            .OrderBy(o => o.Timestamp)
+            .Select(o => new { WayId = o.OsmWayId!.Value, SpeedKmh = o.SpeedMs * 3.6, o.SpeedLimitKmh })
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        if (obs.Count == 0) return;
+
+        var wayIds_out  = new List<long>();
+        var constrained = new List<double>();
+        var freeflow    = new List<double>();
+        var speedLimits = new List<double?>();
+
+        foreach (var group in obs.GroupBy(o => o.WayId))
+        {
+            var wayId      = group.Key;
+            var speedLimit = group.FirstOrDefault(o => o.SpeedLimitKmh != null)?.SpeedLimitKmh;
+
+            seeds.TryGetValue(wayId, out var seed);
+
+            // ConstrainedSpeed: sequential EMA over all observations, oldest first.
+            double emaConstrained = seed?.ConstrainedSpeed ?? seed?.FreeflowSpeed ?? group.First().SpeedKmh;
+            foreach (var o in group)
+                emaConstrained = emaConstrained * (1 - EmaAlpha) + o.SpeedKmh * EmaAlpha;
+
+            // FreeflowSpeed: sequential EMA of observations within 20% of speed limit
+            // (i.e. not in congestion). Falls back to all observations when no limit is known.
+            List<dynamic> freeflowObs = speedLimit is > 0
+                ? [.. group.Where(o => o.SpeedKmh >= speedLimit.Value * 0.8)]
+                : [.. group];
+
+            double emaFreeflow = seed?.FreeflowSpeed ?? (freeflowObs.Count > 0 ? freeflowObs[0].SpeedKmh : emaConstrained);
+            foreach (var o in freeflowObs)
+                emaFreeflow = emaFreeflow * (1 - EmaAlpha) + o.SpeedKmh * EmaAlpha;
+
+            wayIds_out  .Add(wayId);
+            constrained .Add(Math.Round(emaConstrained, 1));
+            freeflow    .Add(Math.Round(emaFreeflow,    1));
+            speedLimits .Add(speedLimit);
+        }
+
+        // Bulk upsert via unnest — one round-trip for all ways.
+        await db.Database.ExecuteSqlRawAsync("""
             INSERT INTO "WaySpeedSummaries"
-                ("OsmWayId", "FreeflowSpeed", "P50Speed", "P95Speed",
-                 "SpeedLimitKmh", "TotalSamples", "LastUpdated")
-            SELECT
-                "OsmWayId",
-                GREATEST(
-                    percentile_cont(0.85) WITHIN GROUP (ORDER BY "SumSpeedKmh" / NULLIF("SampleCount", 0)),
-                    COALESCE(MAX("SpeedLimitKmh"), 0) * 0.75
-                ),
-                percentile_cont(0.50) WITHIN GROUP (ORDER BY "SumSpeedKmh" / NULLIF("SampleCount", 0)),
-                percentile_cont(0.95) WITHIN GROUP (ORDER BY "SumSpeedKmh" / NULLIF("SampleCount", 0)),
-                MAX("SpeedLimitKmh"),
-                SUM("SampleCount")::int,
-                NOW()
-            FROM "WaySpeedAggregates"
-            WHERE "OsmWayId" = ANY({wayIdArray}) AND "SampleCount" > 0
-            GROUP BY "OsmWayId"
+                ("OsmWayId", "ConstrainedSpeed", "FreeflowSpeed", "SpeedLimitKmh", "LastUpdated")
+            SELECT v.way_id, v.constrained, v.freeflow, v.speed_limit, NOW()
+            FROM   unnest(@way_ids, @constrained, @freeflow, @speed_limits)
+                   AS v(way_id, constrained, freeflow, speed_limit)
             ON CONFLICT ("OsmWayId") DO UPDATE SET
-                "FreeflowSpeed" = EXCLUDED."FreeflowSpeed",
-                "P50Speed"      = EXCLUDED."P50Speed",
-                "P95Speed"      = EXCLUDED."P95Speed",
-                "SpeedLimitKmh" = COALESCE(EXCLUDED."SpeedLimitKmh", "WaySpeedSummaries"."SpeedLimitKmh"),
-                "TotalSamples"  = EXCLUDED."TotalSamples",
-                "LastUpdated"   = NOW()
-            """, ct);
-    }
-
-    /// <summary>
-    /// Refreshes ConstrainedSpeed on all WaySpeedSummary rows using two
-    /// server-side SQL UPDATEs — avoids loading all summaries and observations into memory.
-    /// </summary>
-    private async Task RefreshConstrainedSpeedsAsync(CancellationToken ct)
-    {
-        // Set constrained speed for ways that have live observations
-        await db.Database.ExecuteSqlRawAsync("""
-            UPDATE "WaySpeedSummaries" s
-            SET    "ConstrainedSpeed" = live.avg_speed,
-                   "LastUpdated"      = NOW()
-            FROM (
-                SELECT "OsmWayId",
-                       ROUND((AVG("SpeedMs") * 3.6)::numeric, 1) AS avg_speed
-                FROM   "SpeedObservations"
-                WHERE  "Timestamp" >= NOW() - INTERVAL '30 minutes'
-                  AND  "OsmWayId"  IS NOT NULL
-                GROUP  BY "OsmWayId"
-            ) live
-            WHERE s."OsmWayId" = live."OsmWayId"
-            """, ct);
-
-        // Clear constrained speed for ways with no recent live data.
-        // NOT EXISTS uses the (Timestamp, OsmWayId) index; avoids the full DISTINCT scan of NOT IN.
-        await db.Database.ExecuteSqlRawAsync("""
-            UPDATE "WaySpeedSummaries" s
-            SET    "ConstrainedSpeed" = NULL,
-                   "LastUpdated"      = NOW()
-            WHERE  s."ConstrainedSpeed" IS NOT NULL
-              AND  NOT EXISTS (
-                       SELECT 1
-                       FROM   "SpeedObservations" o
-                       WHERE  o."OsmWayId"  = s."OsmWayId"
-                         AND  o."Timestamp" >= NOW() - INTERVAL '30 minutes'
-                   )
-            """, ct);
+                "ConstrainedSpeed" = EXCLUDED."ConstrainedSpeed",
+                "FreeflowSpeed"    = EXCLUDED."FreeflowSpeed",
+                "SpeedLimitKmh"    = COALESCE(EXCLUDED."SpeedLimitKmh", "WaySpeedSummaries"."SpeedLimitKmh"),
+                "LastUpdated"      = NOW()
+            """,
+            new NpgsqlParameter("way_ids",     NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = wayIds_out  .ToArray() },
+            new NpgsqlParameter("constrained", NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = constrained .ToArray() },
+            new NpgsqlParameter("freeflow",    NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = freeflow    .ToArray() },
+            new NpgsqlParameter("speed_limits",NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = speedLimits .ToArray() },
+            ct);
     }
 
     // ── Valhalla CSV export ─────────────────────────────────────────────────────
@@ -414,7 +420,7 @@ public class TrafficAggregationService(AppDbContext db)
         {
             summaries.TryGetValue(wayId, out var summary);
             var freeflow    = summary is not null ? (int)Math.Round(summary.FreeflowSpeed) : 0;
-            var constrained = summary is not null ? (int)Math.Round(summary.ConstrainedSpeed ?? summary.P50Speed) : freeflow;
+            var constrained = summary is not null ? (int)Math.Round(summary.ConstrainedSpeed ?? summary.FreeflowSpeed) : freeflow;
             var fill = (float)freeflow;
             for (var i = 0; i < 2016; i++)
                 speedBuffer[i] = slots.TryGetValue(i, out var sv) ? (float)sv : fill;

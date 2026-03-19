@@ -358,17 +358,8 @@ namespace OpenTrafficDB.Migrations
                     b.Property<long>("OsmWayId")
                         .HasColumnType("bigint");
 
-                    b.Property<double>("P50Speed")
-                        .HasColumnType("double precision");
-
-                    b.Property<double>("P95Speed")
-                        .HasColumnType("double precision");
-
                     b.Property<double?>("SpeedLimitKmh")
                         .HasColumnType("double precision");
-
-                    b.Property<int>("TotalSamples")
-                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 

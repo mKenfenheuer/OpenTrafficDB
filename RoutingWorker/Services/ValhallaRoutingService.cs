@@ -296,21 +296,16 @@ public class ValhallaRoutingService(
 
             if (summaries.TryGetValue(edge.WayId, out var s))
             {
-                freeflow = s.FreeflowSpeed > 0 ? s.FreeflowSpeed : s.P95Speed;
-                // Prefer live 30-min average, then time-of-day historical, then freeflow baseline
+                freeflow = s.FreeflowSpeed > 0 ? s.FreeflowSpeed : 1;
+                // Prefer live EMA, then time-of-day historical, then freeflow baseline
                 if (s.ConstrainedSpeed.HasValue)
                 {
-                    live    = Math.Max(s.ConstrainedSpeed.Value,1);
+                    live    = Math.Max(s.ConstrainedSpeed.Value, 1);
                     hasData = true;
                 }
                 else if (historicalSpeeds.TryGetValue(edge.WayId, out var hist) && hist > 0)
                 {
                     live    = hist;
-                    hasData = true;
-                }
-                else if (s.P50Speed < s.FreeflowSpeed)
-                {
-                    live    = s.P50Speed;
                     hasData = true;
                 }
                 else

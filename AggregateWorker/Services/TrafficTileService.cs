@@ -52,9 +52,6 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                     base."OsmWayId"                                                     AS osm_way_id,
                     ROUND(base.speed_kmh::numeric, 1)::float8                          AS speed_kmh,
                     base."FreeflowSpeed"                                                AS freeflow_kmh,
-                    base."P50Speed"                                                     AS p50_kmh,
-                    base."P95Speed"                                                     AS p95_kmh,
-                    base."TotalSamples"                                                 AS total_samples,
                     CASE WHEN base."ConstrainedSpeed" IS NOT NULL THEN 'live'
                          ELSE 'historic' END                                            AS source,
                     base.speed_limit_kmh,
@@ -73,9 +70,6 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                         wg."Geometry",
                         wss."FreeflowSpeed",
                         wss."ConstrainedSpeed",
-                        wss."P50Speed",
-                        wss."P95Speed",
-                        wss."TotalSamples",
                         COALESCE(wss."ConstrainedSpeed", wss."FreeflowSpeed")           AS speed_kmh,
                         COALESCE(wss."SpeedLimitKmh", wg."MaxSpeedKmh")                AS speed_limit_kmh,
                         LEAST(GREATEST(
