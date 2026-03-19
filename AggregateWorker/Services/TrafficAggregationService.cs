@@ -353,8 +353,14 @@ public class TrafficAggregationService(AppDbContext db)
         var speedLimits  = new List<double?>();
         var lastUpdated  = new List<DateTime>();
 
-        foreach (var group in obs.GroupBy(o => o.WayId))
+        var groups = obs.GroupBy(o => o.WayId).ToArray();
+
+        // Result slot per group — pre-allocated so Parallel.For can write by index without locks.
+        var results = new (long WayId, double Constrained, double Freeflow, double? SpeedLimit, DateTime LastUpdated)[groups.Length];
+
+        Parallel.For(0, groups.Length, i =>
         {
+            var group      = groups[i];
             var wayId      = group.Key;
             var speedLimit = group.FirstOrDefault(o => o.SpeedLimitKmh != null)?.SpeedLimitKmh;
 
@@ -375,11 +381,17 @@ public class TrafficAggregationService(AppDbContext db)
             foreach (var o in freeflowObs)
                 emaFreeflow = emaFreeflow * (1 - EmaAlpha) + o.SpeedKmh * EmaAlpha;
 
-            wayIds_out  .Add(wayId);
-            constrained .Add(Math.Round(emaConstrained, 1));
-            freeflow    .Add(Math.Round(emaFreeflow,    1));
-            speedLimits .Add(speedLimit);
-            lastUpdated .Add(group.Max(o => o.Timestamp));
+            results[i] = (wayId, Math.Round(emaConstrained, 1), Math.Round(emaFreeflow, 1),
+                          speedLimit, group.Max(o => o.Timestamp));
+        });
+
+        foreach (var r in results)
+        {
+            wayIds_out  .Add(r.WayId);
+            constrained .Add(r.Constrained);
+            freeflow    .Add(r.Freeflow);
+            speedLimits .Add(r.SpeedLimit);
+            lastUpdated .Add(r.LastUpdated);
         }
 
         // Bulk upsert via unnest — one round-trip for all ways.

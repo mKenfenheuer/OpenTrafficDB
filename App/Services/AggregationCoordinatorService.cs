@@ -89,8 +89,9 @@ public class AggregationCoordinatorService(
     }
 
     /// <summary>
-    /// Interleaves match and aggregate chunks (match, agg, match, agg, …) into a single
-    /// channel so each worker alternates job types rather than draining all of one kind first.
+    /// Dispatches match and aggregate chunks to workers via two independent channels.
+    /// Each worker runs a match lane and an aggregate lane concurrently, so Valhalla I/O
+    /// and DB aggregation overlap — neither waits on the other.
     /// </summary>
     private async Task DispatchInterleavedAsync(
         List<string> trips, List<long> ways, string[] workerUrls, CancellationToken ct)
@@ -98,38 +99,41 @@ public class AggregationCoordinatorService(
         var matchChunks = Chunk(trips, ChunkSize);
         var aggChunks   = Chunk(ways,  ChunkSize);
 
-        logger.LogInformation("Dispatching {M} match + {A} aggregate chunks interleaved.",
-            matchChunks.Count, aggChunks.Count);
+        logger.LogInformation("Dispatching {M} match + {A} aggregate chunks across {W} workers.",
+            matchChunks.Count, aggChunks.Count, workerUrls.Length);
 
-        // Build interleaved job queue: (isMatch, index).
-        var channel = Channel.CreateUnbounded<(bool IsMatch, int Index)>();
-        int total = Math.Max(matchChunks.Count, aggChunks.Count);
-        for (int i = 0; i < total; i++)
-        {
-            if (i < matchChunks.Count) channel.Writer.TryWrite((true,  i));
-            if (i < aggChunks.Count)   channel.Writer.TryWrite((false, i));
-        }
-        channel.Writer.Complete();
+        var matchChannel = Channel.CreateUnbounded<string[]>();
+        var aggChannel   = Channel.CreateUnbounded<long[]>();
+
+        foreach (var chunk in matchChunks) matchChannel.Writer.TryWrite(chunk);
+        foreach (var chunk in aggChunks)   aggChannel.Writer.TryWrite(chunk);
+        matchChannel.Writer.Complete();
+        aggChannel.Writer.Complete();
 
         await Task.WhenAll(workerUrls.Select(url => Task.Run(async () =>
         {
-            await foreach (var (isMatch, idx) in channel.Reader.ReadAllAsync(ct))
+            // Each worker runs both lanes simultaneously — match and aggregate in parallel.
+            var matchLane = Task.Run(async () =>
             {
-                if (isMatch)
+                await foreach (var tripIds in matchChannel.Reader.ReadAllAsync(ct))
                 {
-                    var tripIds = matchChunks[idx];
-                    var result  = await workerClient.SendMatchJobAsync(url, new MatchJobRequest(tripIds), ct);
+                    var result = await workerClient.SendMatchJobAsync(url, new MatchJobRequest(tripIds), ct);
                     if (result is not null) _logMatchChunkOk(logger, tripIds.Length, url, result.Matched, null);
                     else                   _logMatchChunkFail(logger, tripIds.Length, url, null);
                 }
-                else
+            }, ct);
+
+            var aggLane = Task.Run(async () =>
+            {
+                await foreach (var wayIds in aggChannel.Reader.ReadAllAsync(ct))
                 {
-                    var wayIds = aggChunks[idx];
                     var result = await workerClient.SendAggregateJobAsync(url, new AggregateJobRequest(wayIds), ct);
                     if (result is not null) _logAggChunkOk(logger, wayIds.Length, url, result.Processed, null);
                     else                   _logAggChunkFail(logger, wayIds.Length, url, null);
                 }
-            }
+            }, ct);
+
+            await Task.WhenAll(matchLane, aggLane);
         }, ct)));
     }
 
