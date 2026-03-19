@@ -3,6 +3,8 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.IngestWorker.Services;
 using OpenTrafficDB.Shared.Services;
@@ -40,6 +42,18 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
+// ── OpenTelemetry ─────────────────────────────────────────────────────────────
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddPrometheusExporter())
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation());
+
+// ── Health checks ─────────────────────────────────────────────────────────────
 builder.Services.AddAuthorization();
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks()
@@ -47,9 +61,17 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
+// ── Migrations ────────────────────────────────────────────────────────────────
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.MigrateAsync();
+}
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHealthChecks("/health");
+app.MapPrometheusScrapingEndpoint("/metrics");
 
 await app.RunAsync();

@@ -32,16 +32,29 @@ public class WorkerClient(
     {
         var urls = GetUrls(workerName);
         if (urls is null || urls.Length == 0) return null;
+        if (urls.Length == 1) return urls[0];
 
-        int idx;
+        var health = Health;
         lock (_lock)
         {
-            if (!_counters.TryGetValue(workerName, out var cur))
-                cur = 0;
-            idx = cur % urls.Length;
+            if (!_counters.TryGetValue(workerName, out var cur)) cur = 0;
+
+            // Prefer non-unhealthy workers, round-robining through them in order.
+            for (var i = 0; i < urls.Length; i++)
+            {
+                var idx = (cur + i) % urls.Length;
+                if (health?.GetInstanceStatus(workerName, urls[idx]) != WorkerStatus.Unhealthy)
+                {
+                    _counters[workerName] = idx + 1;
+                    return urls[idx];
+                }
+            }
+
+            // All workers unhealthy — fall back to plain round-robin.
+            var fallback = cur % urls.Length;
             _counters[workerName] = cur + 1;
+            return urls[fallback];
         }
-        return urls[idx];
     }
 
     // ── Health check ──────────────────────────────────────────────────────────

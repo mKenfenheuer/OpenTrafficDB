@@ -26,7 +26,6 @@ public class ValhallaMapMatchingService(
 {
     private readonly string _valhallaBaseUrl        = config["Valhalla:BaseUrl"] ?? "http://localhost:8002";
     private          int    MaxConcurrentValhalla   => int.Parse(config["Valhalla:MaxConcurrent"] ?? "12");
-    private          int    ValhallaTimeoutSeconds  => int.Parse(config["Valhalla:TimeoutSeconds"] ?? "30");
 
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
         LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
@@ -82,7 +81,6 @@ public class ValhallaMapMatchingService(
 
         var json = JsonSerializer.Serialize(request);
         var client = httpClientFactory.CreateClient("valhalla");
-        client.Timeout = TimeSpan.FromSeconds(ValhallaTimeoutSeconds);
 
         try
         {

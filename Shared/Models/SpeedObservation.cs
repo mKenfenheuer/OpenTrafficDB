@@ -17,6 +17,5 @@ public class SpeedObservation
     public double? SpeedLimitKmh { get; set; }
     public bool IsAggregated { get; set; }
     public bool RoadWorks { get; set; }
-    public string IpHash { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

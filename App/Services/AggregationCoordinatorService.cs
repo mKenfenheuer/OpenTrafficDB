@@ -43,6 +43,10 @@ public class AggregationCoordinatorService(
         LoggerMessage.Define<int, string>(LogLevel.Warning, default,
             "Aggregate chunk ({Count} ways) on {Url} failed.");
 
+    // Guards against cycle overlap within and across instances.
+    // A full coordinator lock requires Redis in the App tier; this handles single-instance overlap.
+    private int _cycleRunning = 0;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("Aggregation coordinator started. Interval: {Interval}, ChunkSize: {Chunk}.",
@@ -52,9 +56,23 @@ public class AggregationCoordinatorService(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try   { await RunCycleAsync(stoppingToken); }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex) { logger.LogError(ex, "Coordinator cycle failed."); }
+            if (Interlocked.CompareExchange(ref _cycleRunning, 1, 0) == 0)
+            {
+                try
+                {
+                    await RunCycleAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex) { logger.LogError(ex, "Coordinator cycle failed."); }
+                finally
+                {
+                    Interlocked.Exchange(ref _cycleRunning, 0);
+                }
+            }
+            else
+            {
+                logger.LogWarning("Coordinator cycle still running — skipping interval.");
+            }
 
             await Task.Delay(Interval, stoppingToken);
         }
@@ -102,11 +120,13 @@ public class AggregationCoordinatorService(
         logger.LogInformation("Dispatching {M} match + {A} aggregate chunks across {W} workers.",
             matchChunks.Count, aggChunks.Count, workerUrls.Length);
 
-        var matchChannel = Channel.CreateUnbounded<string[]>();
-        var aggChannel   = Channel.CreateUnbounded<long[]>();
+        var matchChannel = Channel.CreateBounded<string[]>(new BoundedChannelOptions(matchChunks.Count + 1)
+            { FullMode = BoundedChannelFullMode.Wait, SingleWriter = true });
+        var aggChannel   = Channel.CreateBounded<long[]>(new BoundedChannelOptions(aggChunks.Count + 1)
+            { FullMode = BoundedChannelFullMode.Wait, SingleWriter = true });
 
-        foreach (var chunk in matchChunks) matchChannel.Writer.TryWrite(chunk);
-        foreach (var chunk in aggChunks)   aggChannel.Writer.TryWrite(chunk);
+        foreach (var chunk in matchChunks) await matchChannel.Writer.WriteAsync(chunk);
+        foreach (var chunk in aggChunks)   await aggChannel.Writer.WriteAsync(chunk);
         matchChannel.Writer.Complete();
         aggChannel.Writer.Complete();
 

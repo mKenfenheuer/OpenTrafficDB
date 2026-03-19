@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.App.Middleware;
 using OpenTrafficDB.App.Services;
@@ -34,6 +36,17 @@ public class Program
         builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkerHealthService>());
 
         builder.Services.AddHostedService<AggregationCoordinatorService>();
+
+        // ── OpenTelemetry ────────────────────────────────────────────────────
+        builder.Services.AddOpenTelemetry()
+            .WithMetrics(m => m
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddRuntimeInstrumentation()
+                .AddPrometheusExporter())
+            .WithTracing(t => t
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation());
 
         // HTTP client for inter-service communication with workers
         builder.Services.AddHttpClient("workers", client =>
@@ -74,6 +87,15 @@ public class Program
 
         // ── Controllers & Swagger ───────────────────────────────────────────────
         builder.Services.AddControllersWithViews().AddRazorRuntimeCompilation();
+
+        builder.Services.AddHealthChecks()
+            .AddNpgSql(builder.Configuration.GetConnectionString("DefaultConnection")!)
+            .AddUrlGroup(
+                new Uri((builder.Configuration["Workers:Ingest:Urls:0"] ?? "http://ingest:8080") + "/health"),
+                name: "ingest-worker", timeout: TimeSpan.FromSeconds(5))
+            .AddUrlGroup(
+                new Uri((builder.Configuration["Workers:Aggregate:Urls:0"] ?? "http://aggregate:8080") + "/health"),
+                name: "aggregate-worker", timeout: TimeSpan.FromSeconds(5));
 
         builder.Services.AddSwaggerGen(c =>
         {
@@ -206,6 +228,9 @@ public class Program
             name: "default",
             pattern: "{controller=Home}/{action=Index}/{id?}")
             .WithStaticAssets();
+
+        app.MapHealthChecks("/health");
+        app.MapPrometheusScrapingEndpoint("/metrics");
 
         await app.RunAsync();
     }

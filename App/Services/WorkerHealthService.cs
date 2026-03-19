@@ -90,6 +90,13 @@ public class WorkerHealthService(
             return new WorkerServiceInfo(name, svcStatus, instances);
         }).ToArray();
 
+    /// <summary>Returns the health status of a specific worker instance. Unknown if not yet polled.</summary>
+    public WorkerStatus GetInstanceStatus(string workerName, string url)
+    {
+        var key = $"{workerName}|{url}";
+        return _states.TryGetValue(key, out var state) ? state.HealthStatus : WorkerStatus.Unknown;
+    }
+
     // ── Background polling ────────────────────────────────────────────────────
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

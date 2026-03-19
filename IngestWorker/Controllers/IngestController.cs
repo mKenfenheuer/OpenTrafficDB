@@ -1,6 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using NpgsqlTypes;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Models;
 using OpenTrafficDB.Shared.Models.DTOs;
@@ -22,25 +25,25 @@ public class IngestController(
         int.TryParse(config["Security:ContributorThreshold"], out var t) ? t : 100;
 
     [HttpPost]
-    public async Task<IActionResult> Submit([FromBody] SpeedObservationRequest request)
+    public async Task<IActionResult> Submit([FromBody] SpeedObservationRequest request, CancellationToken ct)
     {
-        var (userId, keyId, ipHash) = GetContext();
+        var (userId, keyId, _) = GetContext();
 
         var validation = validator.Validate(request);
         if (!validation.IsValid)
             return BadRequest(new { errors = validation.Errors });
 
-        var obs = MapToObservation(request, keyId, ipHash);
+        var obs = MapToObservation(request, keyId);
         db.SpeedObservations.Add(obs);
 
-        var user = await db.Users.FindAsync(userId);
+        var user = await db.Users.FindAsync([userId], ct);
         if (user != null)
         {
             user.TotalContributions++;
             TryPromoteToContributor(user);
         }
 
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(ct);
 
         return Ok(new SubmitSpeedResponse
         {
@@ -51,11 +54,12 @@ public class IngestController(
     }
 
     [HttpPost("batch")]
-    public async Task<IActionResult> SubmitBatch([FromBody] BatchSpeedRequest request)
+    public async Task<IActionResult> SubmitBatch([FromBody] BatchSpeedRequest request, CancellationToken ct)
     {
-        var (userId, keyId, ipHash) = GetContext();
+        var (userId, keyId, _) = GetContext();
         var response = new BatchSubmitResponse();
 
+        var valid = new List<SpeedObservationRequest>(request.Observations.Count);
         foreach (var item in request.Observations)
         {
             var validation = validator.Validate(item);
@@ -63,25 +67,93 @@ public class IngestController(
             {
                 response.Rejected++;
                 response.Errors.AddRange(validation.Errors.Select(e => $"[trip {item.TripId}]: {e}"));
-                continue;
             }
-
-            db.SpeedObservations.Add(MapToObservation(item, keyId, ipHash));
-            response.Accepted++;
+            else
+            {
+                valid.Add(item);
+                response.Accepted++;
+            }
         }
 
         if (response.Accepted > 0)
         {
-            var user = await db.Users.FindAsync(userId);
+            await InsertObservationsBulkAsync(valid, keyId, ct);
+
+            var user = await db.Users.FindAsync([userId], ct);
             if (user != null)
             {
                 user.TotalContributions += response.Accepted;
                 TryPromoteToContributor(user);
+                await db.SaveChangesAsync(ct);
             }
-            await db.SaveChangesAsync();
         }
 
         return Ok(response);
+    }
+
+    /// <summary>
+    /// Single-round-trip batch insert via unnest. Deduplicates on (TripId, Timestamp).
+    /// ~10-50x faster than individual EF SaveChanges calls for large batches.
+    /// </summary>
+    private async Task InsertObservationsBulkAsync(
+        List<SpeedObservationRequest> observations, int apiKeyId, CancellationToken ct)
+    {
+        var now   = DateTime.UtcNow;
+        var count = observations.Count;
+
+        var apiKeyIds  = new int     [count];
+        var timestamps = new DateTime[count];
+        var latitudes  = new double  [count];
+        var longitudes = new double  [count];
+        var speedMs    = new double  [count];
+        var headings   = new float?  [count];
+        var altitudes  = new float?  [count];
+        var accuracies = new float   [count];
+        var tripIds    = new string  [count];
+        var roadWorks  = new bool    [count];
+        var createdAts = new DateTime[count];
+
+        for (var i = 0; i < count; i++)
+        {
+            var r          = observations[i];
+            apiKeyIds [i]  = apiKeyId;
+            timestamps[i]  = r.Timestamp.ToUniversalTime();
+            latitudes [i]  = r.Latitude;
+            longitudes[i]  = r.Longitude;
+            speedMs   [i]  = r.SpeedMs;
+            headings  [i]  = r.Heading;
+            altitudes [i]  = r.AltitudeMeters;
+            accuracies[i]  = r.GpsAccuracyMeters;
+            tripIds   [i]  = crypto.HashTripId(apiKeyId + r.TripId);
+            roadWorks [i]  = r.RoadWorks;
+            createdAts[i]  = now;
+        }
+
+        await db.Database.ExecuteSqlRawAsync("""
+            INSERT INTO "SpeedObservations"
+                ("ApiKeyId","Timestamp","Latitude","Longitude","SpeedMs",
+                 "Heading","AltitudeMeters","GpsAccuracyMeters","TripId",
+                 "RoadWorks","OsmWayId","SpeedLimitKmh","IsAggregated","CreatedAt")
+            SELECT v.api_key_id, v.ts, v.lat, v.lon, v.speed_ms,
+                   v.heading, v.altitude, v.accuracy, v.trip_id,
+                   v.road_works, NULL::bigint, NULL::double precision, FALSE, v.created_at
+            FROM unnest(@api_key_ids,@timestamps,@latitudes,@longitudes,@speed_ms_vals,
+                        @headings,@altitudes,@accuracies,@trip_ids,@road_works_vals,@created_ats)
+                 AS v(api_key_id,ts,lat,lon,speed_ms,heading,altitude,accuracy,trip_id,road_works,created_at)
+            ON CONFLICT ("TripId","Timestamp") DO NOTHING
+            """,
+            new NpgsqlParameter("api_key_ids",     NpgsqlDbType.Array | NpgsqlDbType.Integer)     { Value = apiKeyIds   },
+            new NpgsqlParameter("timestamps",      NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = timestamps  },
+            new NpgsqlParameter("latitudes",       NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = latitudes   },
+            new NpgsqlParameter("longitudes",      NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = longitudes  },
+            new NpgsqlParameter("speed_ms_vals",   NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = speedMs     },
+            new NpgsqlParameter("headings",        NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = headings    },
+            new NpgsqlParameter("altitudes",       NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = altitudes   },
+            new NpgsqlParameter("accuracies",      NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = accuracies  },
+            new NpgsqlParameter("trip_ids",        NpgsqlDbType.Array | NpgsqlDbType.Text)        { Value = tripIds     },
+            new NpgsqlParameter("road_works_vals", NpgsqlDbType.Array | NpgsqlDbType.Boolean)     { Value = roadWorks   },
+            new NpgsqlParameter("created_ats",     NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = createdAts  }
+            , ct);
     }
 
     private (int userId, int keyId, string ipHash) GetContext() =>
@@ -95,7 +167,7 @@ public class IngestController(
             user.Role = UserRole.Contributor;
     }
 
-    private SpeedObservation MapToObservation(SpeedObservationRequest req, int apiKeyId, string ipHash) =>
+    private SpeedObservation MapToObservation(SpeedObservationRequest req, int apiKeyId) =>
         new()
         {
             ApiKeyId          = apiKeyId,
@@ -108,7 +180,6 @@ public class IngestController(
             GpsAccuracyMeters = req.GpsAccuracyMeters,
             TripId            = crypto.HashTripId(apiKeyId + req.TripId),
             RoadWorks         = req.RoadWorks,
-            IpHash            = ipHash,
             CreatedAt         = DateTime.UtcNow
         };
 }

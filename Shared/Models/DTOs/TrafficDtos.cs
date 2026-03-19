@@ -2,6 +2,14 @@ using System.ComponentModel.DataAnnotations;
 
 namespace OpenTrafficDB.Shared.Models.DTOs;
 
+public class LiveTrafficQuery
+{
+    public double MinLat { get; set; }
+    public double MaxLat { get; set; }
+    public double MinLon { get; set; }
+    public double MaxLon { get; set; }
+}
+
 public class LiveSpeedPoint
 {
     public double Latitude { get; set; }

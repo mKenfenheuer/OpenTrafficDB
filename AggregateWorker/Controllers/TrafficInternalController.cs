@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Distributed;
 using OpenTrafficDB.Shared.Models.DTOs;
 using OpenTrafficDB.AggregateWorker.Services;
+using StackExchange.Redis;
 
 namespace OpenTrafficDB.AggregateWorker.Controllers;
 
@@ -11,14 +12,15 @@ namespace OpenTrafficDB.AggregateWorker.Controllers;
 [Authorize]
 public class TrafficInternalController(
     TrafficAggregationService aggregation,
-    IDistributedCache cache) : ControllerBase
+    IDistributedCache cache,
+    IConnectionMultiplexer redis) : ControllerBase
 {
     private const string ValhallaCacheKey = "valhalla_csv";
+    private const string ValhallaLockKey  = "valhalla_csv_lock";
     private static readonly DistributedCacheEntryOptions ValhallaCacheOptions = new()
     {
         AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30)
     };
-    private static readonly SemaphoreSlim GenerateSemaphore = new(1, 1);
 
     [HttpGet("valhalla/csv")]
     [Produces("text/csv")]
@@ -27,6 +29,7 @@ public class TrafficInternalController(
         Response.ContentType = "text/csv";
         Response.Headers["Content-Disposition"] = "attachment; filename=\"valhalla_traffic.csv\"";
 
+        // Fast path: serve from cache
         var cached = await cache.GetAsync(ValhallaCacheKey, ct);
         if (cached is not null)
         {
@@ -34,10 +37,21 @@ public class TrafficInternalController(
             return new EmptyResult();
         }
 
-        await GenerateSemaphore.WaitAsync(ct);
+        // Distributed lock: only one worker (across all instances) generates at a time
+        var db   = redis.GetDatabase();
+        var held = await db.StringSetAsync(ValhallaLockKey, "1",
+            TimeSpan.FromMinutes(35), When.NotExists);
+
+        if (!held)
+        {
+            // Another instance is generating — ask client to retry
+            Response.Headers["Retry-After"] = "30";
+            return StatusCode(503, new { error = "CSV generation in progress. Retry in ~30 seconds." });
+        }
+
         try
         {
-            // Re-check after acquiring — another request may have generated while we waited.
+            // Double-check after acquiring lock
             cached = await cache.GetAsync(ValhallaCacheKey, ct);
             if (cached is not null)
             {
@@ -65,7 +79,7 @@ public class TrafficInternalController(
         }
         finally
         {
-            GenerateSemaphore.Release();
+            await db.KeyDeleteAsync(ValhallaLockKey);
         }
 
         return new EmptyResult();

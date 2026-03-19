@@ -148,10 +148,6 @@ namespace OpenTrafficDB.Migrations
                     b.Property<float?>("Heading")
                         .HasColumnType("real");
 
-                    b.Property<string>("IpHash")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.Property<bool>("IsAggregated")
                         .HasColumnType("boolean");
 
