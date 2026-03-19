@@ -76,70 +76,57 @@ public class AggregationCoordinatorService(
 
         _logCycle(logger, unmatchedTrips.Count, unaggregatedWays.Count, workerUrls.Length, null);
 
-        // ── 1+2. Match and aggregate in parallel ──────────────────────────────
-        var matchTask = unmatchedTrips.Count > 0
-            ? DispatchMatchAsync(unmatchedTrips, workerUrls, ct)
-            : Task.CompletedTask;
-
-        var aggregateTask = unaggregatedWays.Count > 0
-            ? DispatchAggregateAsync(unaggregatedWays, workerUrls, ct)
-            : Task.CompletedTask;
-
-        await Task.WhenAll(matchTask, aggregateTask);
+        // ── 1+2. Match and aggregate interleaved across workers ───────────────
+        if (unmatchedTrips.Count > 0 || unaggregatedWays.Count > 0)
+            await DispatchInterleavedAsync(unmatchedTrips, unaggregatedWays, workerUrls, ct);
 
         // ── 3. Finalize — only needed when aggregation ran ────────────────────
         if (unaggregatedWays.Count > 0)
             await workerClient.SendFinalizeAsync(ct);
     }
 
-    private async Task DispatchMatchAsync(List<string> trips, string[] workerUrls, CancellationToken ct)
-    {
-        var chunks = Chunk(trips, ChunkSize);
-        logger.LogInformation("Dispatching {Chunks} match chunks.", chunks.Count);
-        await DispatchAsync(chunks, workerUrls,
-            async (url, tripIds, token) =>
-            {
-                var result = await workerClient.SendMatchJobAsync(url, new MatchJobRequest(tripIds), token);
-                if (result is not null)
-                    _logMatchChunkOk(logger, tripIds.Length, url, result.Matched, null);
-                else
-                    _logMatchChunkFail(logger, tripIds.Length, url, null);
-            }, ct);
-    }
-
-    private async Task DispatchAggregateAsync(List<long> ways, string[] workerUrls, CancellationToken ct)
-    {
-        var chunks = Chunk(ways, ChunkSize);
-        logger.LogInformation("Dispatching {Chunks} aggregate chunks.", chunks.Count);
-        await DispatchAsync(chunks, workerUrls,
-            async (url, wayIds, token) =>
-            {
-                var result = await workerClient.SendAggregateJobAsync(url, new AggregateJobRequest(wayIds), token);
-                if (result is not null)
-                    _logAggChunkOk(logger, wayIds.Length, url, result.Processed, null);
-                else
-                    _logAggChunkFail(logger, wayIds.Length, url, null);
-            }, ct);
-    }
-
     /// <summary>
-    /// Fan-out chunks across workers: fills a channel, each worker pulls chunks
-    /// sequentially so no two workers ever receive the same chunk.
+    /// Interleaves match and aggregate chunks (match, agg, match, agg, …) into a single
+    /// channel so each worker alternates job types rather than draining all of one kind first.
     /// </summary>
-    private static async Task DispatchAsync<T>(
-        List<T[]> chunks,
-        string[] workerUrls,
-        Func<string, T[], CancellationToken, Task> send,
-        CancellationToken ct)
+    private async Task DispatchInterleavedAsync(
+        List<string> trips, List<long> ways, string[] workerUrls, CancellationToken ct)
     {
-        var channel = Channel.CreateUnbounded<T[]>();
-        foreach (var chunk in chunks) channel.Writer.TryWrite(chunk);
+        var matchChunks = Chunk(trips, ChunkSize);
+        var aggChunks   = Chunk(ways,  ChunkSize);
+
+        logger.LogInformation("Dispatching {M} match + {A} aggregate chunks interleaved.",
+            matchChunks.Count, aggChunks.Count);
+
+        // Build interleaved job queue: (isMatch, index).
+        var channel = Channel.CreateUnbounded<(bool IsMatch, int Index)>();
+        int total = Math.Max(matchChunks.Count, aggChunks.Count);
+        for (int i = 0; i < total; i++)
+        {
+            if (i < matchChunks.Count) channel.Writer.TryWrite((true,  i));
+            if (i < aggChunks.Count)   channel.Writer.TryWrite((false, i));
+        }
         channel.Writer.Complete();
 
         await Task.WhenAll(workerUrls.Select(url => Task.Run(async () =>
         {
-            await foreach (var chunk in channel.Reader.ReadAllAsync(ct))
-                await send(url, chunk, ct);
+            await foreach (var (isMatch, idx) in channel.Reader.ReadAllAsync(ct))
+            {
+                if (isMatch)
+                {
+                    var tripIds = matchChunks[idx];
+                    var result  = await workerClient.SendMatchJobAsync(url, new MatchJobRequest(tripIds), ct);
+                    if (result is not null) _logMatchChunkOk(logger, tripIds.Length, url, result.Matched, null);
+                    else                   _logMatchChunkFail(logger, tripIds.Length, url, null);
+                }
+                else
+                {
+                    var wayIds = aggChunks[idx];
+                    var result = await workerClient.SendAggregateJobAsync(url, new AggregateJobRequest(wayIds), ct);
+                    if (result is not null) _logAggChunkOk(logger, wayIds.Length, url, result.Processed, null);
+                    else                   _logAggChunkFail(logger, wayIds.Length, url, null);
+                }
+            }
         }, ct)));
     }
 
