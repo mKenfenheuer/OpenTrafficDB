@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<WaySpeedAggregate> WaySpeedAggregates => Set<WaySpeedAggregate>();
     public DbSet<WayGeometry> WayGeometries => Set<WayGeometry>();
     public DbSet<WaySpeedSummary> WaySpeedSummaries => Set<WaySpeedSummary>();
+    public DbSet<AggregationMetric> AggregationMetrics => Set<AggregationMetric>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -85,6 +86,11 @@ public class AppDbContext : DbContext
             e.HasIndex(s => s.OsmWayId).IsUnique();
             // Used by the tile query: WHERE wss."LastUpdated" >= NOW() - INTERVAL '30 minutes'
             e.HasIndex(s => s.LastUpdated);
+        });
+
+        modelBuilder.Entity<AggregationMetric>(e =>
+        {
+            e.HasIndex(m => m.ProcessedAt);
         });
     }
 }

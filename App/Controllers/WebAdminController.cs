@@ -29,20 +29,25 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStats(CancellationToken ct)
     {
-        var ingestCutoff = DateTime.UtcNow.AddMinutes(-5);
+        var cutoff5 = DateTime.UtcNow.AddMinutes(-5);
 
-        var totalQueue     = await db.SpeedObservations.CountAsync(o => !o.IsAggregated || o.OsmWayId == null, ct);
-        var matchingQueue  = await db.SpeedObservations.CountAsync(o => o.OsmWayId == null, ct);
-        var aggregateQueue = await db.SpeedObservations.CountAsync(o => !o.IsAggregated, ct);
-        var ingestLast5Min = await db.SpeedObservations.CountAsync(o => o.CreatedAt >= ingestCutoff, ct);
+        var totalQueue      = await db.SpeedObservations.CountAsync(o => !o.IsAggregated || o.OsmWayId == null, ct);
+        var matchingQueue   = await db.SpeedObservations.CountAsync(o => o.OsmWayId == null, ct);
+        var aggregateQueue  = await db.SpeedObservations.CountAsync(o => !o.IsAggregated, ct);
+        var ingestLast5Min  = await db.SpeedObservations.CountAsync(o => o.CreatedAt >= cutoff5, ct);
+        var processedLast5Min = await db.AggregationMetrics
+            .Where(m => m.ProcessedAt >= cutoff5)
+            .SumAsync(m => (long)m.ObservationCount, ct);
 
         return Ok(new
         {
             totalQueue,
             matchingQueue,
             aggregateQueue,
-            ingestPer5Min  = ingestLast5Min,
-            ingestPerMin   = ingestLast5Min / 5,
+            ingestPer5Min     = ingestLast5Min,
+            ingestPerMin      = ingestLast5Min / 5,
+            processedPer5Min  = processedLast5Min,
+            processedPerMin   = processedLast5Min / 5,
         });
     }
 

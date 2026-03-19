@@ -9,7 +9,7 @@ using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.AggregateWorker.Services;
 
-public class TrafficAggregationService(AppDbContext db)
+public class TrafficAggregationService(AppDbContext db, ILogger<TrafficAggregationService> logger)
 {
 
     // ── Traffic jam estimation ───────────────────────────────────────────────────
@@ -40,6 +40,8 @@ public class TrafficAggregationService(AppDbContext db)
         long[] wayIds, CancellationToken ct = default)
     {
         if (wayIds.Length == 0) return new AggregateJobResult(0);
+
+        logger.LogDebug("Aggregating {WayCount} ways", wayIds.Length);
 
         // Chunks are partitioned by way ID at the coordinator, so no two concurrent jobs
         // share a way — no deadlocks possible on WaySpeedAggregates.
@@ -79,6 +81,18 @@ public class TrafficAggregationService(AppDbContext db)
             .Where(o => !o.IsAggregated && o.OsmWayId != null && wayIds.Contains(o.OsmWayId.Value))
             .ExecuteDeleteAsync(ct);
 
+        if (processed > 0)
+        {
+            db.AggregationMetrics.Add(new OpenTrafficDB.Shared.Models.AggregationMetric
+            {
+                ProcessedAt       = DateTime.UtcNow,
+                ObservationCount  = processed,
+                WayCount          = wayIds.Length,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        logger.LogInformation("Aggregated {WayCount} ways, deleted {ObsCount} observations", wayIds.Length, processed);
         return new AggregateJobResult(processed);
     }
 
@@ -92,8 +106,19 @@ public class TrafficAggregationService(AppDbContext db)
         // Aggregated observations are deleted eagerly in ReaggregateRangeAsync.
         var unmatchedCutoff = DateTime.UtcNow - UnmatchedRetention;
 
-        await db.SpeedObservations
+        var deleted = await db.SpeedObservations
             .Where(o => o.OsmWayId == null && o.CreatedAt < unmatchedCutoff)
+            .ExecuteDeleteAsync(ct);
+
+        if (deleted > 0)
+            logger.LogInformation("Finalize: deleted {Count} stale unmatched observations", deleted);
+        else
+            logger.LogDebug("Finalize: no stale unmatched observations to delete");
+
+        // Prune metric rows older than 24 h — they're only needed for the rolling rate window.
+        var metricCutoff = DateTime.UtcNow.AddHours(-24);
+        await db.AggregationMetrics
+            .Where(m => m.ProcessedAt < metricCutoff)
             .ExecuteDeleteAsync(ct);
     }
 
@@ -354,6 +379,7 @@ public class TrafficAggregationService(AppDbContext db)
         var lastUpdated  = new List<DateTime>();
 
         var groups = obs.GroupBy(o => o.WayId).ToArray();
+        logger.LogDebug("Updating EMA summaries for {WayCount} ways from {ObsCount} observations", groups.Length, obs.Count);
 
         // Result slot per group — pre-allocated so Parallel.For can write by index without locks.
         var results = new (long WayId, double Constrained, double Freeflow, double? SpeedLimit, DateTime LastUpdated)[groups.Length];

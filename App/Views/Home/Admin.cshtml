@@ -23,6 +23,25 @@
         <div id="stats-container" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px">
           <div class="text-muted" style="padding:16px">Loading…</div>
         </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+          <div class="card" style="padding:14px 16px">
+            <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Queue sizes</div>
+            <canvas id="chart-queues" height="80" style="width:100%"></canvas>
+            <div style="display:flex;gap:12px;margin-top:6px;font-size:0.7rem;color:var(--text-muted)">
+              <span><span style="color:#2f81f7">■</span> Total</span>
+              <span><span style="color:#d29922">■</span> Matching</span>
+              <span><span style="color:#a371f7">■</span> Aggregate</span>
+            </div>
+          </div>
+          <div class="card" style="padding:14px 16px">
+            <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Throughput /min</div>
+            <canvas id="chart-throughput" height="80" style="width:100%"></canvas>
+            <div style="display:flex;gap:12px;margin-top:6px;font-size:0.7rem;color:var(--text-muted)">
+              <span><span style="color:#3fb950">■</span> Ingest</span>
+              <span><span style="color:#2f81f7">■</span> Processed</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Workers -->
@@ -153,6 +172,98 @@
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('content').classList.remove('hidden');
 
+    // ── Charts ─────────────────────────────────────────────────────────────────
+
+    const HISTORY_MAX = 60;   // keep 60 samples (~15 min at 15 s interval)
+
+    const history = {
+      labels:       [],
+      totalQueue:   [],
+      matchQueue:   [],
+      aggQueue:     [],
+      ingestPerMin: [],
+      procPerMin:   [],
+    };
+
+    function pushHistory(d) {
+      const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      history.labels      .push(t);
+      history.totalQueue  .push(d.totalQueue);
+      history.matchQueue  .push(d.matchingQueue);
+      history.aggQueue    .push(d.aggregateQueue);
+      history.ingestPerMin.push(d.ingestPerMin);
+      history.procPerMin  .push(d.processedPerMin);
+      for (const k of Object.keys(history))
+        if (history[k].length > HISTORY_MAX) history[k].shift();
+    }
+
+    function drawChart(canvasId, series, colors) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w   = canvas.clientWidth;
+      const h   = canvas.clientHeight;
+      if (!w || !h) return;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+
+      const pad = { top: 4, right: 4, bottom: 18, left: 38 };
+      const pw  = w - pad.left - pad.right;
+      const ph  = h - pad.top  - pad.bottom;
+      const n   = history.labels.length;
+      if (n < 2) { ctx.fillStyle = 'rgba(139,148,158,0.3)'; ctx.fillRect(pad.left, pad.top, pw, ph); return; }
+
+      const allVals = series.flatMap(s => s);
+      const maxVal  = Math.max(...allVals, 1);
+      const step    = pw / (n - 1);
+
+      // grid lines
+      ctx.strokeStyle = 'rgba(48,54,61,0.8)';
+      ctx.lineWidth   = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + ph * (1 - i / 4);
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + pw, y); ctx.stroke();
+        ctx.fillStyle = '#8b949e';
+        ctx.font      = `${Math.round(9 * dpr) / dpr}px sans-serif`;
+        ctx.textAlign = 'right';
+        ctx.fillText(Math.round(maxVal * i / 4).toLocaleString(), pad.left - 4, y + 3);
+      }
+
+      // x-axis labels (first, middle, last)
+      ctx.fillStyle = '#8b949e';
+      ctx.font      = `${Math.round(9 * dpr) / dpr}px sans-serif`;
+      ctx.textAlign = 'center';
+      const lblIdxs = [0, Math.floor((n - 1) / 2), n - 1];
+      for (const i of lblIdxs) {
+        const x = pad.left + i * step;
+        ctx.fillText(history.labels[i], x, h - 3);
+      }
+
+      // series lines
+      series.forEach((vals, si) => {
+        ctx.strokeStyle = colors[si];
+        ctx.lineWidth   = 1.5;
+        ctx.lineJoin    = 'round';
+        ctx.beginPath();
+        vals.forEach((v, i) => {
+          const x = pad.left + i * step;
+          const y = pad.top + ph * (1 - v / maxVal);
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      });
+    }
+
+    function redrawCharts() {
+      drawChart('chart-queues',     [history.totalQueue, history.matchQueue, history.aggQueue], ['#2f81f7', '#d29922', '#a371f7']);
+      drawChart('chart-throughput', [history.ingestPerMin, history.procPerMin],                ['#3fb950', '#2f81f7']);
+    }
+
+    // Redraw on resize so the canvas fills its container correctly.
+    window.addEventListener('resize', redrawCharts);
+
     // ── Pipeline Stats ─────────────────────────────────────────────────────────
 
     function statKpi(label, value, sub = '', cls = '') {
@@ -176,8 +287,11 @@
         statKpi('Total queue',      d.totalQueue.toLocaleString(),      'unmatched or unaggregated', queueCls) +
         statKpi('Matching queue',   d.matchingQueue.toLocaleString(),   'no OSM way yet') +
         statKpi('Aggregate queue',  d.aggregateQueue.toLocaleString(),  'matched, pending agg.') +
-        statKpi('Ingest rate',      d.ingestPerMin.toLocaleString() + ' /min', `${d.ingestPer5Min.toLocaleString()} in last 5 min`);
+        statKpi('Ingest rate',      d.ingestPerMin.toLocaleString() + ' /min', `${d.ingestPer5Min.toLocaleString()} in last 5 min`) +
+        statKpi('Processing rate',  d.processedPerMin.toLocaleString() + ' /min', `${d.processedPer5Min.toLocaleString()} aggregated last 5 min`);
       document.getElementById('stats-last-refresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
+      pushHistory(d);
+      redrawCharts();
     }
 
     // ── Workers ────────────────────────────────────────────────────────────────

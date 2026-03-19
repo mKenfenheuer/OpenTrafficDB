@@ -121,7 +121,6 @@ main {
   margin-bottom: 16px;
   color: var(--text);
 }
-.card + .card { margin-top: 16px; }
 
 /* ── Forms ─────────────────────────────────────────── */
 .form-group { margin-bottom: 16px; }
