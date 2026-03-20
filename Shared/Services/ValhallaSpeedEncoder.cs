@@ -1,7 +1,8 @@
 namespace OpenTrafficDB.Shared.Services;
 
 /// <summary>
-/// Ports Valhalla's compress_speed_buckets + encode_compressed_speeds to C#.
+/// Ports Valhalla's compress_speed_buckets, decompress_speed_bucket,
+/// encode_compressed_speeds, and decode_compressed_speeds to C#.
 ///
 /// Source: valhalla/src/baldr/predictedspeeds.cc
 ///
@@ -16,10 +17,11 @@ public static class ValhallaSpeedEncoder
 {
     private const int BucketsPerWeek = 2016;
     private const int CoefficientCount = 200;
+    private const int DecodedSpeedSize = CoefficientCount * 2;
 
-    private static readonly float k1OverSqrt2 = 0.707106781f;
-    private static readonly float kPiBucketConstant = MathF.PI / BucketsPerWeek;
-    private static readonly float kSpeedNorm = 0.031497039f; // sqrt(2 / 2016)
+    private const float k1OverSqrt2 = 0.707106781f;
+    private const float kPiBucketConstant = 3.14159265f / BucketsPerWeek;
+    private const float kSpeedNormalization = 0.031497039f; // sqrt(2 / 2016)
 
     // Precomputed cos table [bucket * CoefficientCount + coeff]
     private static readonly float[] CosTable = BuildCosTable();
@@ -37,36 +39,82 @@ public static class ValhallaSpeedEncoder
     }
 
     /// <summary>
-    /// Compress 2016 speed values (km/h, Valhalla epoch: Mon 00:00 = slot 0) into
-    /// 200 DCT-II int16 coefficients encoded as a Base64 string.
+    /// Compress 2016 speed values into 200 DCT-II int16 coefficients.
     /// </summary>
-    public static string Encode(ReadOnlySpan<float> speeds)
+    public static short[] CompressSpeedBuckets(ReadOnlySpan<float> speeds)
     {
-        if (speeds.Length != BucketsPerWeek)
-            throw new ArgumentException($"Expected {BucketsPerWeek} speed values, got {speeds.Length}.");
-
         Span<float> coefficients = stackalloc float[CoefficientCount];
         coefficients.Clear();
 
         for (var bucket = 0; bucket < BucketsPerWeek; bucket++)
         {
-            var spd = speeds[bucket];
             var offset = bucket * CoefficientCount;
+            var spd = speeds[bucket];
             for (var c = 0; c < CoefficientCount; c++)
                 coefficients[c] += CosTable[offset + c] * spd;
         }
 
         coefficients[0] *= k1OverSqrt2;
 
+        var result = new short[CoefficientCount];
+        for (var i = 0; i < CoefficientCount; i++)
+            result[i] = (short)MathF.Round(kSpeedNormalization * coefficients[i], MidpointRounding.AwayFromZero);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Decompress a single speed bucket from DCT-III coefficients.
+    /// </summary>
+    public static float DecompressSpeedBucket(ReadOnlySpan<short> coefficients, int bucketIdx)
+    {
+        var offset = bucketIdx * CoefficientCount;
+
+        // DCT-III with speed normalization: first coeff scaled by 1/sqrt(2)
+        var speed = coefficients[0] * k1OverSqrt2;
+        for (var c = 1; c < CoefficientCount; c++)
+            speed += coefficients[c] * CosTable[offset + c];
+
+        return speed * kSpeedNormalization;
+    }
+
+    /// <summary>
+    /// Encode int16 coefficients as big-endian bytes → Base64.
+    /// </summary>
+    public static string EncodeCompressedSpeeds(ReadOnlySpan<short> coefficients)
+    {
         Span<byte> bytes = stackalloc byte[CoefficientCount * 2];
         for (var i = 0; i < CoefficientCount; i++)
         {
-            short val = (short)MathF.Round(kSpeedNorm * coefficients[i]);
-            // manual big-endian write
-            bytes[i * 2] = (byte)((val >> 8) & 0xFF);
+            var val = coefficients[i];
+            bytes[i * 2]     = (byte)((val >> 8) & 0xFF);
             bytes[i * 2 + 1] = (byte)(val & 0xFF);
         }
-
         return Convert.ToBase64String(bytes);
     }
+
+    /// <summary>
+    /// Decode a Base64 string back into int16 coefficients (big-endian → little-endian).
+    /// </summary>
+    public static short[] DecodeCompressedSpeeds(string encoded)
+    {
+        var raw = Convert.FromBase64String(encoded);
+        if (raw.Length != DecodedSpeedSize)
+            throw new ArgumentException(
+                $"Decoded speed size expected={DecodedSpeedSize} actual={raw.Length}");
+
+        var coefficients = new short[CoefficientCount];
+        for (var i = 0; i < CoefficientCount; i++)
+        {
+            var idx = i * 2;
+            coefficients[i] = (short)((raw[idx] << 8) | (raw[idx + 1] & 0xFF));
+        }
+        return coefficients;
+    }
+
+    /// <summary>
+    /// Convenience: compress + encode in one call.
+    /// </summary>
+    public static string Encode(ReadOnlySpan<float> speeds)
+        => EncodeCompressedSpeeds(CompressSpeedBuckets(speeds));
 }
