@@ -174,7 +174,7 @@
 
     // ── Charts ─────────────────────────────────────────────────────────────────
 
-    const HISTORY_MAX = 60;   // keep 60 samples (~15 min at 15 s interval)
+    const HISTORY_MAX = 240;  // keep 240 samples (1 hour at 15 s interval)
 
     const history = {
       labels:       [],
@@ -263,6 +263,23 @@
 
     // Redraw on resize so the canvas fills its container correctly.
     window.addEventListener('resize', redrawCharts);
+
+    // ── Seed history from server ───────────────────────────────────────────────
+
+    async function seedHistory() {
+      const res = await web('GET', '/admin/stats/history');
+      if (!res?.ok || !res.data.length) return;
+      for (const s of res.data) {
+        const t = new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        history.labels      .push(t);
+        history.totalQueue  .push(s.totalQueue);
+        history.matchQueue  .push(s.matchingQueue);
+        history.aggQueue    .push(s.aggregateQueue);
+        history.ingestPerMin.push(s.ingestPerMin);
+        history.procPerMin  .push(s.processedPerMin);
+      }
+      redrawCharts();
+    }
 
     // ── Pipeline Stats ─────────────────────────────────────────────────────────
 
@@ -565,6 +582,7 @@
       return `<tr><td colspan="${cols}" class="text-muted" style="text-align:center;padding:24px">${msg}</td></tr>`;
     }
 
+    await seedHistory();
     Promise.all([loadStats(), loadWorkers(), loadUsers(), loadBlocked()]);
     setInterval(loadStats,   15_000);
     setInterval(loadWorkers, 10_000);

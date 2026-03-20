@@ -17,7 +17,7 @@ namespace OpenTrafficDB.App.Controllers;
 [Authorize(AuthenticationSchemes = CookieAuthenticationDefaults.AuthenticationScheme, Policy = "WebAdminOnly")]
 [Produces("application/json")]
 [ApiExplorerSettings(IgnoreApi = true)]
-public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto, WorkerHealthService workerHealth) : ControllerBase
+public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto, WorkerHealthService workerHealth, StatsHistoryService statsHistory) : ControllerBase
 {
     private int CurrentUserId =>
         int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "0");
@@ -52,6 +52,23 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
             processedPer5Min  = processedLast5Min,
             processedPerMin   = processedLast5Min / 5,
         });
+    }
+
+    /// <summary>Returns the last hour of stats snapshots for chart pre-population.</summary>
+    [HttpGet("stats/history")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetStatsHistory()
+    {
+        var samples = statsHistory.GetHistory().Select(s => new
+        {
+            timestamp       = s.Timestamp,
+            totalQueue      = s.TotalQueue,
+            matchingQueue   = s.MatchingQueue,
+            aggregateQueue  = s.AggregateQueue,
+            ingestPerMin    = s.IngestPerMin,
+            processedPerMin = s.ProcessedPerMin,
+        });
+        return Ok(samples);
     }
 
     // ── Workers ───────────────────────────────────────────────────────────────

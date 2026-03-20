@@ -35,6 +35,9 @@ public class Program
         builder.Services.AddSingleton<WorkerHealthService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkerHealthService>());
 
+        builder.Services.AddSingleton<StatsHistoryService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<StatsHistoryService>());
+
         builder.Services.AddHostedService<AggregationCoordinatorService>();
         builder.Services.AddHostedService<PartitionMaintenanceService>();
 
