@@ -14,12 +14,12 @@ namespace OpenTrafficDB.Shared.Services;
 /// </summary>
 public static class ValhallaSpeedEncoder
 {
-    private const int BucketsPerWeek    = 2016;
-    private const int CoefficientCount  = 200;
+    private const int BucketsPerWeek = 2016;
+    private const int CoefficientCount = 200;
 
-    private static readonly float k1OverSqrt2       = 0.707106781f;
+    private static readonly float k1OverSqrt2 = 0.707106781f;
     private static readonly float kPiBucketConstant = MathF.PI / BucketsPerWeek;
-    private static readonly float kSpeedNorm        = 0.031497039f; // sqrt(2 / 2016)
+    private static readonly float kSpeedNorm = 0.031497039f; // sqrt(2 / 2016)
 
     // Precomputed cos table [bucket * CoefficientCount + coeff]
     private static readonly float[] CosTable = BuildCosTable();
@@ -50,7 +50,7 @@ public static class ValhallaSpeedEncoder
 
         for (var bucket = 0; bucket < BucketsPerWeek; bucket++)
         {
-            var spd    = speeds[bucket];
+            var spd = speeds[bucket];
             var offset = bucket * CoefficientCount;
             for (var c = 0; c < CoefficientCount; c++)
                 coefficients[c] += CosTable[offset + c] * spd;
@@ -58,14 +58,13 @@ public static class ValhallaSpeedEncoder
 
         coefficients[0] *= k1OverSqrt2;
 
-        // Scale to int16 and write as big-endian bytes
         Span<byte> bytes = stackalloc byte[CoefficientCount * 2];
         for (var i = 0; i < CoefficientCount; i++)
         {
-            var val    = (short)MathF.Round(kSpeedNorm * coefficients[i]);
-            var bigEnd = (ushort)System.Net.IPAddress.HostToNetworkOrder(val);
-            bytes[i * 2]     = (byte)(bigEnd >> 8);
-            bytes[i * 2 + 1] = (byte)(bigEnd & 0xFF);
+            short val = (short)MathF.Round(kSpeedNorm * coefficients[i]);
+            // manual big-endian write
+            bytes[i * 2] = (byte)((val >> 8) & 0xFF);
+            bytes[i * 2 + 1] = (byte)(val & 0xFF);
         }
 
         return Convert.ToBase64String(bytes);
