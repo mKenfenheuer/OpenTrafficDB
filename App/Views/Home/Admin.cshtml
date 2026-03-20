@@ -305,8 +305,8 @@
         statKpi('Total queue',      d.totalQueue.toLocaleString(),      'unmatched or unaggregated', queueCls) +
         statKpi('Matching queue',   d.matchingQueue.toLocaleString(),   'no OSM way yet') +
         statKpi('Aggregate queue',  d.aggregateQueue.toLocaleString(),  'matched, pending agg.') +
-        statKpi('Ingest rate',      d.ingestPerMin.toLocaleString() + ' /min', `${d.ingestPer5Min.toLocaleString()} in last 5 min`) +
-        statKpi('Processing rate',  d.processedPerMin.toLocaleString() + ' /min', `${d.processedPer5Min.toLocaleString()} aggregated last 5 min`);
+        statKpi('Ingest rate',      d.ingestPerMin.toLocaleString() + ' /min',    'per-15 s sample × 4') +
+        statKpi('Processing rate',  d.processedPerMin.toLocaleString() + ' /min', 'per-15 s sample × 4');
       document.getElementById('stats-last-refresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
       pushHistory(d);
       redrawCharts();

@@ -30,28 +30,21 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStats(CancellationToken ct)
     {
-        var cutoff5 = DateTime.UtcNow.AddMinutes(-5);
+        // Queue depths are always read fresh from the DB.
+        var matchingQueue  = await db.SpeedObservations.CountAsync(o => o.OsmWayId == null && !o.IsAggregated, ct);
+        var aggregateQueue = await db.SpeedObservations.CountAsync(o => o.OsmWayId != null && !o.IsAggregated, ct);
+        var totalQueue     = matchingQueue + aggregateQueue;
 
-        // matchingQueue: unmatched AND not yet given up on (actionable by coordinator)
-        // aggregateQueue: matched but not yet aggregated
-        // totalQueue: union of the two
-        var matchingQueue   = await db.SpeedObservations.CountAsync(o => o.OsmWayId == null && !o.IsAggregated, ct);
-        var aggregateQueue  = await db.SpeedObservations.CountAsync(o => o.OsmWayId != null && !o.IsAggregated, ct);
-        var totalQueue      = matchingQueue + aggregateQueue;
-        var ingestLast5Min  = await db.SpeedObservations.CountAsync(o => o.CreatedAt >= cutoff5, ct);
-        var processedLast5Min = await db.AggregationMetrics
-            .Where(m => m.ProcessedAt >= cutoff5)
-            .SumAsync(m => (long)m.ObservationCount, ct);
+        // Rates come from StatsHistoryService which uses per-sample deltas — no rolling-window artefact.
+        var latest = statsHistory.Latest;
 
         return Ok(new
         {
             totalQueue,
             matchingQueue,
             aggregateQueue,
-            ingestPer5Min     = ingestLast5Min,
-            ingestPerMin      = ingestLast5Min / 5,
-            processedPer5Min  = processedLast5Min,
-            processedPerMin   = processedLast5Min / 5,
+            ingestPerMin     = latest?.IngestPerMin    ?? 0,
+            processedPerMin  = latest?.ProcessedPerMin ?? 0,
         });
     }
 
