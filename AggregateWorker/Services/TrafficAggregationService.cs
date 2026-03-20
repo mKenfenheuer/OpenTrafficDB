@@ -274,7 +274,7 @@ public class TrafficAggregationService(
     public async Task WriteValhallaExportCsvAsync(Stream output, CancellationToken ct = default)
     {
         await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 65536, leaveOpen: true);
-        writer.WriteLine("way_id,freeflow_speed,constrained_speed,historical_speeds");
+        await writer.WriteLineAsync("way_id,freeflow_speed,constrained_speed,historical_speeds");
 
         await foreach (var s in readDb.WaySpeedSummaries
             .Where(s => s.EncodedSpeeds != null)
@@ -286,7 +286,7 @@ public class TrafficAggregationService(
         {
             var freeflow    = (int)Math.Round(s.FreeflowSpeed);
             var constrained = (int)Math.Round(s.ConstrainedSpeed ?? s.FreeflowSpeed);
-            writer.WriteLine($"{s.OsmWayId},{freeflow},{constrained},{s.EncodedSpeeds}");
+            await writer.WriteLineAsync($"{s.OsmWayId},{freeflow},{constrained},{s.EncodedSpeeds}");
         }
     }
 
