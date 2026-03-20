@@ -129,6 +129,20 @@ public class IngestController(
             createdAts[i]  = now;
         }
 
+        object[] sqlParams =
+        [
+            new NpgsqlParameter("api_key_ids",     NpgsqlDbType.Array | NpgsqlDbType.Integer)     { Value = apiKeyIds   },
+            new NpgsqlParameter("timestamps",      NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = timestamps  },
+            new NpgsqlParameter("latitudes",       NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = latitudes   },
+            new NpgsqlParameter("longitudes",      NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = longitudes  },
+            new NpgsqlParameter("speed_ms_vals",   NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = speedMs     },
+            new NpgsqlParameter("headings",        NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = headings    },
+            new NpgsqlParameter("altitudes",       NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = altitudes   },
+            new NpgsqlParameter("accuracies",      NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = accuracies  },
+            new NpgsqlParameter("trip_ids",        NpgsqlDbType.Array | NpgsqlDbType.Text)        { Value = tripIds     },
+            new NpgsqlParameter("road_works_vals", NpgsqlDbType.Array | NpgsqlDbType.Boolean)     { Value = roadWorks   },
+            new NpgsqlParameter("created_ats",     NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = createdAts  },
+        ];
         await db.Database.ExecuteSqlRawAsync("""
             INSERT INTO "SpeedObservations"
                 ("ApiKeyId","Timestamp","Latitude","Longitude","SpeedMs",
@@ -141,19 +155,7 @@ public class IngestController(
                         @headings,@altitudes,@accuracies,@trip_ids,@road_works_vals,@created_ats)
                  AS v(api_key_id,ts,lat,lon,speed_ms,heading,altitude,accuracy,trip_id,road_works,created_at)
             ON CONFLICT ("TripId","Timestamp") DO NOTHING
-            """,
-            new NpgsqlParameter("api_key_ids",     NpgsqlDbType.Array | NpgsqlDbType.Integer)     { Value = apiKeyIds   },
-            new NpgsqlParameter("timestamps",      NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = timestamps  },
-            new NpgsqlParameter("latitudes",       NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = latitudes   },
-            new NpgsqlParameter("longitudes",      NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = longitudes  },
-            new NpgsqlParameter("speed_ms_vals",   NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = speedMs     },
-            new NpgsqlParameter("headings",        NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = headings    },
-            new NpgsqlParameter("altitudes",       NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = altitudes   },
-            new NpgsqlParameter("accuracies",      NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = accuracies  },
-            new NpgsqlParameter("trip_ids",        NpgsqlDbType.Array | NpgsqlDbType.Text)        { Value = tripIds     },
-            new NpgsqlParameter("road_works_vals", NpgsqlDbType.Array | NpgsqlDbType.Boolean)     { Value = roadWorks   },
-            new NpgsqlParameter("created_ats",     NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = createdAts  }
-            , ct);
+            """, sqlParams, ct);
     }
 
     private (int userId, int keyId, string ipHash) GetContext() =>
