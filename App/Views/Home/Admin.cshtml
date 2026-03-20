@@ -268,7 +268,8 @@
 
     async function seedHistory() {
       const res = await web('GET', '/admin/stats/history');
-      if (!res?.ok || !res.data.length) return;
+      console.debug('[admin] stats history:', res?.status, Array.isArray(res?.data) ? res.data.length + ' samples' : res?.data);
+      if (!res?.ok || !Array.isArray(res.data) || !res.data.length) return;
       for (const s of res.data) {
         const t = new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         history.labels      .push(t);

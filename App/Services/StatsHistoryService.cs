@@ -9,7 +9,7 @@ namespace OpenTrafficDB.App.Services;
 /// and retains the last hour (240 samples) so the admin dashboard can show
 /// pre-populated charts on login.
 /// </summary>
-public sealed class StatsHistoryService(IServiceScopeFactory scopeFactory) : BackgroundService
+public sealed class StatsHistoryService(IServiceScopeFactory scopeFactory, ILogger<StatsHistoryService> logger) : BackgroundService
 {
     public record StatsSample(
         DateTime Timestamp,
@@ -37,7 +37,7 @@ public sealed class StatsHistoryService(IServiceScopeFactory scopeFactory) : Bac
                 await SampleAsync(stoppingToken);
             }
             catch (OperationCanceledException) { break; }
-            catch { /* swallow — transient DB errors should not crash the service */ }
+            catch (Exception ex) { logger.LogWarning(ex, "StatsHistoryService: failed to sample stats"); }
 
             await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
         }
