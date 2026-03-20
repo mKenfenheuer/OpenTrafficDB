@@ -154,7 +154,6 @@ public class IngestController(
             FROM unnest(@api_key_ids,@timestamps,@latitudes,@longitudes,@speed_ms_vals,
                         @headings,@altitudes,@accuracies,@trip_ids,@road_works_vals,@created_ats)
                  AS v(api_key_id,ts,lat,lon,speed_ms,heading,altitude,accuracy,trip_id,road_works,created_at)
-            ON CONFLICT ("TripId","Timestamp") DO NOTHING
             """, sqlParams, ct);
     }
 
