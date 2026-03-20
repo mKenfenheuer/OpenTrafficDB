@@ -45,6 +45,9 @@ public class PartitionMaintenanceService(
                     CREATE TABLE IF NOT EXISTS "{name}"
                         PARTITION OF "SpeedObservations"
                         FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{to:yyyy-MM-dd}')
+                        WITH (autovacuum_vacuum_scale_factor  = 0.01,
+                              autovacuum_analyze_scale_factor = 0.005,
+                              autovacuum_vacuum_cost_delay    = 2)
                     """, ct);
 
                 logger.LogDebug("Partition {Name} ensured", name);

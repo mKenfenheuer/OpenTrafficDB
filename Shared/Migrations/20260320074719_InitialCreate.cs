@@ -182,52 +182,29 @@ namespace OpenTrafficDB.Shared.Migrations
                     CONSTRAINT "PK_SpeedObservations" PRIMARY KEY ("Id", "Timestamp"),
                     CONSTRAINT "FK_SpeedObservations_ApiKeys_ApiKeyId"
                         FOREIGN KEY ("ApiKeyId") REFERENCES "ApiKeys" ("Id") ON DELETE CASCADE
-                ) PARTITION BY RANGE ("Timestamp")
-                  WITH (autovacuum_vacuum_scale_factor = 0.01,
-                        autovacuum_analyze_scale_factor = 0.005,
-                        autovacuum_vacuum_cost_delay = 2);
+                ) PARTITION BY RANGE ("Timestamp");
                 """);
 
-            // Monthly partitions — extend this list as new months approach.
-            migrationBuilder.Sql("""
-                CREATE TABLE "SpeedObservations_2025_01" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
-                CREATE TABLE "SpeedObservations_2025_02" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-02-01') TO ('2025-03-01');
-                CREATE TABLE "SpeedObservations_2025_03" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-03-01') TO ('2025-04-01');
-                CREATE TABLE "SpeedObservations_2025_04" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-04-01') TO ('2025-05-01');
-                CREATE TABLE "SpeedObservations_2025_05" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-05-01') TO ('2025-06-01');
-                CREATE TABLE "SpeedObservations_2025_06" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-06-01') TO ('2025-07-01');
-                CREATE TABLE "SpeedObservations_2025_07" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-07-01') TO ('2025-08-01');
-                CREATE TABLE "SpeedObservations_2025_08" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-08-01') TO ('2025-09-01');
-                CREATE TABLE "SpeedObservations_2025_09" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-09-01') TO ('2025-10-01');
-                CREATE TABLE "SpeedObservations_2025_10" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-10-01') TO ('2025-11-01');
-                CREATE TABLE "SpeedObservations_2025_11" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-11-01') TO ('2025-12-01');
-                CREATE TABLE "SpeedObservations_2025_12" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2025-12-01') TO ('2026-01-01');
-                CREATE TABLE "SpeedObservations_2026_01" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
-                CREATE TABLE "SpeedObservations_2026_02" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');
-                CREATE TABLE "SpeedObservations_2026_03" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');
-                CREATE TABLE "SpeedObservations_2026_04" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-04-01') TO ('2026-05-01');
-                CREATE TABLE "SpeedObservations_2026_05" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-05-01') TO ('2026-06-01');
-                CREATE TABLE "SpeedObservations_2026_06" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-06-01') TO ('2026-07-01');
-                CREATE TABLE "SpeedObservations_2026_07" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-07-01') TO ('2026-08-01');
-                CREATE TABLE "SpeedObservations_2026_08" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-08-01') TO ('2026-09-01');
-                CREATE TABLE "SpeedObservations_2026_09" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-09-01') TO ('2026-10-01');
-                CREATE TABLE "SpeedObservations_2026_10" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-10-01') TO ('2026-11-01');
-                CREATE TABLE "SpeedObservations_2026_11" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-11-01') TO ('2026-12-01');
-                CREATE TABLE "SpeedObservations_2026_12" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2026-12-01') TO ('2027-01-01');
-                CREATE TABLE "SpeedObservations_2027_01" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-01-01') TO ('2027-02-01');
-                CREATE TABLE "SpeedObservations_2027_02" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-02-01') TO ('2027-03-01');
-                CREATE TABLE "SpeedObservations_2027_03" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-03-01') TO ('2027-04-01');
-                CREATE TABLE "SpeedObservations_2027_04" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-04-01') TO ('2027-05-01');
-                CREATE TABLE "SpeedObservations_2027_05" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-05-01') TO ('2027-06-01');
-                CREATE TABLE "SpeedObservations_2027_06" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-06-01') TO ('2027-07-01');
-                CREATE TABLE "SpeedObservations_2027_07" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-07-01') TO ('2027-08-01');
-                CREATE TABLE "SpeedObservations_2027_08" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-08-01') TO ('2027-09-01');
-                CREATE TABLE "SpeedObservations_2027_09" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-09-01') TO ('2027-10-01');
-                CREATE TABLE "SpeedObservations_2027_10" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-10-01') TO ('2027-11-01');
-                CREATE TABLE "SpeedObservations_2027_11" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-11-01') TO ('2027-12-01');
-                CREATE TABLE "SpeedObservations_2027_12" PARTITION OF "SpeedObservations" FOR VALUES FROM ('2027-12-01') TO ('2028-01-01');
-                CREATE TABLE "SpeedObservations_default" PARTITION OF "SpeedObservations" DEFAULT;
-                """);
+            // Monthly partitions 2025–2027 + a default catch-all.
+            // Storage parameters are set on each leaf partition (not allowed on the parent).
+            // PartitionMaintenanceService keeps this list extended automatically going forward.
+            var partitionSql = new System.Text.StringBuilder();
+            for (var year = 2025; year <= 2027; year++)
+                for (var month = 1; month <= 12; month++)
+                {
+                    var from = new System.DateTime(year, month, 1);
+                    var to   = from.AddMonths(1);
+                    partitionSql.AppendLine($"""
+                        CREATE TABLE "SpeedObservations_{year:D4}_{month:D2}"
+                            PARTITION OF "SpeedObservations"
+                            FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{to:yyyy-MM-dd}')
+                            WITH (autovacuum_vacuum_scale_factor  = 0.01,
+                                  autovacuum_analyze_scale_factor = 0.005,
+                                  autovacuum_vacuum_cost_delay    = 2);
+                        """);
+                }
+            partitionSql.AppendLine("""CREATE TABLE "SpeedObservations_default" PARTITION OF "SpeedObservations" DEFAULT;""");
+            migrationBuilder.Sql(partitionSql.ToString());
 
             migrationBuilder.CreateIndex(
                 name: "IX_AggregationMetrics_ProcessedAt",

@@ -70,10 +70,8 @@ public class AppDbContext : DbContext
              .HasDatabaseName("IX_SpeedObservations_TripId_Unaggregated")
              .HasFilter("\"OsmWayId\" IS NOT NULL AND \"IsAggregated\" = FALSE");
 
-            // Aggressive autovacuum: table receives millions of inserts and bulk deletes.
-            e.HasStorageParameter("autovacuum_vacuum_scale_factor", "0.01");
-            e.HasStorageParameter("autovacuum_analyze_scale_factor", "0.005");
-            e.HasStorageParameter("autovacuum_vacuum_cost_delay", "2");
+            // Autovacuum storage parameters are set on each leaf partition by PartitionMaintenanceService
+            // (PostgreSQL does not allow WITH (...) on partitioned parent tables).
         });
 
         modelBuilder.Entity<BlockedIp>(e =>
