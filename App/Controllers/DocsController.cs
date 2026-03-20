@@ -49,4 +49,12 @@ public class DocsController : Controller
         ViewData["DocsPage"] = "tiles";
         return View();
     }
+
+    [HttpGet("live-traffic")]
+    [AllowAnonymous]
+    public IActionResult LiveTraffic()
+    {
+        ViewData["DocsPage"] = "live-traffic";
+        return View();
+    }
 }

@@ -17,7 +17,7 @@ public class TrafficController(
     AbuseDetectionService abuseDetection,
     WorkerClient workers) : ControllerBase
 {
-    /// <summary> 
+    /// <summary>
     /// Exports traffic data in Valhalla predicted-traffic CSV format.
     /// </summary>
     [HttpGet("valhalla/csv")]
@@ -28,6 +28,23 @@ public class TrafficController(
     {
         if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
         await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/valhalla/csv",
+            GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
+        return new EmptyResult();
+    }
+
+    /// <summary>
+    /// Exports live traffic speeds as a simple way_id,speed_kmh CSV.
+    /// Suitable for feeding into a tool that builds Valhalla traffic.tar files.
+    /// Only includes ways with data from the last 60 minutes.
+    /// </summary>
+    [HttpGet("live/csv")]
+    [Produces("text/csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> GetLiveTrafficCsv(CancellationToken ct)
+    {
+        if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
+        await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/live/csv",
             GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
         return new EmptyResult();
     }

@@ -3,18 +3,49 @@ before_script:
   - export IS_MAIN=$([[ "$CI_COMMIT_REF_NAME" == "main" ]] && echo "true" || echo "false")
 
 stages:
+  - tools
   - build
   - deploy
+
+# ── Traffic tar builder tool ─────────────────────────────────────────────────
+build_tools:
+  stage: tools
+  image: debian:bookworm-slim
+  tags: [docker, build, dind]
+  rules:
+    - changes:
+        - tools/traffic-tar-builder/**/*
+        - App/**/*
+        - Shared/**/*
+  before_script: []
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends g++ make
+    - cd tools/traffic-tar-builder
+    - make CXX=g++ CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -static"
+    - mkdir -p ../../downloads
+    - cp traffic_tar_builder ../../downloads/traffic_tar_builder-linux-amd64
+    - tar -czf ../../downloads/traffic_tar_builder-src.tar.gz traffic_tar_builder.cpp Makefile
+  artifacts:
+    paths:
+      - downloads/
+    expire_in: 1 week
 
 # ── App (gateway) ────────────────────────────────────────────────────────────
 build_app:
   stage: build
   tags: [docker, build, linux, shell]
+  needs:
+    - job: build_tools
+      optional: true
+      artifacts: true
   rules:
     - changes:
         - App/**/*
         - Shared/**/*
+        - tools/traffic-tar-builder/**/*
   script:
+    - mkdir -p App/wwwroot/downloads
+    - if [ -d downloads ]; then cp downloads/* App/wwwroot/downloads/; fi
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - docker build -f App/Dockerfile -t app-image .
     - docker image tag app-image $CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHORT_SHA
@@ -100,6 +131,8 @@ build_routing:
 deploy_production:
   stage: deploy
   needs:
+    - job: build_tools
+      optional: true
     - job: build_app
       optional: true
     - job: build_ingest
@@ -120,6 +153,7 @@ deploy_production:
         - RoutingWorker/**/*
         - OsmWayImporter/**/*
         - Shared/**/*
+        - tools/traffic-tar-builder/**/*
         - docker-compose.yml
         - .gitlab-ci.yml
         - .env.example

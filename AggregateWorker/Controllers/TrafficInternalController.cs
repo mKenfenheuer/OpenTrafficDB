@@ -19,4 +19,14 @@ public class TrafficInternalController(TrafficAggregationService aggregation) : 
         return new EmptyResult();
     }
 
+    [HttpGet("live/csv")]
+    [Produces("text/csv")]
+    public async Task<IActionResult> GetLiveTrafficCsv(CancellationToken ct)
+    {
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"live_traffic.csv\"";
+        await aggregation.WriteLiveTrafficCsvAsync(Response.Body, ct);
+        return new EmptyResult();
+    }
+
 }

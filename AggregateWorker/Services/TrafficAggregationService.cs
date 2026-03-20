@@ -290,4 +290,30 @@ public class TrafficAggregationService(
         }
     }
 
+    // ── Live traffic CSV export ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Streams a simple way_id,speed_kmh CSV of current live speeds from WaySpeedSummaries.
+    /// Intended for external tools that build Valhalla traffic.tar files.
+    /// Only includes ways updated within the last 60 minutes.
+    /// </summary>
+    public async Task WriteLiveTrafficCsvAsync(Stream output, CancellationToken ct = default)
+    {
+        await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 65536, leaveOpen: true);
+        await writer.WriteLineAsync("way_id,speed_kmh");
+
+        var cutoff = DateTime.UtcNow.AddMinutes(-60);
+
+        await foreach (var s in readDb.WaySpeedSummaries
+            .Where(s => s.LastUpdated >= cutoff)
+            .OrderBy(s => s.OsmWayId)
+            .AsNoTracking()
+            .Select(s => new { s.OsmWayId, Speed = s.ConstrainedSpeed ?? s.FreeflowSpeed })
+            .AsAsyncEnumerable()
+            .WithCancellation(ct))
+        {
+            await writer.WriteLineAsync($"{s.OsmWayId},{s.Speed:F1}");
+        }
+    }
+
 }

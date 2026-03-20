@@ -1,0 +1,131 @@
+@{
+    Layout = "~/Views/Docs/_DocsLayout.cshtml";
+    ViewData["Title"] = "Live Traffic";
+    ViewData["DocsPage"] = "live-traffic";
+}
+
+<h1 style="font-size:1.75rem;font-weight:800;margin-bottom:8px">Live Traffic</h1>
+<p class="text-muted" style="margin-bottom:32px">Feed real-time traffic speeds into your Valhalla routing instance.</p>
+
+<div class="card section">
+    <div class="card-title">Overview</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        The <strong style="color:var(--text)">traffic_tar_builder</strong> tool generates a Valhalla-compatible
+        <code>traffic.tar</code> from live speed data. Valhalla reads this file at runtime to apply real-time
+        traffic speeds to routing — no tile rebuild required.
+    </p>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:8px">
+        The workflow has three inputs:
+    </p>
+    <ul class="text-muted text-sm" style="line-height:2;margin:8px 0 0 20px">
+        <li>A <strong style="color:var(--text)">live traffic CSV</strong> from this API (<code>GET /api/v1/traffic/live/csv</code>)</li>
+        <li>A <strong style="color:var(--text)">way_edges.txt</strong> mapping file from <code>valhalla_ways_to_edges</code></li>
+        <li>Your <strong style="color:var(--text)">Valhalla tile extract</strong> (<code>.tar</code> with <code>.gph</code> tiles)</li>
+    </ul>
+</div>
+
+<div class="card section">
+    <div class="card-title">Download</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+        <a href="/downloads/traffic_tar_builder-linux-amd64" download
+           style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--radius);background:var(--accent);color:#fff;font-size:0.85rem;font-weight:600;text-decoration:none">
+            Linux amd64 binary
+        </a>
+        <a href="/downloads/traffic_tar_builder-src.tar.gz" download
+           style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--radius);background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:0.85rem;font-weight:600;text-decoration:none">
+            Source (.tar.gz)
+        </a>
+    </div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        The pre-built binary is statically linked (no dependencies). To build from source:
+    </p>
+    <div class="code-block"><span class="code-comment"># Build from source (requires g++ with C++17 support)</span>
+tar xzf traffic_tar_builder-src.tar.gz
+cd traffic-tar-builder
+make</div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Step 1: Generate Way-to-Edge Mapping</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Run this once after building Valhalla tiles (or after a tile rebuild). It maps OSM way IDs
+        to Valhalla's internal graph edge IDs.
+    </p>
+    <div class="code-block"><span class="code-comment"># Generate mapping from OSM way IDs to Valhalla graph edges</span>
+<span class="code-url">valhalla_ways_to_edges</span> --config valhalla.json way_edges.txt</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        Output format: <code>osm_way_id,direction,graph_id[,direction,graph_id]*</code>
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Step 2: Fetch Live Speeds</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Download the current live speed CSV. Only ways with data from the last 60 minutes are included.
+    </p>
+    <div class="code-block"><span class="code-comment"># Download live traffic CSV</span>
+<span class="code-url">curl</span> -H 'Authorization: Bearer &lt;your-jwt-token&gt;' \
+     https://your-server/api/v1/traffic/live/csv \
+     -o live.csv</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        CSV format: <code>way_id,speed_kmh</code> — one row per road with a recent observation.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Step 3: Build traffic.tar</div>
+    <div class="code-block"><span class="code-comment"># Build a Valhalla-compatible traffic.tar</span>
+<span class="code-url">./traffic_tar_builder</span> \
+    --tiles valhalla_tiles.tar \
+    --csv live.csv \
+    --way-edges way_edges.txt \
+    -o traffic.tar</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        The tool reads each graph tile to determine the number of directed edges, then writes a binary
+        <code>TrafficSpeed</code> entry per edge. Edges with a matching live speed get the real value
+        (2 kph resolution); all others are marked as unknown so Valhalla falls back to default speeds.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Step 4: Point Valhalla at the Traffic File</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Set <code>mjolnir.traffic_extract</code> in your Valhalla config:
+    </p>
+    <div class="code-block"><span class="code-comment">// valhalla.json</span>
+{
+  "mjolnir": {
+    "traffic_extract": "/path/to/traffic.tar"
+  }
+}</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        Valhalla will memory-map the file. To update live traffic, regenerate <code>traffic.tar</code>
+        and either restart Valhalla or — if using the memory-mapped path — simply overwrite the file
+        (Valhalla re-reads it periodically).
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Automation</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        For continuous live traffic updates, run steps 2–3 on a cron schedule:
+    </p>
+    <div class="code-block"><span class="code-comment"># Example: update traffic every 5 minutes</span>
+*/5 * * * * curl -s -H "Authorization: Bearer $TOKEN" \
+    https://your-server/api/v1/traffic/live/csv -o /opt/traffic/live.csv \
+  && /opt/traffic/traffic_tar_builder \
+    --tiles /opt/valhalla/tiles.tar \
+    --csv /opt/traffic/live.csv \
+    --way-edges /opt/valhalla/way_edges.txt \
+    -o /opt/valhalla/traffic.tar</div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Requirements</div>
+    <ul class="text-muted text-sm" style="line-height:2;margin:0 0 0 20px">
+        <li>Valhalla 3.x or later with live traffic support</li>
+        <li>A Valhalla tile extract (<code>.tar</code>) covering the same region as your observations</li>
+        <li>The <code>valhalla_ways_to_edges</code> tool (ships with Valhalla)</li>
+        <li>A valid API key with an active JWT token for downloading the live CSV</li>
+    </ul>
+</div>
