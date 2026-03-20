@@ -199,11 +199,6 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.HasIndex("Timestamp", "Latitude", "Longitude");
 
                     b.ToTable("SpeedObservations");
-
-                    b
-                        .HasAnnotation("Npgsql:StorageParameter:autovacuum_analyze_scale_factor", "0.005")
-                        .HasAnnotation("Npgsql:StorageParameter:autovacuum_vacuum_cost_delay", "2")
-                        .HasAnnotation("Npgsql:StorageParameter:autovacuum_vacuum_scale_factor", "0.01");
                 });
 
             modelBuilder.Entity("OpenTrafficDB.Shared.Models.User", b =>
