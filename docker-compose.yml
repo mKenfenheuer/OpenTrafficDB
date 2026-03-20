@@ -59,6 +59,8 @@ services:
     restart: unless-stopped
     volumes:
       - /mnt/opentraffic/valhalla:/custom_files
+    ports:
+      - 0.0.0.0:8096:8002
     environment:
       tile_building_blocked: "0"
       tile_urls: ${VALHALLA_TILE_URL}

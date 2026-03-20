@@ -97,7 +97,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<WaySpeedSummary>(e =>
         {
             e.HasIndex(s => s.OsmWayId).IsUnique();
-            // Used by the tile query: WHERE wss."LastUpdated" >= NOW() - INTERVAL '30 minutes'
+            // Used by the tile query: WHERE wss."LastUpdated" >= NOW() - INTERVAL '60 minutes'
             e.HasIndex(s => s.LastUpdated);
             // fillfactor=80: ConstrainedSpeed, FreeflowSpeed, EncodedSpeeds updated on every aggregation cycle.
             e.HasStorageParameter("fillfactor", 80);
