@@ -36,6 +36,7 @@ public class Program
         builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkerHealthService>());
 
         builder.Services.AddHostedService<AggregationCoordinatorService>();
+        builder.Services.AddHostedService<PartitionMaintenanceService>();
 
         // ── OpenTelemetry ────────────────────────────────────────────────────
         builder.Services.AddOpenTelemetry()

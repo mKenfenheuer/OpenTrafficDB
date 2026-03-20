@@ -10,11 +10,11 @@ using OpenTrafficDB.Shared.Data;
 
 #nullable disable
 
-namespace OpenTrafficDB.Migrations
+namespace OpenTrafficDB.Shared.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260319214934_AddEncodedSpeeds")]
-    partial class AddEncodedSpeeds
+    [Migration("20260320074719_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -136,6 +136,9 @@ namespace OpenTrafficDB.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<float?>("AltitudeMeters")
                         .HasColumnType("real");
 
@@ -150,10 +153,6 @@ namespace OpenTrafficDB.Migrations
 
                     b.Property<float?>("Heading")
                         .HasColumnType("real");
-
-                    b.Property<string>("IpHash")
-                        .IsRequired()
-                        .HasColumnType("text");
 
                     b.Property<bool>("IsAggregated")
                         .HasColumnType("boolean");
@@ -176,14 +175,11 @@ namespace OpenTrafficDB.Migrations
                     b.Property<double>("SpeedMs")
                         .HasColumnType("double precision");
 
-                    b.Property<DateTime>("Timestamp")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("TripId")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.HasKey("Id");
+                    b.HasKey("Id", "Timestamp");
 
                     b.HasIndex("ApiKeyId");
 
@@ -206,6 +202,11 @@ namespace OpenTrafficDB.Migrations
                     b.HasIndex("Timestamp", "Latitude", "Longitude");
 
                     b.ToTable("SpeedObservations");
+
+                    b
+                        .HasAnnotation("Npgsql:StorageParameter:autovacuum_analyze_scale_factor", "0.005")
+                        .HasAnnotation("Npgsql:StorageParameter:autovacuum_vacuum_cost_delay", "2")
+                        .HasAnnotation("Npgsql:StorageParameter:autovacuum_vacuum_scale_factor", "0.01");
                 });
 
             modelBuilder.Entity("OpenTrafficDB.Shared.Models.User", b =>
@@ -363,6 +364,8 @@ namespace OpenTrafficDB.Migrations
                         .IsUnique();
 
                     b.ToTable("WaySpeedAggregates");
+
+                    b.HasAnnotation("Npgsql:StorageParameter:fillfactor", 80);
                 });
 
             modelBuilder.Entity("OpenTrafficDB.Shared.Models.WaySpeedSummary", b =>
@@ -399,6 +402,8 @@ namespace OpenTrafficDB.Migrations
                         .IsUnique();
 
                     b.ToTable("WaySpeedSummaries");
+
+                    b.HasAnnotation("Npgsql:StorageParameter:fillfactor", 80);
                 });
 
             modelBuilder.Entity("OpenTrafficDB.Shared.Models.ApiKey", b =>

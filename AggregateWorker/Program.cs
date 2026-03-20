@@ -46,6 +46,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(
 builder.Services.AddScoped<TrafficAggregationService>();
 builder.Services.AddScoped<ValhallaMapMatchingService>();
 builder.Services.AddScoped<TrafficTileService>();
+builder.Services.AddHostedService<PartitionMaintenanceService>();
 builder.Services.AddTransient<RateLimitRetryHandler>();
 
 // ── HTTP clients ──────────────────────────────────────────────────────────────

@@ -46,6 +46,14 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<SpeedObservation>(e =>
         {
+            // Composite PK required for PARTITION BY RANGE ("Timestamp").
+            // Id is still the identity/surrogate key; Timestamp is the partition key.
+            e.HasKey(o => new { o.Id, o.Timestamp });
+            e.Property(o => o.Id).UseIdentityByDefaultColumn();
+
+            // Partitioning is applied via raw SQL in the migration (EF doesn't generate PARTITION BY RANGE).
+            // Child partitions (monthly) are also created there.
+
             e.HasIndex(o => o.Timestamp);
             e.HasIndex(o => new { o.Timestamp, o.Latitude, o.Longitude });
             e.HasIndex(o => new { o.Timestamp, o.OsmWayId }).HasFilter("\"OsmWayId\" IS NOT NULL");
@@ -61,6 +69,11 @@ public class AppDbContext : DbContext
             e.HasIndex(o => o.TripId)
              .HasDatabaseName("IX_SpeedObservations_TripId_Unaggregated")
              .HasFilter("\"OsmWayId\" IS NOT NULL AND \"IsAggregated\" = FALSE");
+
+            // Aggressive autovacuum: table receives millions of inserts and bulk deletes.
+            e.HasStorageParameter("autovacuum_vacuum_scale_factor", "0.01");
+            e.HasStorageParameter("autovacuum_analyze_scale_factor", "0.005");
+            e.HasStorageParameter("autovacuum_vacuum_cost_delay", "2");
         });
 
         modelBuilder.Entity<BlockedIp>(e =>
@@ -71,6 +84,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<WaySpeedAggregate>(e =>
         {
             e.HasIndex(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
+            // fillfactor=80 leaves room for HOT updates (SumSpeedKmh, SampleCount updated every aggregation cycle).
+            e.HasStorageParameter("fillfactor", 80);
         });
 
         modelBuilder.Entity<WayGeometry>(e =>
@@ -86,6 +101,8 @@ public class AppDbContext : DbContext
             e.HasIndex(s => s.OsmWayId).IsUnique();
             // Used by the tile query: WHERE wss."LastUpdated" >= NOW() - INTERVAL '30 minutes'
             e.HasIndex(s => s.LastUpdated);
+            // fillfactor=80: ConstrainedSpeed, FreeflowSpeed, EncodedSpeeds updated on every aggregation cycle.
+            e.HasStorageParameter("fillfactor", 80);
         });
 
         modelBuilder.Entity<AggregationMetric>(e =>
