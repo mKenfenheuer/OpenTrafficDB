@@ -724,8 +724,7 @@ public class ValhallaRoutingService(
     }
 
     /// <summary>
-    /// Apply server-side defaults that the client may not have set:
-    /// shortcuts=false, date_time={type:0}, and costing_options.auto.top_speed=120.
+    /// Apply server-side defaults for costing options, shortcuts, etc.
     /// Only sets values that are not already present in the request.
     /// </summary>
     private static JsonObject ApplyDefaults(JsonElement source)
@@ -745,7 +744,36 @@ public class ValhallaRoutingService(
             costingOptions[costing] = new JsonObject();
 
         var modelOptions = costingOptions[costing]!.AsObject();
+
+        // Speed
         modelOptions.TryAdd("top_speed", 120);
+        modelOptions.TryAdd("fixed_speed", 0);
+
+        // Road preferences
+        modelOptions.TryAdd("use_highways", 0.4);
+        modelOptions.TryAdd("use_living_streets", 0.8);
+        modelOptions.TryAdd("use_tolls", (JsonNode)1);
+        modelOptions.TryAdd("use_ferry", (JsonNode)1);
+        modelOptions.TryAdd("use_tracks", (JsonNode)0);
+
+        // Costs & penalties
+        modelOptions.TryAdd("maneuver_penalty", 11);
+        modelOptions.TryAdd("country_crossing_penalty", (JsonNode)0);
+        modelOptions.TryAdd("country_crossing_cost", 600);
+        modelOptions.TryAdd("ferry_cost", 300);
+        modelOptions.TryAdd("private_access_penalty", 450);
+        modelOptions.TryAdd("destination_only_penalty", 300);
+        modelOptions.TryAdd("service_penalty", 15);
+        modelOptions.TryAdd("service_factor", (JsonNode)1);
+        modelOptions.TryAdd("gate_penalty", 300);
+        modelOptions.TryAdd("gate_cost", 30);
+        modelOptions.TryAdd("toll_booth_penalty", (JsonNode)0);
+        modelOptions.TryAdd("toll_booth_cost", 15);
+        modelOptions.TryAdd("closure_factor", (JsonNode)9);
+
+        // Vehicle dimensions
+        modelOptions.TryAdd("width", 1.6);
+        modelOptions.TryAdd("height", 1.9);
 
         return node;
     }
