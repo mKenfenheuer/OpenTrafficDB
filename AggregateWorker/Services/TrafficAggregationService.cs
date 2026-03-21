@@ -300,7 +300,7 @@ public class TrafficAggregationService(
     public async Task WriteLiveTrafficCsvAsync(Stream output, CancellationToken ct = default)
     {
         await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 65536, leaveOpen: true);
-        await writer.WriteLineAsync("way_id,speed_kmh");
+        await writer.WriteLineAsync("way_id,speed_kmh,freeflow_kmh");
 
         var cutoff = DateTime.UtcNow.AddMinutes(-60);
 
@@ -308,11 +308,11 @@ public class TrafficAggregationService(
             .Where(s => s.LastUpdated >= cutoff)
             .OrderBy(s => s.OsmWayId)
             .AsNoTracking()
-            .Select(s => new { s.OsmWayId, Speed = s.ConstrainedSpeed ?? s.FreeflowSpeed })
+            .Select(s => new { s.OsmWayId, Speed = s.ConstrainedSpeed ?? s.FreeflowSpeed, s.FreeflowSpeed })
             .AsAsyncEnumerable()
             .WithCancellation(ct))
         {
-            await writer.WriteLineAsync($"{s.OsmWayId},{s.Speed:F1}");
+            await writer.WriteLineAsync($"{s.OsmWayId},{s.Speed:F1},{s.FreeflowSpeed:F1}");
         }
     }
 

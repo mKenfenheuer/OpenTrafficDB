@@ -210,3 +210,4 @@ FakesAssemblies/
 *.sln.iml
 .claude
 .local.txt
+tools/traffic-tar-builder/traffic_tar_builder

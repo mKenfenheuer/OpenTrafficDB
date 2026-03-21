@@ -74,6 +74,8 @@ static GraphId decode_graph_id(uint64_t raw) {
 
 static constexpr uint32_t TRAFFIC_TILE_VERSION = 3;
 static constexpr uint32_t UNKNOWN_TRAFFIC_SPEED_RAW = (1 << 7) - 1; // 127
+static constexpr uint32_t UNKNOWN_CONGESTION_VAL = 0;
+static constexpr uint32_t MAX_CONGESTION_VAL = 63;
 
 #pragma pack(push, 1)
 struct TrafficTileHeader {
@@ -250,24 +252,34 @@ static std::vector<TarMember> scan_tar(const std::string& tar_path) {
 
 // ── Parse live traffic CSV ───────────────────────────────────────────────────
 
-static std::unordered_map<int64_t, float> parse_csv(const std::string& csv_path) {
+struct LiveSpeed {
+    float speed_kmh;
+    float freeflow_kmh;
+};
+
+static std::unordered_map<int64_t, LiveSpeed> parse_csv(const std::string& csv_path) {
     std::ifstream f(csv_path);
     if (!f) {
         std::cerr << "Cannot open CSV: " << csv_path << "\n";
         std::exit(1);
     }
 
-    std::unordered_map<int64_t, float> speeds;
+    std::unordered_map<int64_t, LiveSpeed> speeds;
     std::string line;
     std::getline(f, line); // skip header
 
     while (std::getline(f, line)) {
         if (line.empty()) continue;
-        auto comma = line.find(',');
-        if (comma == std::string::npos) continue;
-        int64_t way_id  = std::stoll(line.substr(0, comma));
-        float speed_kmh = std::stof(line.substr(comma + 1));
-        speeds[way_id] = speed_kmh;
+        // Format: way_id,speed_kmh,freeflow_kmh
+        auto c1 = line.find(',');
+        if (c1 == std::string::npos) continue;
+        auto c2 = line.find(',', c1 + 1);
+        if (c2 == std::string::npos) continue;
+
+        int64_t way_id      = std::stoll(line.substr(0, c1));
+        float speed_kmh     = std::stof(line.substr(c1 + 1, c2 - c1 - 1));
+        float freeflow_kmh  = std::stof(line.substr(c2 + 1));
+        speeds[way_id] = {speed_kmh, freeflow_kmh};
     }
 
     std::cerr << "Loaded " << speeds.size() << " live speeds from CSV\n";
@@ -333,7 +345,21 @@ parse_way_edges(const std::string& path) {
 static constexpr float MAX_TRAFFIC_KPH =
     static_cast<float>((UNKNOWN_TRAFFIC_SPEED_RAW - 1) << 1); // 252
 
-static TrafficSpeed encode_speed(float speed_kmh) {
+// Congestion is 6 bits: 0 = unknown, 1 = free flow, 63 = max congestion.
+// Derived from speed / freeflow ratio.
+static uint32_t compute_congestion(float speed_kmh, float freeflow_kmh) {
+    if (freeflow_kmh <= 0.0f) return UNKNOWN_CONGESTION_VAL;
+
+    float ratio = speed_kmh / freeflow_kmh;
+    // ratio >= 1.0 → free flow (1), ratio → 0.0 → max congestion (63)
+    float congestion = 1.0f + (1.0f - std::min(ratio, 1.0f)) * 62.0f;
+    uint32_t val = static_cast<uint32_t>(std::round(congestion));
+    if (val < 1) val = 1;
+    if (val > MAX_CONGESTION_VAL) val = MAX_CONGESTION_VAL;
+    return val;
+}
+
+static TrafficSpeed encode_speed(float speed_kmh, float freeflow_kmh) {
     TrafficSpeed ts{};
 
     if (speed_kmh <= 0.0f || std::isnan(speed_kmh)) {
@@ -351,6 +377,8 @@ static TrafficSpeed encode_speed(float speed_kmh) {
     if (encoded >= UNKNOWN_TRAFFIC_SPEED_RAW) encoded = UNKNOWN_TRAFFIC_SPEED_RAW - 1;
     if (encoded == 0 && clamped > 0.0f) encoded = 1; // 0 means "closed"
 
+    uint32_t congestion = compute_congestion(speed_kmh, freeflow_kmh);
+
     // Uniform speed across the whole edge (single segment covering full length)
     ts.overall_encoded_speed = encoded;
     ts.encoded_speed1 = encoded;
@@ -358,10 +386,10 @@ static TrafficSpeed encode_speed(float speed_kmh) {
     ts.encoded_speed3 = encoded;
     ts.breakpoint1 = 255;
     ts.breakpoint2 = 255;
-    ts.congestion1 = 0;
-    ts.congestion2 = 0;
-    ts.congestion3 = 0;
-    ts.has_incidents = 0;
+    ts.congestion1 = congestion;
+    ts.congestion2 = congestion;
+    ts.congestion3 = congestion;
+    ts.has_incidents = (speed_kmh < 5.0f) ? 1 : 0;
     ts.spare = 0;
     return ts;
 }
@@ -385,7 +413,7 @@ static void usage(const char* prog) {
         << "\nBuilds a Valhalla-compatible traffic.tar from live speeds and a way→edge mapping.\n"
         << "\nRequired:\n"
         << "  --tiles <path>       Valhalla tile extract (.tar with .gph tiles)\n"
-        << "  --csv <path>         Live traffic CSV (way_id,speed_kmh) from OpenTrafficDB\n"
+        << "  --csv <path>         Live traffic CSV (way_id,speed_kmh,freeflow_kmh) from OpenTrafficDB\n"
         << "  --way-edges <path>   way_edges.txt from valhalla_ways_to_edges\n"
         << "  -o <path>            Output traffic.tar path\n"
         << "\nWorkflow:\n"
@@ -460,11 +488,10 @@ int main(int argc, char* argv[]) {
     std::sort(tiles.begin(), tiles.end(),
               [](const TileInfo& a, const TileInfo& b) { return a.path < b.path; });
 
-    // ── 3. Build per-tile speed lookup: tile_key → (edge_offset → speed) ─────
+    // ── 3. Build per-tile speed lookup: tile_key → (edge_offset → LiveSpeed) ──
 
     // For each tile that has mappings, resolve OSM way speeds to edge offsets.
-    // map: tile_key → (edge_offset → speed_kmh)
-    std::unordered_map<uint32_t, std::unordered_map<uint32_t, float>> tile_speed_map;
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t, LiveSpeed>> tile_speed_map;
 
     size_t matched_edges = 0;
     std::unordered_map<int64_t, bool> matched_ways;
@@ -545,7 +572,8 @@ int main(int argc, char* argv[]) {
             if (speed_it != tile_speed_map.end()) {
                 auto edge_it = speed_it->second.find(e);
                 if (edge_it != speed_it->second.end()) {
-                    auto ts = encode_speed(edge_it->second);
+                    auto& ls = edge_it->second;
+                    auto ts = encode_speed(ls.speed_kmh, ls.freeflow_kmh);
                     out.write(reinterpret_cast<const char*>(&ts), sizeof(ts));
                     total_live_edges++;
                     continue;
