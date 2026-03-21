@@ -59,8 +59,9 @@ public class ValhallaRoutingService(
     public async Task<(JsonElement? Result, int ValhallaStatus, string? ValhallaError)>
         RouteRawAsync(JsonElement clientRequest, CancellationToken ct)
     {
-        var client = httpClientFactory.CreateClient("valhalla");
-        var body   = new StringContent(clientRequest.GetRawText(), Encoding.UTF8, "application/json");
+        var request = ApplyDefaults(clientRequest);
+        var client  = httpClientFactory.CreateClient("valhalla");
+        var body    = new StringContent(request.ToJsonString(), Encoding.UTF8, "application/json");
 
         HttpResponseMessage response;
         try
@@ -95,18 +96,33 @@ public class ValhallaRoutingService(
     public async Task<(JsonElement? Result, int ValhallaStatus, string? ValhallaError)>
         RouteWithTrafficAsync(JsonElement clientRequest, CancellationToken ct)
     {
-        int userAlternates  = ReadAlternates(clientRequest);
+        var withDefaults = ApplyDefaults(clientRequest);
+        var defaultsElement = JsonDocument.Parse(withDefaults.ToJsonString()).RootElement;
+
+        int userAlternates  = ReadAlternates(defaultsElement);
         int requestedRoutes = userAlternates + 1;
 
-        var routeRequest = InjectAlternates(clientRequest, Math.Max(userAlternates, 10));
+        // ── Two parallel Valhalla requests ──────────────────────────────────
+        // 1) Main request: no date_time → supports alternates
+        var mainRequest = InjectAlternates(defaultsElement, userAlternates);
+
+        // 2) Time-dependent request: date_time={type:0}, no alternates
+        //    Gets Valhalla's own time-aware costing for the optimal route.
+        var tdRequest = JsonNode.Parse(withDefaults.ToJsonString())!.AsObject();
+        tdRequest["alternates"] = 0;
+        tdRequest["date_time"]  = new JsonObject { ["type"] = 0 };
 
         var client = httpClientFactory.CreateClient("valhalla");
-        var body   = new StringContent(routeRequest.ToJsonString(), Encoding.UTF8, "application/json");
 
-        HttpResponseMessage response;
+        var mainTask = client.PostAsync($"{_valhallaBaseUrl}/route",
+            new StringContent(mainRequest.ToJsonString(), Encoding.UTF8, "application/json"), ct);
+        var tdTask   = client.PostAsync($"{_valhallaBaseUrl}/route",
+            new StringContent(tdRequest.ToJsonString(), Encoding.UTF8, "application/json"), ct);
+
+        HttpResponseMessage mainResponse;
         try
         {
-            response = await client.PostAsync($"{_valhallaBaseUrl}/route", body, ct);
+            mainResponse = await mainTask;
         }
         catch (Exception ex)
         {
@@ -114,12 +130,12 @@ public class ValhallaRoutingService(
             return (null, 503, "Valhalla routing service unavailable.");
         }
 
-        var rawJson = await response.Content.ReadAsStringAsync(ct);
+        var rawJson = await mainResponse.Content.ReadAsStringAsync(ct);
 
-        if (!response.IsSuccessStatusCode)
+        if (!mainResponse.IsSuccessStatusCode)
         {
-            logger.LogWarning("Valhalla /route returned {Status}: {Body}", response.StatusCode, rawJson);
-            return (null, (int)response.StatusCode, rawJson);
+            logger.LogWarning("Valhalla /route returned {Status}: {Body}", mainResponse.StatusCode, rawJson);
+            return (null, (int)mainResponse.StatusCode, rawJson);
         }
 
         JsonElement valhallaDoc;
@@ -132,6 +148,30 @@ public class ValhallaRoutingService(
 
         var routeLegShapes = ExtractRouteLegShapes(valhallaDoc);
         var tripNodes      = ExtractAllTripNodes(valhallaDoc);
+
+        // Merge the time-dependent route into the candidate pool
+        try
+        {
+            var tdResponse = await tdTask;
+            if (tdResponse.IsSuccessStatusCode)
+            {
+                var tdJson = await tdResponse.Content.ReadAsStringAsync(ct);
+                var tdDoc  = JsonDocument.Parse(tdJson).RootElement;
+                var tdLegShapes = ExtractRouteLegShapes(tdDoc);
+                var tdTripNodes = ExtractAllTripNodes(tdDoc);
+                routeLegShapes.AddRange(tdLegShapes);
+                tripNodes.AddRange(tdTripNodes);
+            }
+            else if (logger.IsEnabled(LogLevel.Debug))
+            {
+                var errBody = await tdResponse.Content.ReadAsStringAsync(ct);
+                logger.LogDebug("Time-dependent /route returned {Status}: {Body}", tdResponse.StatusCode, errBody);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Time-dependent /route request failed (non-fatal).");
+        }
 
         // Analyse traffic for every candidate in parallel
         var results = new RouteAnalysisResult[routeLegShapes.Count];
@@ -683,6 +723,33 @@ public class ValhallaRoutingService(
     {
         var node = JsonNode.Parse(source.GetRawText())!.AsObject();
         node["alternates"] = alternates;
+        return node;
+    }
+
+    /// <summary>
+    /// Apply server-side defaults that the client may not have set:
+    /// shortcuts=false, date_time={type:0}, and costing_options.auto.top_speed=120.
+    /// Only sets values that are not already present in the request.
+    /// </summary>
+    private static JsonObject ApplyDefaults(JsonElement source)
+    {
+        var node = JsonNode.Parse(source.GetRawText())!.AsObject();
+
+        node.TryAdd("shortcuts", false);
+
+        // Determine the costing model (default: "auto")
+        var costing = node["costing"]?.GetValue<string>() ?? "auto";
+
+        if (!node.ContainsKey("costing_options"))
+            node["costing_options"] = new JsonObject();
+
+        var costingOptions = node["costing_options"]!.AsObject();
+        if (!costingOptions.ContainsKey(costing))
+            costingOptions[costing] = new JsonObject();
+
+        var modelOptions = costingOptions[costing]!.AsObject();
+        modelOptions.TryAdd("top_speed", 120);
+
         return node;
     }
 
