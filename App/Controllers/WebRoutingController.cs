@@ -20,15 +20,18 @@ public class WebRoutingController(WorkerClient workers) : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Route(
         [FromBody] JsonElement body,
-        CancellationToken ct)
+        [FromQuery] bool raw = false,
+        CancellationToken ct = default)
     {
         if (body.ValueKind != JsonValueKind.Object)
             return BadRequest(new { error = "Request body must be a JSON object." });
 
+        var query = raw ? "?raw=true" : null;
+
         await workers.ProxyAsync("Routing", HttpMethod.Post, "/internal/route",
             0, string.Empty, string.Empty,
             new System.Net.Http.StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
-            Response, ct: ct);
+            Response, query: query, ct: ct);
 
         return new EmptyResult();
     }

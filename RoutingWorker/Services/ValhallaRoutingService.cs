@@ -53,6 +53,45 @@ public class ValhallaRoutingService(
 
     // ── Public entry point ────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Forward the request to Valhalla and return the raw response without traffic enrichment.
+    /// </summary>
+    public async Task<(JsonElement? Result, int ValhallaStatus, string? ValhallaError)>
+        RouteRawAsync(JsonElement clientRequest, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient("valhalla");
+        var body   = new StringContent(clientRequest.GetRawText(), Encoding.UTF8, "application/json");
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.PostAsync($"{_valhallaBaseUrl}/route", body, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Valhalla /route request failed.");
+            return (null, 503, "Valhalla routing service unavailable.");
+        }
+
+        var rawJson = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogWarning("Valhalla /route returned {Status}: {Body}", response.StatusCode, rawJson);
+            return (null, (int)response.StatusCode, rawJson);
+        }
+
+        try
+        {
+            return (JsonDocument.Parse(rawJson).RootElement, 200, null);
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Failed to parse Valhalla /route response.");
+            return (null, 502, "Invalid JSON from Valhalla.");
+        }
+    }
+
     public async Task<(JsonElement? Result, int ValhallaStatus, string? ValhallaError)>
         RouteWithTrafficAsync(JsonElement clientRequest, CancellationToken ct)
     {

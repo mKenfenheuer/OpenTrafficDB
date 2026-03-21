@@ -16,7 +16,8 @@ public class RoutingInternalController(ValhallaRoutingService routing) : Control
         [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)]
         JsonElement? body,
         [FromQuery] string? json,
-        CancellationToken ct)
+        [FromQuery] bool raw = false,
+        CancellationToken ct = default)
     {
         JsonElement request;
         if (body.HasValue && body.Value.ValueKind == JsonValueKind.Object)
@@ -42,7 +43,9 @@ public class RoutingInternalController(ValhallaRoutingService routing) : Control
             return BadRequest(new { error = "Provide the Valhalla route request as a POST body or as the 'json' query parameter." });
         }
 
-        var (result, statusCode, error) = await routing.RouteWithTrafficAsync(request, ct);
+        var (result, statusCode, error) = raw
+            ? await routing.RouteRawAsync(request, ct)
+            : await routing.RouteWithTrafficAsync(request, ct);
 
         if (result is null)
         {

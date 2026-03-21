@@ -125,6 +125,75 @@
         .autocomplete-item:last-child { border-bottom: none; }
         .autocomplete-item:hover { background: var(--surface2); }
 
+        .swap-btn {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            transition: border-color 0.15s, color 0.15s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: -4px auto 4px;
+        }
+        .swap-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+            margin-bottom: 4px;
+        }
+        .toggle-row label {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            user-select: none;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 34px;
+            height: 18px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--border);
+            border-radius: 9px;
+            transition: background 0.2s;
+        }
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            left: 2px;
+            bottom: 2px;
+            background: var(--text);
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background: var(--accent);
+        }
+        .toggle-switch input:checked + .toggle-slider::before {
+            transform: translateX(16px);
+        }
+
         #route-btn {
             width: 100%;
             margin-top: 8px;
@@ -272,6 +341,10 @@
             </button>
         </div>
 
+        <button class="swap-btn" id="swap-btn" title="Swap origin and destination">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 3 7 21"/><polyline points="3 7 7 3 11 7"/><polyline points="17 21 17 3"/><polyline points="13 17 17 21 21 17"/></svg>
+        </button>
+
         <div class="waypoint-row">
             <div class="waypoint-icon destination">B</div>
             <div class="waypoint-input-wrap">
@@ -281,6 +354,14 @@
             <button class="waypoint-pick-btn" id="dest-pick-btn" title="Click on map to set destination">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
             </button>
+        </div>
+
+        <div class="toggle-row">
+            <div class="toggle-switch">
+                <input type="checkbox" id="traffic-toggle" checked>
+                <span class="toggle-slider"></span>
+            </div>
+            <label for="traffic-toggle">OpenTrafficDB traffic</label>
         </div>
 
         <button id="route-btn" class="btn btn-primary" onclick="getRoute()">Get Route</button>
@@ -474,6 +555,26 @@
         setPickMode(pickMode === 'dest' ? null : 'dest');
     });
 
+    // ── Swap origin ↔ destination ────────────────────────────────
+    document.getElementById('swap-btn').addEventListener('click', function () {
+        var tmpLngLat = originLngLat;
+        var tmpLabel  = document.getElementById('origin-input').value;
+        if (destLngLat) {
+            setOrigin(destLngLat, document.getElementById('dest-input').value);
+        } else {
+            originLngLat = null;
+            document.getElementById('origin-input').value = '';
+            if (markers.origin) { markers.origin.remove(); markers.origin = null; }
+        }
+        if (tmpLngLat) {
+            setDest(tmpLngLat, tmpLabel);
+        } else {
+            destLngLat = null;
+            document.getElementById('dest-input').value = '';
+            if (markers.dest) { markers.dest.remove(); markers.dest = null; }
+        }
+    });
+
     // ── Geocode autocomplete ───────────────────────────────────────
     function setupAutocomplete(inputId, listId, onSelect) {
         const input = document.getElementById(inputId);
@@ -533,6 +634,8 @@
         clearError();
         setLoading(true);
 
+        const useTraffic = document.getElementById('traffic-toggle').checked;
+
         const body = {
             locations: [
                 { lon: originLngLat[0], lat: originLngLat[1], type: 'break' },
@@ -540,11 +643,14 @@
             ],
             costing: 'auto',
             alternates: 2,
-            directions_options: { units: 'kilometers' }
+            directions_options: { units: 'kilometers' },
+            shortcuts: false,
+            date_time: { type: 0 }
         };
 
         try {
-            const res = await fetch('/web/route', {
+            const url = '/web/route' + (useTraffic ? '' : '?raw=true');
+            const res = await fetch(url, {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
@@ -614,6 +720,8 @@
         const panel = document.getElementById('panel-results');
         panel.innerHTML = '';
 
+        const hasTraffic = document.getElementById('traffic-toggle').checked;
+
         routes.forEach(function (trip, i) {
             const ta   = trip.trafficAnalysis || {};
             const sum  = trip.summary || {};
@@ -621,29 +729,36 @@
                 ? ta.liveDurationMinutes
                 : (sum.time != null ? sum.time / 60 : null);
             const dist = sum.length != null ? sum.length.toFixed(1) + ' km' : '—';
-            const delay = ta.totalDelayMinutes;
-            const delayPct = ta.delayPercent;
-
-            let delayClass = 'none', delayTxt = 'No delay';
-            if (delay != null && delay > 0.5) {
-                delayClass = delay < 3 ? 'light' : 'heavy';
-                delayTxt   = '+' + delay.toFixed(1) + ' min (' + (delayPct != null ? delayPct.toFixed(0) : '?') + '%)';
-            }
-
-            const coverage = ta.trafficCoverageRatio != null
-                ? Math.round(ta.trafficCoverageRatio * 100) + '% coverage'
-                : '';
 
             const card = document.createElement('div');
             card.className = 'route-card' + (i === selectedIdx ? ' selected' : '');
             card.dataset.idx = i;
 
+            let metaHtml = `<span>${dist}</span>`;
             let jamsHtml = '';
-            if (ta.jams && ta.jams.length) {
-                const jamsList = ta.jams.slice(0, 3).map(j =>
-                    `<div class="jam-row">⚠ ${j.delayMinutes.toFixed(1)} min – ${j.liveSpeedKmh.toFixed(0)} km/h (${j.lengthKm.toFixed(1)} km)</div>`
-                ).join('');
-                jamsHtml = `<div class="jams-section"><div class="jams-label">Traffic Jams</div>${jamsList}</div>`;
+
+            if (hasTraffic) {
+                const delay = ta.totalDelayMinutes;
+                const delayPct = ta.delayPercent;
+                let delayClass = 'none', delayTxt = 'No delay';
+                if (delay != null && delay > 0.5) {
+                    delayClass = delay < 3 ? 'light' : 'heavy';
+                    delayTxt   = '+' + delay.toFixed(1) + ' min (' + (delayPct != null ? delayPct.toFixed(0) : '?') + '%)';
+                }
+                const coverage = ta.trafficCoverageRatio != null
+                    ? Math.round(ta.trafficCoverageRatio * 100) + '% coverage'
+                    : '';
+                if (coverage) metaHtml += '<span>' + coverage + '</span>';
+                metaHtml += `<span class="delay-badge ${delayClass}">${delayTxt}</span>`;
+
+                if (ta.jams && ta.jams.length) {
+                    const jamsList = ta.jams.slice(0, 3).map(j =>
+                        `<div class="jam-row">⚠ ${j.delayMinutes.toFixed(1)} min – ${j.liveSpeedKmh.toFixed(0)} km/h (${j.lengthKm.toFixed(1)} km)</div>`
+                    ).join('');
+                    jamsHtml = `<div class="jams-section"><div class="jams-label">Traffic Jams</div>${jamsList}</div>`;
+                }
+            } else {
+                metaHtml += '<span class="delay-badge none">Raw Valhalla</span>';
             }
 
             card.innerHTML = `
@@ -652,9 +767,7 @@
                     <span class="route-time">${mins != null ? fmtMins(mins) : '—'}</span>
                 </div>
                 <div class="route-meta">
-                    <span>${dist}</span>
-                    ${coverage ? '<span>' + coverage + '</span>' : ''}
-                    <span class="delay-badge ${delayClass}">${delayTxt}</span>
+                    ${metaHtml}
                 </div>
                 ${jamsHtml}
             `;
