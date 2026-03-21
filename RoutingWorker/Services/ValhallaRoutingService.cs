@@ -183,29 +183,26 @@ public class ValhallaRoutingService(
             finally { sem.Release(); }
         }));
 
-        // Build unified candidate pool: (trip JSON node, analysis result)
+        // Build unified candidate pool, deduplicate by shape, rank by live duration
+        var seen = new HashSet<string>();
         var pool = results
             .Select((r, i) => (TripNode: tripNodes[i], Result: r))
             .Where(x => x.TripNode is not null)
             .Select(x => (TripNode: x.TripNode!, Result: x.Result))
-            .ToList();
-
-        // Trim original candidates to the user-requested count, ranked by live duration
-        var finalRanked = pool
             .OrderBy(x => x.Result.Analysis.LiveDurationMinutes)
-            .Take(requestedRoutes)
+            .Where(x => seen.Add(GetRouteShapeKey(x.TripNode)))
             .ToList();
 
-        // Try a jam-avoiding detour for every route (best + all alternates) and append
-        // results so they never displace any of the originally requested routes.
+        // Trim to user-requested count
+        var finalRanked = pool.Take(requestedRoutes).ToList();
+
+        // Try a jam-avoiding detour for every route and append results
         var detourTasks = finalRanked
             .Select(r => TryJamDetourAsync(clientRequest, r.Result.Analysis.Jams, ct));
         var allDetours = await Task.WhenAll(detourTasks);
 
-        // Re-sort the full pool (originals + detours), deduplicate by shape polyline,
-        // then trim back to the user-requested count.
+        // Merge detours, deduplicate again, trim back
         finalRanked.AddRange(allDetours.SelectMany(d => d));
-        var seen = new HashSet<string>();
         finalRanked = finalRanked
             .OrderBy(x => x.Result.Analysis.LiveDurationMinutes)
             .Where(x => seen.Add(GetRouteShapeKey(x.TripNode)))
