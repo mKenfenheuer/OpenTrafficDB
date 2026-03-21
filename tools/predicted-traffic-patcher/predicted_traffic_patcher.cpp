@@ -405,6 +405,14 @@ static void update_tile_header(char* data,
     write_u32(data, kHeaderTileSize, new_tile_size);
 }
 
+// ── Index.bin entry (matches valhalla_build_extract format) ──────────────────
+
+struct IndexEntry {
+    uint64_t offset;
+    uint32_t tile_id;
+    uint32_t size;
+};
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 static void usage(const char* prog) {
@@ -421,6 +429,22 @@ static void usage(const char* prog) {
         << "  1. valhalla_ways_to_edges --config valhalla.json way_edges.txt\n"
         << "  2. curl -H 'Authorization: Bearer $TOKEN' $SERVER/api/v1/traffic/valhalla/csv -o predicted.csv\n"
         << "  3. " << prog << " --tiles tiles.tar --csv predicted.csv --way-edges way_edges.txt -o patched_tiles.tar\n";
+}
+
+// Helper: write a tile (or any data) to the tar, return the data offset within the tar
+static size_t write_tar_member(std::ofstream& out, const std::string& name,
+                               const char* data, size_t data_size) {
+    auto hdr = make_tar_header(name, data_size);
+    out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
+    size_t data_offset = static_cast<size_t>(out.tellp());
+    out.write(data, static_cast<std::streamsize>(data_size));
+    size_t pad = pad_to_block(data_size);
+    if (pad > 0) {
+        std::vector<uint8_t> zeros(pad, 0);
+        out.write(reinterpret_cast<const char*>(zeros.data()),
+                  static_cast<std::streamsize>(pad));
+    }
+    return data_offset;
 }
 
 int main(int argc, char* argv[]) {
@@ -449,13 +473,27 @@ int main(int argc, char* argv[]) {
     // ── 2. Scan tile extract ─────────────────────────────────────────────────
 
     std::cerr << "Scanning tile extract: " << tiles_path << "\n";
-    auto tile_members = scan_tar(tiles_path);
-    std::cerr << "Found " << tile_members.size() << " entries in tar\n";
+    auto all_members = scan_tar(tiles_path);
+    std::cerr << "Found " << all_members.size() << " entries in tar\n";
 
-    if (tile_members.empty()) {
-        std::cerr << "No tiles found in " << tiles_path << "\n";
+    if (all_members.empty()) {
+        std::cerr << "No entries found in " << tiles_path << "\n";
         return 1;
     }
+
+    // Separate .gph tiles from other entries (like index.bin)
+    // We skip index.bin from input — we'll rebuild it from scratch.
+    std::vector<TarMember> gph_members;
+    std::vector<TarMember> other_members;
+    for (auto& m : all_members) {
+        bool is_gph = m.name.size() > 4 && m.name.substr(m.name.size() - 4) == ".gph";
+        if (is_gph)
+            gph_members.push_back(m);
+        else if (m.name != "index.bin")
+            other_members.push_back(m);
+    }
+
+    std::cerr << "Found " << gph_members.size() << " graph tiles\n";
 
     // ── 3. Build per-tile speed lookup ───────────────────────────────────────
 
@@ -491,53 +529,60 @@ int main(int argc, char* argv[]) {
     std::ofstream out(output_path, std::ios::binary);
     if (!out) { std::cerr << "Cannot create output: " << output_path << "\n"; return 1; }
 
+    // Write index.bin placeholder first (we'll patch it at the end)
+    size_t index_entry_count = gph_members.size();
+    size_t index_size = index_entry_count * sizeof(IndexEntry);
+    {
+        auto idx_hdr = make_tar_header("index.bin", index_size);
+        out.write(reinterpret_cast<const char*>(&idx_hdr), sizeof(idx_hdr));
+        std::vector<uint8_t> placeholder(index_size, 0);
+        out.write(reinterpret_cast<const char*>(placeholder.data()),
+                  static_cast<std::streamsize>(index_size));
+        size_t pad = pad_to_block(index_size);
+        if (pad > 0) {
+            std::vector<uint8_t> zeros(pad, 0);
+            out.write(reinterpret_cast<const char*>(zeros.data()),
+                      static_cast<std::streamsize>(pad));
+        }
+    }
+
+    // Write non-.gph, non-index.bin members through unchanged
+    for (auto& m : other_members) {
+        std::vector<char> data(m.size);
+        tile_tar.seekg(static_cast<std::streamoff>(m.data_offset));
+        tile_tar.read(data.data(), static_cast<std::streamsize>(m.size));
+        write_tar_member(out, m.name, data.data(), data.size());
+    }
+
+    // Process .gph tiles, collecting index entries
+    std::vector<IndexEntry> index_entries;
+    index_entries.reserve(gph_members.size());
+
     size_t total_patched_edges = 0;
     size_t total_predicted_profiles = 0;
     size_t tiles_modified = 0;
 
-    for (auto& m : tile_members) {
+    for (auto& m : gph_members) {
         // Read the tile data
         std::vector<char> tile_data(m.size);
         tile_tar.seekg(static_cast<std::streamoff>(m.data_offset));
         tile_tar.read(tile_data.data(), static_cast<std::streamsize>(m.size));
-
-        // Check if this is a .gph tile
-        bool is_gph = m.name.size() > 4 && m.name.substr(m.name.size() - 4) == ".gph";
-
-        if (!is_gph) {
-            // Pass through non-.gph members unchanged
-            auto hdr = make_tar_header(m.name, tile_data.size());
-            out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
-            out.write(tile_data.data(), static_cast<std::streamsize>(tile_data.size()));
-            size_t pad = pad_to_block(tile_data.size());
-            if (pad > 0) {
-                std::vector<uint8_t> zeros(pad, 0);
-                out.write(reinterpret_cast<const char*>(zeros.data()),
-                          static_cast<std::streamsize>(pad));
-            }
-            continue;
-        }
 
         uint32_t tile_key = tile_path_to_key(m.name);
         auto speed_it = tile_speed_map.find(tile_key);
 
         if (speed_it == tile_speed_map.end() || speed_it->second.empty()) {
             // No data for this tile — pass through unchanged
-            auto hdr = make_tar_header(m.name, tile_data.size());
-            out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
-            out.write(tile_data.data(), static_cast<std::streamsize>(tile_data.size()));
-            size_t pad = pad_to_block(tile_data.size());
-            if (pad > 0) {
-                std::vector<uint8_t> zeros(pad, 0);
-                out.write(reinterpret_cast<const char*>(zeros.data()),
-                          static_cast<std::streamsize>(pad));
-            }
+            size_t data_off = write_tar_member(out, m.name, tile_data.data(), tile_data.size());
+            index_entries.push_back({data_off, tile_key, static_cast<uint32_t>(tile_data.size())});
             continue;
         }
 
         // Parse the tile header
         if (tile_data.size() < kGraphTileHeaderSize) {
             std::cerr << "Warning: tile " << m.name << " too small, skipping\n";
+            size_t data_off = write_tar_member(out, m.name, tile_data.data(), tile_data.size());
+            index_entries.push_back({data_off, tile_key, static_cast<uint32_t>(tile_data.size())});
             continue;
         }
 
@@ -556,7 +601,9 @@ int main(int argc, char* argv[]) {
         size_t de_end = info.de_byte_offset + info.directededgecount * kDirectedEdgeSize;
         if (de_end > base_tile_size) {
             std::cerr << "Warning: tile " << m.name
-                      << " DirectedEdge array exceeds tile bounds, skipping\n";
+                      << " DirectedEdge array exceeds tile bounds, passing through\n";
+            size_t data_off = write_tar_member(out, m.name, tile_data.data(), tile_data.size());
+            index_entries.push_back({data_off, tile_key, static_cast<uint32_t>(tile_data.size())});
             continue;
         }
 
@@ -610,7 +657,6 @@ int main(int argc, char* argv[]) {
 
         // ── Build the new tile ───────────────────────────────────────────────
 
-        // New predicted speeds section size
         size_t offset_table_bytes = info.directededgecount * sizeof(uint32_t);
         size_t profiles_bytes     = profiles.size() * sizeof(int16_t);
         size_t pred_section_size  = offset_table_bytes + profiles_bytes;
@@ -621,10 +667,11 @@ int main(int argc, char* argv[]) {
         // Update header in tile data
         update_tile_header(tile_data.data(), pred_count, new_predspeeds_offset, new_tile_size);
 
-        // Write the tile: base data + predicted speeds section
+        // Write tar header for the new tile size
         size_t total_tile_bytes = new_tile_size;
         auto hdr = make_tar_header(m.name, total_tile_bytes);
         out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
+        size_t data_off = static_cast<size_t>(out.tellp());
 
         // Write base tile data (up to predictedspeeds_offset)
         out.write(tile_data.data(), static_cast<std::streamsize>(base_tile_size));
@@ -645,6 +692,7 @@ int main(int argc, char* argv[]) {
                       static_cast<std::streamsize>(pad));
         }
 
+        index_entries.push_back({data_off, tile_key, static_cast<uint32_t>(total_tile_bytes)});
         tiles_modified++;
     }
 
@@ -654,9 +702,20 @@ int main(int argc, char* argv[]) {
               static_cast<std::streamsize>(end_marker.size()));
     out.close();
 
+    // ── 5. Patch index.bin with real offsets ──────────────────────────────────
+
+    std::fstream patch(output_path, std::ios::in | std::ios::out | std::ios::binary);
+    patch.seekp(TAR_BLOCK); // index.bin data starts after its tar header
+    for (auto& ie : index_entries) {
+        patch.write(reinterpret_cast<const char*>(&ie.offset), sizeof(ie.offset));
+        patch.write(reinterpret_cast<const char*>(&ie.tile_id), sizeof(ie.tile_id));
+        patch.write(reinterpret_cast<const char*>(&ie.size), sizeof(ie.size));
+    }
+    patch.close();
+
     // ── Done ─────────────────────────────────────────────────────────────────
 
-    std::cerr << "Done. " << tile_members.size() << " tiles processed, "
+    std::cerr << "Done. " << gph_members.size() << " tiles processed, "
               << tiles_modified << " modified, "
               << total_patched_edges << " edges patched ("
               << total_predicted_profiles << " with predicted speed profiles)\n";
