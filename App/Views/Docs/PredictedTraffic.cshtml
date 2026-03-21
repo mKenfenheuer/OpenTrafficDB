@@ -1,0 +1,156 @@
+@{
+    Layout = "~/Views/Docs/_DocsLayout.cshtml";
+    ViewData["Title"] = "Predicted Traffic";
+    ViewData["DocsPage"] = "predicted-traffic";
+}
+
+<h1 style="font-size:1.75rem;font-weight:800;margin-bottom:8px">Predicted Traffic</h1>
+<p class="text-muted" style="margin-bottom:32px">Patch Valhalla graph tiles with historical predicted speed profiles.</p>
+
+<div class="card section">
+    <div class="card-title">Overview</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        The <strong style="color:var(--text)">predicted_traffic_patcher</strong> tool patches Valhalla graph tiles
+        (<code>.gph</code>) inside a <code>valhalla_tiles.tar</code> with predicted traffic data. Unlike the
+        <a href="/docs/live-traffic" style="color:var(--accent)">live traffic tool</a> which creates a separate
+        <code>traffic.tar</code> overlay, this tool modifies the graph tiles themselves to embed:
+    </p>
+    <ul class="text-muted text-sm" style="line-height:2;margin:8px 0 0 20px">
+        <li><strong style="color:var(--text)">Free-flow speed</strong> and <strong style="color:var(--text)">constrained speed</strong> per directed edge</li>
+        <li><strong style="color:var(--text)">DCT-II compressed speed profiles</strong> (2016 weekly time buckets) for time-dependent routing</li>
+    </ul>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        The workflow has three inputs:
+    </p>
+    <ul class="text-muted text-sm" style="line-height:2;margin:8px 0 0 20px">
+        <li>A <strong style="color:var(--text)">predicted traffic CSV</strong> from this API (<code>GET /api/v1/traffic/valhalla/csv</code>)</li>
+        <li>A <strong style="color:var(--text)">way_edges.txt</strong> mapping file from <code>valhalla_ways_to_edges</code></li>
+        <li>Your <strong style="color:var(--text)">Valhalla tile extract</strong> (<code>.tar</code> with <code>.gph</code> tiles)</li>
+    </ul>
+</div>
+
+<div class="card section">
+    <div class="card-title">Download</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+        <a href="/downloads/predicted_traffic_patcher-linux-amd64" download
+           style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--radius);background:var(--accent);color:#fff;font-size:0.85rem;font-weight:600;text-decoration:none">
+            Linux amd64 binary
+        </a>
+        <a href="/downloads/predicted_traffic_patcher-src.tar.gz" download
+           style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--radius);background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:0.85rem;font-weight:600;text-decoration:none">
+            Source (.tar.gz)
+        </a>
+    </div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        The pre-built binary is statically linked (no dependencies). To build from source:
+    </p>
+    <div class="code-block"><span class="code-comment"># Build from source (requires g++ with C++17 support)</span>
+tar xzf predicted_traffic_patcher-src.tar.gz
+cd predicted-traffic-patcher
+make</div>
+</div>
+
+<div class="card section">
+    <div class="card-title">Step 1: Generate Way-to-Edge Mapping</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Run this once after building Valhalla tiles (or after a tile rebuild). It maps OSM way IDs
+        to Valhalla's internal graph edge IDs.
+    </p>
+    <div class="code-block"><span class="code-comment"># Generate mapping from OSM way IDs to Valhalla graph edges</span>
+<span class="code-url">valhalla_ways_to_edges</span> --config valhalla.json way_edges.txt</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        Output format: <code>osm_way_id,direction,graph_id[,direction,graph_id]*</code>
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Step 2: Fetch Predicted Speeds</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Download the predicted traffic CSV. This includes free-flow speed, constrained speed, and
+        DCT-II compressed historical speed profiles for each road with sufficient observations.
+    </p>
+    <div class="code-block"><span class="code-comment"># Download predicted traffic CSV</span>
+<span class="code-url">curl</span> -H 'Authorization: Bearer &lt;your-jwt-token&gt;' \
+     https://your-server/api/v1/traffic/valhalla/csv \
+     -o predicted.csv</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        CSV format: <code>way_id,freeflow_speed,constrained_speed,historical_speeds</code> — where
+        <code>historical_speeds</code> is a Base64-encoded DCT-II coefficient array (200 coefficients
+        covering 2016 weekly time buckets at 5-minute resolution).
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Step 3: Patch Graph Tiles</div>
+    <div class="code-block"><span class="code-comment"># Patch Valhalla graph tiles with predicted speeds</span>
+<span class="code-url">./predicted_traffic_patcher</span> \
+    --tiles valhalla_tiles.tar \
+    --csv predicted.csv \
+    --way-edges way_edges.txt \
+    -o valhalla_tiles_patched.tar</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        The tool reads each <code>.gph</code> tile, sets <code>free_flow_speed</code> and
+        <code>constrained_flow_speed</code> on matching directed edges, appends the predicted speed
+        profiles section, and writes the patched tiles to a new tar archive. Unmatched tiles are
+        passed through unchanged.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Step 4: Use the Patched Tiles</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Replace your existing Valhalla tile extract with the patched version:
+    </p>
+    <div class="code-block"><span class="code-comment"># Replace the tile extract (requires Valhalla restart)</span>
+mv valhalla_tiles_patched.tar /path/to/valhalla_tiles.tar</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        Valhalla must be restarted to pick up modified graph tiles (unlike live traffic, which uses
+        a separate overlay file). With predicted speeds embedded, Valhalla will use time-dependent
+        routing when <code>date_time</code> is specified in route requests.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Automation</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-bottom:12px">
+        Predicted speeds change slowly, so a daily or weekly update is typically sufficient:
+    </p>
+    <div class="code-block"><span class="code-comment"># Example: update predicted speeds weekly</span>
+0 3 * * 1 curl -s -H "Authorization: Bearer $TOKEN" \
+    https://your-server/api/v1/traffic/valhalla/csv -o /opt/traffic/predicted.csv \
+  && /opt/traffic/predicted_traffic_patcher \
+    --tiles /opt/valhalla/base_tiles.tar \
+    --csv /opt/traffic/predicted.csv \
+    --way-edges /opt/valhalla/way_edges.txt \
+    -o /opt/valhalla/valhalla_tiles.tar \
+  && docker restart valhalla</div>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        Keep an unpatched copy of your base tiles (<code>base_tiles.tar</code>) so you always patch
+        from a clean state.
+    </p>
+</div>
+
+<div class="card section">
+    <div class="card-title">Requirements</div>
+    <ul class="text-muted text-sm" style="line-height:2;margin:0 0 0 20px">
+        <li>Valhalla 3.x or later with predicted speed support</li>
+        <li>A Valhalla tile extract (<code>.tar</code>) covering the same region as your observations</li>
+        <li>The <code>valhalla_ways_to_edges</code> tool (ships with Valhalla)</li>
+        <li>A valid API key with an active JWT token for downloading the predicted CSV</li>
+    </ul>
+</div>
+
+<div class="card section">
+    <div class="card-title">How It Works</div>
+    <p class="text-muted text-sm" style="line-height:1.8">
+        Valhalla resolves speeds in priority order: <strong style="color:var(--text)">live traffic</strong> &rarr;
+        <strong style="color:var(--text)">predicted speed profile</strong> &rarr;
+        <strong style="color:var(--text)">constrained speed</strong> &rarr;
+        <strong style="color:var(--text)">free-flow speed</strong> &rarr;
+        <strong style="color:var(--text)">base speed</strong>.
+        This tool populates the middle three layers, giving Valhalla historical context for every road
+        with sufficient data. Combined with the
+        <a href="/docs/live-traffic" style="color:var(--accent)">live traffic overlay</a>, this provides
+        full-spectrum speed intelligence for routing.
+    </p>
+</div>

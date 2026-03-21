@@ -57,4 +57,12 @@ public class DocsController : Controller
         ViewData["DocsPage"] = "live-traffic";
         return View();
     }
+
+    [HttpGet("predicted-traffic")]
+    [AllowAnonymous]
+    public IActionResult PredictedTraffic()
+    {
+        ViewData["DocsPage"] = "predicted-traffic";
+        return View();
+    }
 }

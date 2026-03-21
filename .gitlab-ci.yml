@@ -15,16 +15,24 @@ build_tools:
   rules:
     - changes:
         - tools/traffic-tar-builder/**/*
+        - tools/predicted-traffic-patcher/**/*
         - App/**/*
         - Shared/**/*
   before_script: []
   script:
     - apt-get update && apt-get install -y --no-install-recommends g++ make
+    - mkdir -p downloads
+    # Build traffic_tar_builder
     - cd tools/traffic-tar-builder
     - make CXX=g++ CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -static"
-    - mkdir -p ../../downloads
     - cp traffic_tar_builder ../../downloads/traffic_tar_builder-linux-amd64
     - tar -czf ../../downloads/traffic_tar_builder-src.tar.gz traffic_tar_builder.cpp Makefile
+    - cd ../..
+    # Build predicted_traffic_patcher
+    - cd tools/predicted-traffic-patcher
+    - make CXX=g++ CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -static"
+    - cp predicted_traffic_patcher ../../downloads/predicted_traffic_patcher-linux-amd64
+    - tar -czf ../../downloads/predicted_traffic_patcher-src.tar.gz predicted_traffic_patcher.cpp Makefile
   artifacts:
     paths:
       - downloads/
@@ -43,6 +51,7 @@ build_app:
         - App/**/*
         - Shared/**/*
         - tools/traffic-tar-builder/**/*
+        - tools/predicted-traffic-patcher/**/*
   script:
     - mkdir -p App/wwwroot/downloads
     - if [ -d downloads ]; then cp downloads/* App/wwwroot/downloads/; fi
@@ -154,6 +163,7 @@ deploy_production:
         - OsmWayImporter/**/*
         - Shared/**/*
         - tools/traffic-tar-builder/**/*
+        - tools/predicted-traffic-patcher/**/*
         - docker-compose.yml
         - .gitlab-ci.yml
         - .env.example
