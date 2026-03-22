@@ -103,11 +103,8 @@ public class ValhallaRoutingService(
         int requestedRoutes = userAlternates + 1;
 
         // ── Two parallel Valhalla requests ──────────────────────────────────
-        // 1) Main request: no date_time → supports alternates
         var mainRequest = InjectAlternates(defaultsElement, userAlternates);
 
-        // 2) Time-dependent request: date_time={type:0}, no alternates
-        //    Gets Valhalla's own time-aware costing for the optimal route.
         var tdRequest = JsonNode.Parse(withDefaults.ToJsonString())!.AsObject();
         tdRequest["alternates"] = 0;
         tdRequest["date_time"]  = new JsonObject { ["type"] = 0 };
@@ -120,10 +117,7 @@ public class ValhallaRoutingService(
             new StringContent(tdRequest.ToJsonString(), Encoding.UTF8, "application/json"), ct);
 
         HttpResponseMessage mainResponse;
-        try
-        {
-            mainResponse = await mainTask;
-        }
+        try { mainResponse = await mainTask; }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Valhalla /route request failed.");
@@ -138,37 +132,31 @@ public class ValhallaRoutingService(
             return (null, (int)mainResponse.StatusCode, rawJson);
         }
 
-        JsonElement valhallaDoc;
-        try { valhallaDoc = JsonDocument.Parse(rawJson).RootElement; }
+        // ── Parse into typed models and collect all trips ────────────────────
+        ValhallaResponse mainParsed;
+        try { mainParsed = JsonSerializer.Deserialize<ValhallaResponse>(rawJson)!; }
         catch (JsonException ex)
         {
             logger.LogWarning(ex, "Failed to parse Valhalla /route response.");
             return (null, 502, "Invalid JSON from Valhalla.");
         }
 
-        var routeLegShapes = ExtractRouteLegShapes(valhallaDoc);
-        var tripNodes      = ExtractAllTripNodes(valhallaDoc);
+        var allTrips = new List<Trip>();
+        if (mainParsed.Trip != null) allTrips.Add(mainParsed.Trip);
+        if (mainParsed.Alternates != null)
+            allTrips.AddRange(mainParsed.Alternates.Where(a => a.Trip != null).Select(a => a.Trip));
 
-        logger.LogInformation("RouteWithTraffic: {ShapeCount} shapes, {TripCount} trip nodes from main request.",
-            routeLegShapes.Count, tripNodes.Count);
-
-        // Merge the time-dependent route into the candidate pool
+        // Merge the time-dependent route
         try
         {
             var tdResponse = await tdTask;
             if (tdResponse.IsSuccessStatusCode)
             {
                 var tdJson = await tdResponse.Content.ReadAsStringAsync(ct);
-                var tdDoc  = JsonDocument.Parse(tdJson).RootElement;
-                var tdLegShapes = ExtractRouteLegShapes(tdDoc);
-                var tdTripNodes = ExtractAllTripNodes(tdDoc);
-                routeLegShapes.AddRange(tdLegShapes);
-                tripNodes.AddRange(tdTripNodes);
-            }
-            else if (logger.IsEnabled(LogLevel.Debug))
-            {
-                var errBody = await tdResponse.Content.ReadAsStringAsync(ct);
-                logger.LogDebug("Time-dependent /route returned {Status}: {Body}", tdResponse.StatusCode, errBody);
+                var tdParsed = JsonSerializer.Deserialize<ValhallaResponse>(tdJson);
+                if (tdParsed?.Trip != null) allTrips.Add(tdParsed.Trip);
+                if (tdParsed?.Alternates != null)
+                    allTrips.AddRange(tdParsed.Alternates.Where(a => a.Trip != null).Select(a => a.Trip));
             }
         }
         catch (Exception ex)
@@ -176,112 +164,107 @@ public class ValhallaRoutingService(
             logger.LogDebug(ex, "Time-dependent /route request failed (non-fatal).");
         }
 
-        // Analyse traffic for every candidate in parallel
-        var results = new RouteAnalysisResult[routeLegShapes.Count];
-        using var sem = new SemaphoreSlim(4);
-        await Task.WhenAll(routeLegShapes.Select(async (legShapes, i) =>
+        // ── Deduplicate by combined leg shapes ──────────────────────────────
+        var uniqueTrips = new List<Trip>();
+        foreach (var trip in allTrips)
         {
+            if (trip.Legs == null || trip.Legs.Count == 0) continue;
+            if (!uniqueTrips.Any(u => u.Equals(trip)))
+                uniqueTrips.Add(trip);
+        }
+
+        logger.LogInformation("RouteWithTraffic: {Total} trips collected, {Unique} unique after dedup.",
+            allTrips.Count, uniqueTrips.Count);
+
+        // ── Analyse traffic for every unique trip in parallel ────────────────
+        var analysisResults = new RouteAnalysisResult[uniqueTrips.Count];
+        using var sem = new SemaphoreSlim(4);
+        await Task.WhenAll(uniqueTrips.Select(async (trip, i) =>
+        {
+            var legShapes = trip.Legs
+                .Where(l => !string.IsNullOrEmpty(l.Shape))
+                .Select(l => PolylineEncoder.Decode(l.Shape).ToList())
+                .ToList();
+
             await sem.WaitAsync(ct);
-            try   { results[i] = await AnalyseRouteAsync(i, legShapes, ct); }
+            try   { analysisResults[i] = await AnalyseRouteAsync(i, legShapes, ct); }
             finally { sem.Release(); }
         }));
 
-        // Build unified candidate pool, deduplicate by shape, rank by eco score
-        var nullResults  = results.Count(r => r is null);
-        var nullTrips    = tripNodes.Count(t => t is null);
-        logger.LogInformation("RouteWithTraffic: {Total} candidates, {NullResults} null results, {NullTrips} null trip nodes.",
-            results.Length, nullResults, nullTrips);
-
-        var seen = new HashSet<string>();
-        var pool = results
-            .Select((r, i) => (TripNode: tripNodes[i], Result: r))
-            .Where(x => x.TripNode is not null && x.Result is not null)
-            .Select(x => (TripNode: x.TripNode!, Result: x.Result))
+        // ── Build pool, rank by eco score ───────────────────────────────────
+        var pool = uniqueTrips
+            .Select((trip, i) => (Trip: trip, Result: analysisResults[i]))
+            .Where(x => x.Result is not null)
             .OrderBy(x => x.Result.Analysis.EcoScore)
-            .Where(x => seen.Add(GetRouteShapeKey(x.TripNode)))
             .ToList();
 
         logger.LogInformation("RouteWithTraffic: pool={PoolSize}, requestedRoutes={Requested}.", pool.Count, requestedRoutes);
 
-        // Trim to user-requested count
         var finalRanked = pool.Take(requestedRoutes).ToList();
 
-        // Try a jam-avoiding detour for every route and append results
-        var detourTasks = finalRanked
-            .Select(r => TryJamDetourAsync(clientRequest, r.Result.Analysis.Jams, ct));
-        var allDetours = await Task.WhenAll(detourTasks);
+        // ── Try jam-avoiding detours if any route has a jam > 5 min ─────────
+        bool hasSignificantJam = finalRanked.Any(r =>
+            r.Result.Analysis.Jams.Any(j => j.DelayMinutes >= MinDetourJamDelayMinutes));
 
-        // Merge detours into the full pool, re-deduplicate, re-rank
-        pool.AddRange(allDetours.SelectMany(d => d));
-        var seen2 = new HashSet<string>();
-        finalRanked = pool
-            .OrderBy(x => x.Result.Analysis.EcoScore)
-            .Where(x => seen2.Add(GetRouteShapeKey(x.TripNode)))
-            .Take(requestedRoutes)
-            .ToList();
+        if (hasSignificantJam)
+        {
+            var detourTasks = finalRanked
+                .Where(r => r.Result.Analysis.Jams.Any(j => j.DelayMinutes >= MinDetourJamDelayMinutes))
+                .Select(r => TryJamDetourAsync(clientRequest, r.Result.Analysis.Jams, ct));
+            var allDetours = await Task.WhenAll(detourTasks);
+
+            // Convert detour results to (Trip, RouteAnalysisResult) and merge
+            foreach (var detourList in allDetours)
+            {
+                foreach (var (tripNode, result) in detourList)
+                {
+                    // Parse the detour trip node back into a typed Trip
+                    var detourTrip = JsonSerializer.Deserialize<Trip>(tripNode.ToJsonString());
+                    if (detourTrip?.Legs == null || detourTrip.Legs.Count == 0) continue;
+                    // Only add if not a duplicate
+                    if (!pool.Any(p => p.Trip.Equals(detourTrip)))
+                        pool.Add((detourTrip, result));
+                }
+            }
+
+            // Re-rank the full pool
+            finalRanked = pool
+                .OrderBy(x => x.Result.Analysis.EcoScore)
+                .Take(requestedRoutes)
+                .ToList();
+        }
 
         for (int i = 0; i < finalRanked.Count; i++)
             finalRanked[i].Result.Analysis.RouteIndex = i;
 
         logger.LogInformation("RouteWithTraffic: finalRanked={FinalCount}, rebuilding response.", finalRanked.Count);
 
-        var rebuilt = RebuildValhallaResponse(valhallaDoc, finalRanked);
+        // ── Rebuild JSON response ───────────────────────────────────────────
+        // Convert typed trips back to JsonNode for response assembly
+        var rankedForResponse = finalRanked.Select(r =>
+        {
+            var tripNode = JsonNode.Parse(JsonSerializer.Serialize(r.Trip))!;
+            return (TripNode: tripNode, r.Result);
+        }).ToList();
+
+        var valhallaDoc = JsonDocument.Parse(rawJson).RootElement;
+        var rebuilt = RebuildValhallaResponse(valhallaDoc, rankedForResponse);
         return (rebuilt, 200, null);
     }
 
-    // ── Shape / node extraction ───────────────────────────────────────────────
+    // ── Shape extraction ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Extract the raw trip JsonNode for every route in the Valhalla response.
-    /// Index 0 = primary trip; 1..N = alternates (each wrapped in {trip:…}).
-    /// Returns null slots for indices that cannot be resolved.
+    /// Extract decoded leg shapes from a typed Trip object.
+    /// Returns [legIndex] → list of (Lat, Lon) coords.
     /// </summary>
-    private static List<JsonNode?> ExtractAllTripNodes(JsonElement doc)
+    private static List<List<(double Lat, double Lon)>> ExtractLegShapes(Trip trip)
     {
-        var root  = JsonNode.Parse(doc.GetRawText())!.AsObject();
-        var nodes = new List<JsonNode?> { root["trip"]?.DeepClone() };
-
-        if (root["alternates"] is JsonArray alts)
-            foreach (var alt in alts)
-                nodes.Add(alt?["trip"]?.DeepClone());
-
-        return nodes;
-    }
-
-    /// <summary>
-    /// Returns [routeIndex][legIndex] → decoded shape coords.
-    /// Legs are NOT concatenated — each leg keeps its own shape-index space.
-    /// </summary>
-    private static List<List<List<(double Lat, double Lon)>>> ExtractRouteLegShapes(JsonElement root)
-    {
-        var result = new List<List<List<(double, double)>>>();
-
-        if (root.TryGetProperty("trip", out var primaryTrip))
-            result.Add(DecodeLegShapes(primaryTrip));
-
-        if (root.TryGetProperty("alternates", out var alts) && alts.ValueKind == JsonValueKind.Array)
-            foreach (var alt in alts.EnumerateArray())
-                if (alt.TryGetProperty("trip", out var altTrip))
-                    result.Add(DecodeLegShapes(altTrip));
-
-        return result;
-    }
-
-    private static List<List<(double Lat, double Lon)>> DecodeLegShapes(JsonElement trip)
-    {
-        var legs = new List<List<(double, double)>>();
-        if (!trip.TryGetProperty("legs", out var legsEl) || legsEl.ValueKind != JsonValueKind.Array)
-            return legs;
-
-        foreach (var leg in legsEl.EnumerateArray())
-        {
-            if (!leg.TryGetProperty("shape", out var shapeProp)) continue;
-            var shape = shapeProp.GetString();
-            if (string.IsNullOrEmpty(shape)) continue;
-            legs.Add([.. PolylineEncoder.Decode(shape)]);
-        }
-
-        return legs;
+        if (trip.Legs == null) return [];
+        return trip.Legs
+            .Where(l => !string.IsNullOrEmpty(l.Shape))
+            .Select(l => PolylineEncoder.Decode(l.Shape).ToList())
+            .ToList();
     }
 
     // ── Per-route traffic analysis ────────────────────────────────────────────
@@ -619,8 +602,8 @@ public class ValhallaRoutingService(
 
     // ── Jam-avoidance detour ──────────────────────────────────────────────────
 
-    // Only attempt a detour if the best route has a jam with at least this much delay.
-    private const double MinDetourJamDelayMinutes = 2.0;
+    // Only attempt a detour if a route has a jam with at least this much delay.
+    private const double MinDetourJamDelayMinutes = 5.0;
 
     /// <summary>
     /// For the significant jams on the current best route, build Valhalla
@@ -655,13 +638,13 @@ public class ValhallaRoutingService(
                 return [];
             }
 
-            var rawJson    = await response.Content.ReadAsStringAsync(ct);
-            var detourDoc  = JsonDocument.Parse(rawJson).RootElement;
-            var legShapes  = ExtractRouteLegShapes(detourDoc);
-            if (legShapes.Count == 0) return [];
+            var rawJson     = await response.Content.ReadAsStringAsync(ct);
+            var detourParsed = JsonSerializer.Deserialize<ValhallaResponse>(rawJson);
+            if (detourParsed?.Trip?.Legs == null || detourParsed.Trip.Legs.Count == 0) return [];
 
-            var result   = await AnalyseRouteAsync(0, legShapes[0], ct);
-            var tripNode = JsonNode.Parse(rawJson)!.AsObject()["trip"]?.DeepClone();
+            var legShapes = ExtractLegShapes(detourParsed.Trip);
+            var result    = await AnalyseRouteAsync(0, legShapes, ct);
+            var tripNode  = JsonNode.Parse(rawJson)!.AsObject()["trip"]?.DeepClone();
             if (tripNode is null) return [];
 
             return [(tripNode, result)];
@@ -732,20 +715,6 @@ public class ValhallaRoutingService(
     }
 
     // ── Request manipulation ──────────────────────────────────────────────────
-
-    /// <summary>
-    /// Produces a deduplication key by concatenating the encoded shape strings of all
-    /// legs in a trip node. Two routes with identical shapes are considered duplicates.
-    /// </summary>
-    private static string GetRouteShapeKey(JsonNode tripNode)
-    {
-        if (tripNode["legs"] is not JsonArray legs) return string.Empty;
-
-        var sb = new StringBuilder();
-        foreach (var leg in legs)
-            sb.Append(leg?["shape"]?.GetValue<string>());
-        return sb.ToString();
-    }
 
     private static int ReadAlternates(JsonElement source)
     {
