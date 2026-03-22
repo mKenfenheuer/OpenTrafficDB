@@ -260,6 +260,30 @@
         .delay-badge.light { background: rgba(210,153,34,0.2); color: var(--warning); }
         .delay-badge.heavy { background: rgba(248,81,73,0.2);  color: var(--danger); }
 
+        .eco-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+            font-size: 0.75rem;
+        }
+        .eco-badge {
+            display: inline-block;
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            background: rgba(63,185,80,0.15);
+            color: var(--success);
+        }
+        .eco-badge.worst {
+            background: rgba(248,81,73,0.15);
+            color: var(--danger);
+        }
+        .eco-detail {
+            color: var(--text-muted);
+        }
+
         .jams-section {
             margin-top: 8px;
             padding-top: 8px;
@@ -742,6 +766,15 @@
 
         const hasTraffic = document.getElementById('traffic-toggle').checked;
 
+        // Find worst CO2 across all routes for relative comparison
+        let worstCo2 = 0;
+        if (hasTraffic) {
+            routes.forEach(function (trip) {
+                const co2 = (trip.trafficAnalysis || {}).co2GramsEstimate;
+                if (co2 != null && co2 > worstCo2) worstCo2 = co2;
+            });
+        }
+
         routes.forEach(function (trip, i) {
             const ta   = trip.trafficAnalysis || {};
             const sum  = trip.summary || {};
@@ -755,6 +788,7 @@
             card.dataset.idx = i;
 
             let metaHtml = `<span>${dist}</span>`;
+            let ecoHtml  = '';
             let jamsHtml = '';
 
             if (hasTraffic) {
@@ -771,6 +805,23 @@
                 if (coverage) metaHtml += '<span>' + coverage + '</span>';
                 metaHtml += `<span class="delay-badge ${delayClass}">${delayTxt}</span>`;
 
+                // Eco / CO2 row
+                const co2 = ta.co2GramsEstimate;
+                if (co2 != null) {
+                    const co2Kg = (co2 / 1000).toFixed(2);
+                    let savingHtml = '';
+                    if (worstCo2 > 0 && co2 < worstCo2) {
+                        const pct = Math.round((1 - co2 / worstCo2) * 100);
+                        if (pct > 0) savingHtml = `<span class="eco-badge">${pct}% less CO2</span>`;
+                    } else if (worstCo2 > 0 && co2 >= worstCo2 && routes.length > 1) {
+                        savingHtml = '<span class="eco-badge worst">Highest CO2</span>';
+                    }
+                    ecoHtml = `<div class="eco-row">`
+                        + `<span class="eco-detail">${co2Kg} kg CO2</span>`
+                        + savingHtml
+                        + `</div>`;
+                }
+
                 if (ta.jams && ta.jams.length) {
                     const jamsList = ta.jams.slice(0, 3).map(j =>
                         `<div class="jam-row">⚠ ${j.delayMinutes.toFixed(1)} min – ${j.liveSpeedKmh.toFixed(0)} km/h (${j.lengthKm.toFixed(1)} km)</div>`
@@ -783,12 +834,13 @@
 
             card.innerHTML = `
                 <div class="route-card-header">
-                    <span class="route-title">${i === 0 ? 'Best route' : 'Alternative ' + i}</span>
+                    <span class="route-title">${i === 0 ? (hasTraffic ? 'Eco best' : 'Best route') : 'Alternative ' + i}</span>
                     <span class="route-time">${mins != null ? fmtMins(mins) : '—'}</span>
                 </div>
                 <div class="route-meta">
                     ${metaHtml}
                 </div>
+                ${ecoHtml}
                 ${jamsHtml}
             `;
 

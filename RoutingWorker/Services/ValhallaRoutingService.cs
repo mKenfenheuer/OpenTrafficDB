@@ -183,13 +183,13 @@ public class ValhallaRoutingService(
             finally { sem.Release(); }
         }));
 
-        // Build unified candidate pool, deduplicate by shape, rank by live duration
+        // Build unified candidate pool, deduplicate by shape, rank by eco score
         var seen = new HashSet<string>();
         var pool = results
             .Select((r, i) => (TripNode: tripNodes[i], Result: r))
             .Where(x => x.TripNode is not null)
             .Select(x => (TripNode: x.TripNode!, Result: x.Result))
-            .OrderBy(x => x.Result.Analysis.LiveDurationMinutes)
+            .OrderBy(x => x.Result.Analysis.EcoScore)
             .Where(x => seen.Add(GetRouteShapeKey(x.TripNode)))
             .ToList();
 
@@ -201,10 +201,10 @@ public class ValhallaRoutingService(
             .Select(r => TryJamDetourAsync(clientRequest, r.Result.Analysis.Jams, ct));
         var allDetours = await Task.WhenAll(detourTasks);
 
-        // Merge detours, deduplicate again, trim back
+        // Merge detours, deduplicate again, trim back — rank by eco score
         finalRanked.AddRange(allDetours.SelectMany(d => d));
         finalRanked = finalRanked
-            .OrderBy(x => x.Result.Analysis.LiveDurationMinutes)
+            .OrderBy(x => x.Result.Analysis.EcoScore)
             .Where(x => seen.Add(GetRouteShapeKey(x.TripNode)))
             .Take(requestedRoutes)
             .ToList();
@@ -333,6 +333,27 @@ public class ValhallaRoutingService(
         double liveMin  = totalLiveSec     / 60.0;
         double delayMin = Math.Max(0, liveMin - ffMin);
 
+        // CO2 estimation using speed-dependent emission model for a standard
+        // European passenger car: co2_g/km = 50 + 3000/speed + 0.005 * speed²
+        // This captures high emissions at low speeds (stop-and-go inefficiency)
+        // and at high speeds (aerodynamic drag).
+        double totalCo2Grams = 0;
+        foreach (var (_, _, live, lengthKm, _) in allEdgeInfo)
+        {
+            double speed    = Math.Max(live, 5); // floor to avoid division issues
+            double co2PerKm = 50.0 + 3000.0 / speed + 0.005 * speed * speed;
+            totalCo2Grams  += co2PerKm * lengthKm;
+        }
+
+        double distPerMin = liveMin > 0 ? totalKm / liveMin : 0;
+        double avgSpeed   = totalLiveSec > 0 ? totalKm / totalLiveSec * 3600 : 0;
+
+        // Eco score: CO2 as primary factor, with a distance-per-minute multiplier
+        // that penalises routes covering more distance per unit time (i.e. longer
+        // routes that save little time). The multiplier is gentle — it nudges
+        // ranking without overwhelming the CO2 signal.
+        double ecoScore = totalCo2Grams * (1.0 + 0.05 * distPerMin);
+
         var analysis = new RouteTrafficAnalysis
         {
             RouteIndex              = routeIndex,
@@ -341,6 +362,11 @@ public class ValhallaRoutingService(
             TotalDelayMinutes       = Math.Round(delayMin,                           2),
             DelayPercent            = Math.Round(ffMin > 0 ? delayMin / ffMin * 100 : 0, 1),
             TrafficCoverageRatio    = Math.Round(totalKm > 0 ? coveredKm / totalKm  : 0, 3),
+            DistanceKm              = Math.Round(totalKm,       2),
+            DistancePerMinuteKm     = Math.Round(distPerMin,    3),
+            AverageSpeedKmh         = Math.Round(avgSpeed,      1),
+            Co2GramsEstimate        = Math.Round(totalCo2Grams, 0),
+            EcoScore                = Math.Round(ecoScore,      1),
             Jams                    = jams
         };
 
