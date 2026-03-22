@@ -191,12 +191,13 @@ public class ValhallaRoutingService(
             finally { sem.Release(); }
         }));
 
-        // ── Build pool, rank by eco score ───────────────────────────────────
-        var pool = uniqueTrips
+        // ── Build pool, rank by composite score (70% time, 30% eco) ─────────
+        var candidates = uniqueTrips
             .Select((trip, i) => (Trip: trip, Result: analysisResults[i]))
             .Where(x => x.Result is not null)
-            .OrderBy(x => x.Result.Analysis.EcoScore)
             .ToList();
+
+        var pool = RankByComposite(candidates);
 
         logger.LogInformation("RouteWithTraffic: pool={PoolSize}, requestedRoutes={Requested}.", pool.Count, requestedRoutes);
 
@@ -228,10 +229,8 @@ public class ValhallaRoutingService(
             }
 
             // Re-rank the full pool
-            finalRanked = pool
-                .OrderBy(x => x.Result.Analysis.EcoScore)
-                .Take(requestedRoutes)
-                .ToList();
+            pool = RankByComposite(pool);
+            finalRanked = pool.Take(requestedRoutes).ToList();
         }
 
         for (int i = 0; i < finalRanked.Count; i++)
@@ -344,11 +343,12 @@ public class ValhallaRoutingService(
         double distPerMin = liveMin > 0 ? totalKm / liveMin : 0;
         double avgSpeed   = totalLiveSec > 0 ? totalKm / totalLiveSec * 3600 : 0;
 
-        // Eco score: CO2 as primary factor, with a distance-per-minute multiplier
-        // that penalises routes covering more distance per unit time (i.e. longer
-        // routes that save little time). The multiplier is gentle — it nudges
-        // ranking without overwhelming the CO2 signal.
-        double ecoScore = totalCo2Grams * (1.0 + 0.05 * distPerMin);
+        // Eco score (0–100, higher = greener): compares actual CO2/km to the
+        // theoretical optimum (~120 g/km at ~55 km/h for a standard car).
+        // 100 = optimal efficiency, 0 = extremely inefficient.
+        double avgCo2PerKm = totalKm > 0 ? totalCo2Grams / totalKm : 200;
+        double optimalCo2  = 120.0; // g/km at ~55 km/h sweet spot
+        double ecoScore    = Math.Clamp(100.0 * optimalCo2 / Math.Max(avgCo2PerKm, 1), 0, 100);
 
         var analysis = new RouteTrafficAnalysis
         {
@@ -712,6 +712,38 @@ public class ValhallaRoutingService(
         }
 
         return locations.Count > 0 ? locations : null;
+    }
+
+    // ── Composite ranking ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Rank routes by a composite score: 70% travel time, 30% eco (CO2).
+    /// Both dimensions are normalised to [0..1] within the candidate pool
+    /// so that the weighting is meaningful regardless of absolute values.
+    /// </summary>
+    private static List<(Trip Trip, RouteAnalysisResult Result)> RankByComposite(
+        List<(Trip Trip, RouteAnalysisResult Result)> candidates)
+    {
+        if (candidates.Count <= 1) return candidates;
+
+        double minTime = candidates.Min(c => c.Result.Analysis.LiveDurationMinutes);
+        double maxTime = candidates.Max(c => c.Result.Analysis.LiveDurationMinutes);
+        double minCo2  = candidates.Min(c => c.Result.Analysis.Co2GramsEstimate);
+        double maxCo2  = candidates.Max(c => c.Result.Analysis.Co2GramsEstimate);
+
+        double timeRange = maxTime - minTime;
+        double co2Range  = maxCo2  - minCo2;
+
+        return candidates
+            .OrderBy(c =>
+            {
+                // Time: lower is better → normalise so 0 = fastest
+                double normTime = timeRange > 0 ? (c.Result.Analysis.LiveDurationMinutes - minTime) / timeRange : 0;
+                // Eco: higher is better → invert so 0 = greenest
+                double normEco  = co2Range  > 0 ? (maxCo2 - c.Result.Analysis.Co2GramsEstimate) / co2Range : 0;
+                return 0.70 * normTime + 0.30 * (1.0 - normEco);
+            })
+            .ToList();
     }
 
     // ── Request manipulation ──────────────────────────────────────────────────
