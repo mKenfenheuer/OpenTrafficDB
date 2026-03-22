@@ -8,7 +8,9 @@ namespace OpenTrafficDB.RoutingWorker.Controllers;
 [ApiController]
 [Route("internal/route")]
 [Authorize]
-public class RoutingInternalController(ValhallaRoutingService routing) : ControllerBase
+public class RoutingInternalController(
+    ValhallaRoutingService routing,
+    ILogger<RoutingInternalController> logger) : ControllerBase
 {
     [HttpGet]
     [HttpPost]
@@ -43,20 +45,33 @@ public class RoutingInternalController(ValhallaRoutingService routing) : Control
             return BadRequest(new { error = "Provide the Valhalla route request as a POST body or as the 'json' query parameter." });
         }
 
-        var (result, statusCode, error) = raw
-            ? await routing.RouteRawAsync(request, ct)
-            : await routing.RouteWithTrafficAsync(request, ct);
-
-        if (result is null)
+        if (raw)
         {
-            return statusCode switch
-            {
-                400 => BadRequest(new { error }),
-                503 => StatusCode(503, new { error }),
-                _   => StatusCode(502, new { error })
-            };
+            var (result, statusCode, error) = await routing.RouteRawAsync(request, ct);
+            if (result is null)
+                return StatusCode(statusCode, new { error });
+            return Ok(result);
         }
 
-        return Ok(result);
+        // Traffic-enriched route — fall back to raw on failure so the user always gets a route
+        try
+        {
+            var (result, statusCode, error) = await routing.RouteWithTrafficAsync(request, ct);
+            if (result is null)
+                return StatusCode(statusCode, new { error });
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Traffic enrichment failed, falling back to raw Valhalla route.");
+
+            var (fallback, statusCode, error) = await routing.RouteRawAsync(request, ct);
+            if (fallback is null)
+                return StatusCode(statusCode, new { error });
+
+            // Signal to the caller that traffic enrichment failed
+            Response.Headers["X-Traffic-Enrichment"] = "failed";
+            return Ok(fallback);
+        }
     }
 }
