@@ -211,13 +211,18 @@ public class ValhallaRoutingService(
             .Select(r => TryJamDetourAsync(clientRequest, r.Result.Analysis.Jams, ct));
         var allDetours = await Task.WhenAll(detourTasks);
 
-        // Merge detours, deduplicate again, trim back — rank by eco score
-        finalRanked.AddRange(allDetours.SelectMany(d => d));
-        finalRanked = finalRanked
-            .OrderBy(x => x.Result.Analysis.EcoScore)
-            .Where(x => seen.Add(GetRouteShapeKey(x.TripNode)))
-            .Take(requestedRoutes)
-            .ToList();
+        // Merge detours, deduplicate against each other, trim back — rank by eco score
+        var detourCandidates = allDetours.SelectMany(d => d).ToList();
+        if (detourCandidates.Count > 0)
+        {
+            finalRanked.AddRange(detourCandidates);
+            var seen2 = new HashSet<string>();
+            finalRanked = finalRanked
+                .OrderBy(x => x.Result.Analysis.EcoScore)
+                .Where(x => seen2.Add(GetRouteShapeKey(x.TripNode)))
+                .Take(requestedRoutes)
+                .ToList();
+        }
 
         for (int i = 0; i < finalRanked.Count; i++)
             finalRanked[i].Result.Analysis.RouteIndex = i;
