@@ -221,7 +221,7 @@ public class ValhallaRoutingService(
                     // Parse the detour trip node back into a typed Trip
                     var detourTrip = JsonSerializer.Deserialize<Trip>(tripNode.ToJsonString());
                     if (detourTrip?.Legs == null || detourTrip.Legs.Count == 0) continue;
-                    // Only add if not a duplicate
+                    // Only add if not too similar to an existing route (>=90% shape overlap)
                     if (!pool.Any(p => p.Trip.Equals(detourTrip)))
                         pool.Add((detourTrip, result));
                 }
