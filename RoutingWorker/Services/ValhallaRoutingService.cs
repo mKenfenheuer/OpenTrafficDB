@@ -149,6 +149,9 @@ public class ValhallaRoutingService(
         var routeLegShapes = ExtractRouteLegShapes(valhallaDoc);
         var tripNodes      = ExtractAllTripNodes(valhallaDoc);
 
+        logger.LogInformation("RouteWithTraffic: {ShapeCount} shapes, {TripCount} trip nodes from main request.",
+            routeLegShapes.Count, tripNodes.Count);
+
         // Merge the time-dependent route into the candidate pool
         try
         {
@@ -184,14 +187,21 @@ public class ValhallaRoutingService(
         }));
 
         // Build unified candidate pool, deduplicate by shape, rank by eco score
+        var nullResults  = results.Count(r => r is null);
+        var nullTrips    = tripNodes.Count(t => t is null);
+        logger.LogInformation("RouteWithTraffic: {Total} candidates, {NullResults} null results, {NullTrips} null trip nodes.",
+            results.Length, nullResults, nullTrips);
+
         var seen = new HashSet<string>();
         var pool = results
             .Select((r, i) => (TripNode: tripNodes[i], Result: r))
-            .Where(x => x.TripNode is not null)
+            .Where(x => x.TripNode is not null && x.Result is not null)
             .Select(x => (TripNode: x.TripNode!, Result: x.Result))
             .OrderBy(x => x.Result.Analysis.EcoScore)
             .Where(x => seen.Add(GetRouteShapeKey(x.TripNode)))
             .ToList();
+
+        logger.LogInformation("RouteWithTraffic: pool={PoolSize}, requestedRoutes={Requested}.", pool.Count, requestedRoutes);
 
         // Trim to user-requested count
         var finalRanked = pool.Take(requestedRoutes).ToList();
@@ -211,6 +221,8 @@ public class ValhallaRoutingService(
 
         for (int i = 0; i < finalRanked.Count; i++)
             finalRanked[i].Result.Analysis.RouteIndex = i;
+
+        logger.LogInformation("RouteWithTraffic: finalRanked={FinalCount}, rebuilding response.", finalRanked.Count);
 
         var rebuilt = RebuildValhallaResponse(valhallaDoc, finalRanked);
         return (rebuilt, 200, null);
