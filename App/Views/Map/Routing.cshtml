@@ -198,6 +198,84 @@
             transform: translateX(16px);
         }
 
+        /* ── Depart-at controls ────────────────────────────────── */
+        .depart-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .depart-row label {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+        .depart-select {
+            flex: 1;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 0.78rem;
+            padding: 5px 6px;
+            outline: none;
+        }
+        .depart-select:focus { border-color: var(--accent); }
+
+        /* ── Travel-time bar chart ────────────────────────────── */
+        .time-chart {
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+        }
+        .time-chart-label {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 6px;
+        }
+        .time-chart-bars {
+            display: flex;
+            align-items: flex-end;
+            gap: 3px;
+            height: 60px;
+        }
+        .time-bar-wrap {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100%;
+            justify-content: flex-end;
+            cursor: pointer;
+        }
+        .time-bar {
+            width: 100%;
+            border-radius: 3px 3px 0 0;
+            min-height: 4px;
+            transition: background 0.15s;
+        }
+        .time-bar.faded { background: rgba(88,166,255,0.25); }
+        .time-bar.active { background: var(--accent); }
+        .time-bar-label {
+            font-size: 0.62rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        .time-bar-value {
+            font-size: 0.6rem;
+            color: var(--text);
+            margin-bottom: 2px;
+        }
+        .time-chart-loading {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-align: center;
+            padding: 8px 0;
+        }
+
         #route-btn {
             width: 100%;
             margin-top: 8px;
@@ -338,6 +416,48 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.4);
         }
 
+        /* ── Mobile layout ─────────────────────────────────────── */
+        @@media (max-width: 640px) {
+            #route-panel {
+                position: fixed;
+                top: auto;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                width: 100%;
+                max-height: 55vh;
+                border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+                box-shadow: 0 -4px 24px rgba(0,0,0,0.5);
+            }
+            #map {
+                bottom: 0;
+            }
+            #panel-header {
+                padding: 10px 12px 8px;
+            }
+            #panel-header h4 {
+                font-size: 0.8rem;
+                margin-bottom: 8px;
+            }
+            .waypoint-row { margin-bottom: 6px; }
+            .waypoint-input { padding: 6px 8px; font-size: 0.78rem; }
+            .depart-row { margin-top: 4px; }
+            #panel-results { padding: 8px 12px; }
+            .route-card { padding: 8px 10px; margin-bottom: 6px; }
+            #pick-hint { bottom: 58vh; }
+
+            /* Drag handle */
+            #panel-header::before {
+                content: '';
+                display: block;
+                width: 36px;
+                height: 4px;
+                background: var(--border);
+                border-radius: 2px;
+                margin: 0 auto 8px;
+            }
+        }
+
         /* ── Spinner ─────────────────────────────────────────────── */
         .spinner {
             display: inline-block;
@@ -392,6 +512,24 @@
             <span>OpenTrafficDB traffic</span>
         </label>
 
+        <div class="depart-row">
+            <label>Depart:</label>
+            <select id="depart-day" class="depart-select">
+                <option value="">Now</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+                <option value="0">Sunday</option>
+            </select>
+            <select id="depart-hour" class="depart-select" style="max-width:80px" disabled>
+            </select>
+        </div>
+
+        <div id="time-chart-container"></div>
+
         <button id="route-btn" class="btn btn-primary" onclick="getRoute()">Get Route</button>
     </div>
 
@@ -421,6 +559,24 @@
     let selectedIdx     = 0;
     let acTimers        = {};
     let markers         = { origin: null, dest: null };
+    let chartData       = null;  // array of { hour, mins } for 3h slots
+
+    // ── Populate hour dropdown ──────────────────────────────────
+    (function initDepartControls() {
+        const hourSel = document.getElementById('depart-hour');
+        for (var h = 0; h < 24; h++) {
+            var opt = document.createElement('option');
+            opt.value = h;
+            opt.textContent = String(h).padStart(2, '0') + ':00';
+            hourSel.appendChild(opt);
+        }
+        // Set default to current hour
+        hourSel.value = new Date().getHours();
+
+        document.getElementById('depart-day').addEventListener('change', function () {
+            hourSel.disabled = !this.value;
+        });
+    })();
 
     // ── Map init ───────────────────────────────────────────────────
     map = new maplibregl.Map({
@@ -653,18 +809,9 @@
         map.flyTo({ center: ll, zoom: Math.max(map.getZoom(), 12) });
     });
 
-    // ── Routing ────────────────────────────────────────────────────
-    window.getRoute = async function () {
-        if (!originLngLat || !destLngLat) {
-            showError('Please set both origin and destination.');
-            return;
-        }
-        clearError();
-        setLoading(true);
-
-        const useTraffic = document.getElementById('traffic-toggle').checked;
-
-        const body = {
+    // ── Build Valhalla request body ─────────────────────────────────
+    function buildRouteBody(overrideDay, overrideHour) {
+        var body = {
             locations: [
                 { lon: originLngLat[0], lat: originLngLat[1], type: 'break' },
                 { lon: destLngLat[0],   lat: destLngLat[1],   type: 'break' }
@@ -691,6 +838,43 @@
             units: 'kilometers',
             shortcuts: false
         };
+
+        // Use override or UI selection for depart time
+        var day  = overrideDay  != null ? overrideDay  : document.getElementById('depart-day').value;
+        var hour = overrideHour != null ? overrideHour : parseInt(document.getElementById('depart-hour').value);
+        if (day !== '' && day !== null) {
+            var dt = getNextWeekday(parseInt(day), hour);
+            body.date_time = { type: 1, value: dt };
+        }
+        return body;
+    }
+
+    // Get next occurrence of a weekday (0=Sun..6=Sat) at given hour
+    function getNextWeekday(dow, hour) {
+        var d = new Date();
+        var diff = (dow - d.getDay() + 7) % 7;
+        if (diff === 0 && d.getHours() > hour) diff = 7;
+        d.setDate(d.getDate() + diff);
+        d.setHours(hour, 0, 0, 0);
+        // Valhalla format: YYYY-MM-DDTHH:MM
+        return d.getFullYear() + '-' +
+            String(d.getMonth() + 1).padStart(2, '0') + '-' +
+            String(d.getDate()).padStart(2, '0') + 'T' +
+            String(hour).padStart(2, '0') + ':00';
+    }
+
+    // ── Routing ────────────────────────────────────────────────────
+    window.getRoute = async function () {
+        if (!originLngLat || !destLngLat) {
+            showError('Please set both origin and destination.');
+            return;
+        }
+        clearError();
+        setLoading(true);
+
+        const useTraffic = document.getElementById('traffic-toggle').checked;
+
+        const body = buildRouteBody();
 
         try {
             const url = '/web/route' + (useTraffic ? '' : '?raw=true');
@@ -720,6 +904,9 @@
             selectedIdx = 0;
             renderResults();
             renderMap(0);
+
+            // Fetch predicted travel times for bar chart (fire-and-forget)
+            if (useTraffic) fetchTimeChart();
 
         } catch (err) {
             showError('Network error: ' + err.message);
@@ -943,6 +1130,91 @@
         const btn = document.getElementById('route-btn');
         btn.disabled = on;
         btn.innerHTML = on ? '<span class="spinner"></span> Routing…' : 'Get Route';
+    }
+
+    // ── Predicted travel-time bar chart ────────────────────────────
+    async function fetchTimeChart() {
+        var container = document.getElementById('time-chart-container');
+        container.innerHTML = '<div class="time-chart-loading"><span class="spinner"></span> Loading predictions…</div>';
+
+        var daySel = document.getElementById('depart-day').value;
+        var day = daySel !== '' ? parseInt(daySel) : new Date().getDay();
+        var selectedHour = daySel !== '' ? parseInt(document.getElementById('depart-hour').value) : new Date().getHours();
+
+        var slots = [0, 3, 6, 9, 12, 15, 18, 21];
+        var promises = slots.map(function (h) {
+            var body = buildRouteBody(day, h);
+            body.alternates = 0; // only need best route per slot
+            return fetch('/web/route', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            }).then(function (r) { return r.ok ? r.json() : null; })
+              .then(function (d) {
+                  if (!d || !d.trip) return { hour: h, mins: null };
+                  var ta = d.trip.trafficAnalysis;
+                  var mins = ta && ta.liveDurationMinutes != null
+                      ? ta.liveDurationMinutes
+                      : (d.trip.summary ? d.trip.summary.time / 60 : null);
+                  return { hour: h, mins: mins };
+              })
+              .catch(function () { return { hour: h, mins: null }; });
+        });
+
+        chartData = await Promise.all(promises);
+        renderTimeChart(chartData, selectedHour);
+    }
+
+    function renderTimeChart(data, selectedHour) {
+        var container = document.getElementById('time-chart-container');
+        var validMins = data.filter(function (d) { return d.mins != null; }).map(function (d) { return d.mins; });
+        if (!validMins.length) {
+            container.innerHTML = '';
+            return;
+        }
+
+        var maxMins = Math.max.apply(null, validMins);
+        var minMins = Math.min.apply(null, validMins);
+
+        // Find which slot the selected hour falls into
+        var selectedSlot = Math.floor(selectedHour / 3) * 3;
+
+        var html = '<div class="time-chart">'
+            + '<div class="time-chart-label">Predicted travel time</div>'
+            + '<div class="time-chart-bars">';
+
+        data.forEach(function (d) {
+            var pct = d.mins != null ? Math.max(15, (d.mins / maxMins) * 100) : 15;
+            var isActive = d.hour === selectedSlot;
+            var barClass = isActive ? 'active' : 'faded';
+            var valTxt = d.mins != null ? fmtMins(d.mins) : '—';
+            var label = String(d.hour).padStart(2, '0') + '-' + String(d.hour + 3).padStart(2, '0');
+
+            html += '<div class="time-bar-wrap" data-hour="' + d.hour + '">'
+                + '<div class="time-bar-value">' + valTxt + '</div>'
+                + '<div class="time-bar ' + barClass + '" style="height:' + pct + '%"></div>'
+                + '<div class="time-bar-label">' + label + '</div>'
+                + '</div>';
+        });
+
+        html += '</div></div>';
+        container.innerHTML = html;
+
+        // Click a bar to select that departure time
+        container.querySelectorAll('.time-bar-wrap').forEach(function (el) {
+            el.addEventListener('click', function () {
+                var h = parseInt(el.dataset.hour);
+                var daySel = document.getElementById('depart-day');
+                if (!daySel.value) {
+                    // Set to today's day-of-week
+                    daySel.value = new Date().getDay();
+                    document.getElementById('depart-hour').disabled = false;
+                }
+                document.getElementById('depart-hour').value = h;
+                window.getRoute();
+            });
+        });
     }
 
 }());
