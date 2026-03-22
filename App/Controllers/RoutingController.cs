@@ -32,7 +32,8 @@ public class RoutingController(
         [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)]
         JsonElement? body,
         [FromQuery] string? json,
-        CancellationToken ct)
+        [FromQuery] bool raw = false,
+        CancellationToken ct = default)
     {
         var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var keyId = User.FindFirstValue("keyId") ?? string.Empty;
@@ -47,7 +48,7 @@ public class RoutingController(
             await workers.ProxyAsync("Routing", HttpMethod.Post, "/internal/route",
                 userId, keyId, string.Empty,
                 new System.Net.Http.StringContent(body.Value.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
-                Response, ct: ct);
+                Response, query: raw ? "?raw=true" : null, ct: ct);
         }
         else if (!string.IsNullOrWhiteSpace(json))
         {
@@ -65,7 +66,7 @@ public class RoutingController(
 
             await workers.ProxyAsync("Routing", HttpMethod.Get, "/internal/route",
                 userId, keyId, string.Empty, null, Response,
-                query: $"?json={Uri.EscapeDataString(json)}", ct: ct);
+                query: $"?json={Uri.EscapeDataString(json)}{(raw ? "&raw=true" : "")}", ct: ct);
         }
         else
         {
