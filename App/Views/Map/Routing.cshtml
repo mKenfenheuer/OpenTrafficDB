@@ -1138,32 +1138,34 @@
         container.innerHTML = '<div class="time-chart-loading"><span class="spinner"></span> Loading predictions…</div>';
 
         var daySel = document.getElementById('depart-day').value;
-        var day = daySel !== '' ? parseInt(daySel) : new Date().getDay();
         var selectedHour = daySel !== '' ? parseInt(document.getElementById('depart-hour').value) : new Date().getHours();
 
-        var slots = [0, 3, 6, 9, 12, 15, 18, 21];
-        var promises = slots.map(function (h) {
-            var body = buildRouteBody(day, h);
-            body.alternates = 0; // only need best route per slot
-            return fetch('/web/route', {
+        var body = {
+            locations: [
+                { lat: originLngLat[1], lon: originLngLat[0] },
+                { lat: destLngLat[1],   lon: destLngLat[0] }
+            ],
+            bucketWidthHours: 3
+        };
+
+        try {
+            var resp = await fetch('/web/route/buckets', {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
-            }).then(function (r) { return r.ok ? r.json() : null; })
-              .then(function (d) {
-                  if (!d || !d.trip) return { hour: h, mins: null };
-                  var ta = d.trip.trafficAnalysis;
-                  var mins = ta && ta.liveDurationMinutes != null
-                      ? ta.liveDurationMinutes
-                      : (d.trip.summary ? d.trip.summary.time / 60 : null);
-                  return { hour: h, mins: mins };
-              })
-              .catch(function () { return { hour: h, mins: null }; });
-        });
+            });
+            if (!resp.ok) { container.innerHTML = ''; return; }
+            var data = await resp.json();
 
-        chartData = await Promise.all(promises);
-        renderTimeChart(chartData, selectedHour);
+            chartData = (data.buckets || []).map(function (b) {
+                var hour = parseInt(b.start.split(':')[0]);
+                return { hour: hour, mins: b.travelTimeMinutes };
+            });
+            renderTimeChart(chartData, selectedHour);
+        } catch (e) {
+            container.innerHTML = '';
+        }
     }
 
     function renderTimeChart(data, selectedHour) {

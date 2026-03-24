@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OpenTrafficDB.Shared.Models.DTOs;
 using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.App.Controllers;
@@ -32,6 +33,20 @@ public class WebRoutingController(WorkerClient workers) : ControllerBase
             0, string.Empty, string.Empty,
             new System.Net.Http.StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
             Response, query: query, ct: ct);
+
+        return new EmptyResult();
+    }
+
+    [HttpPost("buckets")]
+    public async Task<IActionResult> TravelTimeBuckets(
+        [FromBody] TravelTimeBucketRequest request,
+        CancellationToken ct = default)
+    {
+        var bodyJson = JsonSerializer.Serialize(request);
+        await workers.ProxyAsync("Routing", HttpMethod.Post, "/internal/route/buckets",
+            0, string.Empty, string.Empty,
+            new System.Net.Http.StringContent(bodyJson, System.Text.Encoding.UTF8, "application/json"),
+            Response, ct: ct);
 
         return new EmptyResult();
     }

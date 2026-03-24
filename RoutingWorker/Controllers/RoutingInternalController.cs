@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OpenTrafficDB.RoutingWorker.Services;
+using OpenTrafficDB.Shared.Models.DTOs;
 
 namespace OpenTrafficDB.RoutingWorker.Controllers;
 
@@ -73,5 +74,16 @@ public class RoutingInternalController(
             Response.Headers["X-Traffic-Enrichment"] = "failed";
             return Ok(fallback);
         }
+    }
+
+    [HttpPost("buckets")]
+    public async Task<IActionResult> TravelTimeBuckets(
+        [FromBody] TravelTimeBucketRequest request,
+        CancellationToken ct = default)
+    {
+        var (result, statusCode, error) = await routing.RouteTravelTimeBucketsAsync(request, ct);
+        if (result is null)
+            return StatusCode(statusCode, new { error });
+        return Ok(result);
     }
 }

@@ -102,6 +102,9 @@ public class ValhallaRoutingService(
         int userAlternates  = ReadAlternates(defaultsElement);
         int requestedRoutes = userAlternates + 1;
 
+        // Extract requested departure time for historical speed lookup
+        var departureUtc = ExtractDepartureTime(defaultsElement);
+
         // ── Two parallel Valhalla requests ──────────────────────────────────
         var mainRequest = InjectAlternates(defaultsElement, userAlternates);
 
@@ -173,9 +176,6 @@ public class ValhallaRoutingService(
                 uniqueTrips.Add(trip);
         }
 
-        logger.LogInformation("RouteWithTraffic: {Total} trips collected, {Unique} unique after dedup.",
-            allTrips.Count, uniqueTrips.Count);
-
         // ── Analyse traffic for every unique trip in parallel ────────────────
         var analysisResults = new RouteAnalysisResult[uniqueTrips.Count];
         using var sem = new SemaphoreSlim(4);
@@ -187,7 +187,7 @@ public class ValhallaRoutingService(
                 .ToList();
 
             await sem.WaitAsync(ct);
-            try   { analysisResults[i] = await AnalyseRouteAsync(i, legShapes, ct); }
+            try   { analysisResults[i] = await AnalyseRouteAsync(i, legShapes, departureUtc, ct); }
             finally { sem.Release(); }
         }));
 
@@ -199,8 +199,6 @@ public class ValhallaRoutingService(
 
         var pool = RankByComposite(candidates);
 
-        logger.LogInformation("RouteWithTraffic: pool={PoolSize}, requestedRoutes={Requested}.", pool.Count, requestedRoutes);
-
         var finalRanked = pool.Take(requestedRoutes).ToList();
 
         // ── Try jam-avoiding detours if any route has a jam > 5 min ─────────
@@ -211,7 +209,7 @@ public class ValhallaRoutingService(
         {
             var detourTasks = finalRanked
                 .Where(r => r.Result.Analysis.Jams.Any(j => j.DelayMinutes >= MinDetourJamDelayMinutes))
-                .Select(r => TryJamDetourAsync(clientRequest, r.Result.Analysis.Jams, ct));
+                .Select(r => TryJamDetourAsync(clientRequest, r.Result.Analysis.Jams, departureUtc, ct));
             var allDetours = await Task.WhenAll(detourTasks);
 
             // Convert detour results to (Trip, RouteAnalysisResult) and merge
@@ -236,8 +234,6 @@ public class ValhallaRoutingService(
         for (int i = 0; i < finalRanked.Count; i++)
             finalRanked[i].Result.Analysis.RouteIndex = i;
 
-        logger.LogInformation("RouteWithTraffic: finalRanked={FinalCount}, rebuilding response.", finalRanked.Count);
-
         // ── Rebuild JSON response ───────────────────────────────────────────
         // Convert typed trips back to JsonNode for response assembly
         var rankedForResponse = finalRanked.Select(r =>
@@ -249,6 +245,113 @@ public class ValhallaRoutingService(
         var valhallaDoc = JsonDocument.Parse(rawJson).RootElement;
         var rebuilt = RebuildValhallaResponse(valhallaDoc, rankedForResponse);
         return (rebuilt, 200, null);
+    }
+
+    // ── Travel-time buckets for a whole day ─────────────────────────────────
+
+    /// <summary>
+    /// Compute predicted travel times for a route across all time-of-day buckets.
+    /// Routes once via Valhalla, then runs the traffic analysis for each bucket's
+    /// midpoint to produce a full-day travel-time profile.
+    /// </summary>
+    public async Task<(TravelTimeBucketResponse? Result, int Status, string? Error)>
+        RouteTravelTimeBucketsAsync(TravelTimeBucketRequest request, CancellationToken ct)
+    {
+        if (request.Locations == null || request.Locations.Count < 2)
+            return (null, 400, "At least two locations are required.");
+
+        int width = Math.Clamp(request.BucketWidthHours, 1, 12);
+        if (24 % width != 0)
+            return (null, 400, $"Bucket width must divide 24 evenly (1, 2, 3, 4, 6, 8, 12). Got {request.BucketWidthHours}.");
+
+        // Build a Valhalla route request from the locations
+        var locations = new JsonArray();
+        foreach (var loc in request.Locations)
+            locations.Add(new JsonObject { ["lat"] = loc.Lat, ["lon"] = loc.Lon });
+
+        var valhallaReq = new JsonObject
+        {
+            ["locations"]  = locations,
+            ["costing"]    = "auto",
+            ["alternates"] = 0
+        };
+
+        var reqElement = JsonDocument.Parse(valhallaReq.ToJsonString()).RootElement;
+        var withDefaults = ApplyDefaults(reqElement);
+
+        // Single Valhalla route to get the shape
+        var client = httpClientFactory.CreateClient("valhalla");
+        var body   = new StringContent(withDefaults.ToJsonString(), Encoding.UTF8, "application/json");
+
+        HttpResponseMessage response;
+        try { response = await client.PostAsync($"{_valhallaBaseUrl}/route", body, ct); }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Valhalla /route request failed for bucket analysis.");
+            return (null, 503, "Valhalla routing service unavailable.");
+        }
+
+        var rawJson = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            return (null, (int)response.StatusCode, rawJson);
+
+        ValhallaResponse parsed;
+        try { parsed = JsonSerializer.Deserialize<ValhallaResponse>(rawJson)!; }
+        catch (JsonException)
+        {
+            return (null, 502, "Invalid JSON from Valhalla.");
+        }
+
+        if (parsed.Trip?.Legs == null || parsed.Trip.Legs.Count == 0)
+            return (null, 502, "Valhalla returned no route.");
+
+        var legShapes = ExtractLegShapes(parsed.Trip);
+        double distanceKm = parsed.Trip.Summary?.Length ?? 0;
+
+        // Run traffic analysis for each bucket's midpoint (using next Monday as reference)
+        int bucketCount = 24 / width;
+        var today = DateTime.UtcNow.Date;
+        // Use next Monday to get a representative weekday
+        int daysUntilMonday = ((int)DayOfWeek.Monday - (int)today.DayOfWeek + 7) % 7;
+        if (daysUntilMonday == 0) daysUntilMonday = 7;
+        var referenceDay = today.AddDays(daysUntilMonday);
+
+        var buckets = new TravelTimeBucket[bucketCount];
+        using var sem = new SemaphoreSlim(4);
+
+        await Task.WhenAll(Enumerable.Range(0, bucketCount).Select(async i =>
+        {
+            int startHour = i * width;
+            int midHour   = startHour + width / 2;
+            int midMinute = (width % 2 == 1) ? 30 : 0;
+            var departure = referenceDay.AddHours(midHour).AddMinutes(midMinute);
+
+            await sem.WaitAsync(ct);
+            try
+            {
+                var result = await AnalyseRouteAsync(i, legShapes, departure, ct);
+                buckets[i] = new TravelTimeBucket
+                {
+                    Start              = $"{startHour:D2}:00",
+                    End                = startHour + width == 24 ? "24:00" : $"{startHour + width:D2}:00",
+                    TravelTimeMinutes  = Math.Round(result.Analysis.LiveDurationMinutes, 1),
+                    FreeflowTimeMinutes = Math.Round(result.Analysis.FreeflowDurationMinutes, 1),
+                    DelayMinutes       = Math.Round(result.Analysis.TotalDelayMinutes, 1),
+                    AverageSpeedKmh    = Math.Round(result.Analysis.AverageSpeedKmh, 1)
+                };
+            }
+            finally { sem.Release(); }
+        }));
+
+        var resp = new TravelTimeBucketResponse
+        {
+            Locations       = request.Locations,
+            BucketWidthHours = width,
+            DistanceKm       = Math.Round(distanceKm, 2),
+            Buckets          = buckets.ToList()
+        };
+
+        return (resp, 200, null);
     }
 
     // ── Shape extraction ─────────────────────────────────────────────────────
@@ -271,6 +374,7 @@ public class ValhallaRoutingService(
     private async Task<RouteAnalysisResult> AnalyseRouteAsync(
         int routeIndex,
         List<List<(double Lat, double Lon)>> legShapes,
+        DateTime? departureUtc,
         CancellationToken ct)
     {
         if (legShapes.Count == 0 || legShapes.All(l => l.Count < 2))
@@ -286,34 +390,90 @@ public class ValhallaRoutingService(
             .SelectMany(edges => edges.Select(e => e.WayId))
             .Where(id => id != 0).Distinct().ToList();
 
-        // Current time-of-day bucket for historical fallback
-        var now       = DateTime.UtcNow;
-        int currentDow    = (int)now.DayOfWeek;
-        int currentBucket = (now.Hour * 60 + now.Minute) / 5;
+        bool isLive = departureUtc is null; // null = depart now, use live speeds
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var summaries = await db.WaySpeedSummaries
-            .AsNoTracking()
-            .Where(s => wayIds.Contains(s.OsmWayId))
-            .ToDictionaryAsync(s => s.OsmWayId, ct);
 
-        // Historical speed for the current day-of-week + 5-minute bucket
-        var historicalSpeeds = await db.WaySpeedAggregates
-            .AsNoTracking()
-            .Where(a => wayIds.Contains(a.OsmWayId)
-                     && a.DayOfWeek == currentDow
-                     && a.FiveMinuteBucket == currentBucket
-                     && a.SampleCount > 0)
-            .ToDictionaryAsync(a => a.OsmWayId, a => a.SumSpeedKmh / a.SampleCount, ct);
+        // ── Live mode: summaries with freshness check ────────────────────────
+        Dictionary<long, WaySpeedSummary>? summaries = null;
+        if (isLive)
+        {
+            var cutoff = DateTime.UtcNow.AddHours(-1);
+            summaries = await db.WaySpeedSummaries
+                .AsNoTracking()
+                .Where(s => wayIds.Contains(s.OsmWayId))
+                .ToDictionaryAsync(s => s.OsmWayId, ct);
+            // Mark stale entries by nulling ConstrainedSpeed in-memory
+            foreach (var kvp in summaries)
+                if (kvp.Value.LastUpdated < cutoff)
+                    kvp.Value.ConstrainedSpeed = null;
+        }
+
+        // ── Predicted mode: load historical speeds for the time window ───────
+        // We need all buckets the route might traverse (departure to departure + ~3h max).
+        // Keyed by (wayId, dow, bucket) for per-edge lookup as time advances.
+        Dictionary<(long WayId, int Dow, int Bucket), double>? historicalByTime = null;
+        if (!isLive)
+        {
+            // Load freeflow baselines (always needed for fallback)
+            summaries = await db.WaySpeedSummaries
+                .AsNoTracking()
+                .Where(s => wayIds.Contains(s.OsmWayId))
+                .ToDictionaryAsync(s => s.OsmWayId, ct);
+
+            // Estimate max route duration: sum freeflow edge times
+            double estDurationMin = legEdges
+                .SelectMany(e => e)
+                .Sum(e => {
+                    double ff = summaries.TryGetValue(e.WayId, out var s) && s.FreeflowSpeed > 0
+                        ? s.FreeflowSpeed : 50;
+                    return e.LengthKm / ff * 60;
+                });
+            // Pad by 50% for traffic
+            int windowMinutes = (int)(estDurationMin * 1.5) + 30;
+
+            var dep = departureUtc!.Value;
+            int depMinOfDay = dep.Hour * 60 + dep.Minute;
+            int startBucket = depMinOfDay / 5;
+            int endBucket   = (depMinOfDay + windowMinutes) / 5;
+
+            // Build list of (dow, bucket) pairs — may wrap across midnight / next day
+            var dowBuckets = new HashSet<(int Dow, int Bucket)>();
+            for (int b = startBucket; b <= endBucket; b++)
+            {
+                int actualBucket = b % 288; // 288 = 24*60/5
+                int dayOffset    = b / 288;
+                int dow          = ((int)dep.DayOfWeek + dayOffset) % 7;
+                dowBuckets.Add((dow, actualBucket));
+            }
+
+            var dows    = dowBuckets.Select(x => x.Dow).Distinct().ToList();
+            var buckets = dowBuckets.Select(x => x.Bucket).Distinct().ToList();
+
+            var rawHist = await db.WaySpeedAggregates
+                .AsNoTracking()
+                .Where(a => wayIds.Contains(a.OsmWayId)
+                         && dows.Contains(a.DayOfWeek)
+                         && buckets.Contains(a.FiveMinuteBucket)
+                         && a.SampleCount > 0)
+                .ToListAsync(ct);
+
+            historicalByTime = rawHist.ToDictionary(
+                a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket),
+                a => a.SumSpeedKmh / a.SampleCount);
+        }
 
         double totalFreeflowSec = 0, totalLiveSec = 0, totalKm = 0, coveredKm = 0;
         var allEdgeInfo = new List<(EdgeData Edge, double FreeflowSpeed, double LiveSpeed, double LengthKm, bool HasLiveData)>();
         var legShapeDelays = new List<double[]>(legShapes.Count);
+        double cumulativeSec = 0; // tracks time offset from departure for predicted mode
 
         for (int li = 0; li < legEdges.Count; li++)
         {
-            var (legDelay, edgeInfo, ffSec, livSec, km, covKm) =
-                ComputeLegDelays(legEdges[li], legShapes[li].Count, summaries, historicalSpeeds);
+            var (legDelay, edgeInfo, ffSec, livSec, km, covKm) = isLive
+                ? ComputeLegDelaysLive(legEdges[li], legShapes[li].Count, summaries!)
+                : ComputeLegDelaysPredicted(legEdges[li], legShapes[li].Count,
+                    summaries!, historicalByTime!, departureUtc!.Value, cumulativeSec);
 
             legShapeDelays.Add(legDelay);
             allEdgeInfo.AddRange(edgeInfo);
@@ -321,6 +481,7 @@ public class ValhallaRoutingService(
             totalLiveSec     += livSec;
             totalKm          += km;
             coveredKm        += covKm;
+            cumulativeSec    += livSec; // advance clock for next leg
         }
 
         var jams        = DetectJams(allEdgeInfo);
@@ -373,15 +534,17 @@ public class ValhallaRoutingService(
     /// Compute per-edge speeds for one leg and build the shape-point delay array.
     /// Delay is distributed uniformly across each edge's matched shape points.
     /// </summary>
+    /// <summary>
+    /// Live mode: use ConstrainedSpeed (already null for stale entries), fall back to freeflow.
+    /// </summary>
     private static (
         double[] ShapePointDelays,
         List<(EdgeData, double, double, double, bool)> EdgeInfo,
         double FreeflowSec, double LiveSec, double TotalKm, double CoveredKm)
-        ComputeLegDelays(
+        ComputeLegDelaysLive(
             List<EdgeData> edges,
             int shapePointCount,
-            Dictionary<long, WaySpeedSummary> summaries,
-            Dictionary<long, double> historicalSpeeds)
+            Dictionary<long, WaySpeedSummary> summaries)
     {
         var shapePointDelays = new double[shapePointCount];
         var edgeInfo = new List<(EdgeData, double, double, double, bool)>();
@@ -395,49 +558,109 @@ public class ValhallaRoutingService(
             if (summaries.TryGetValue(edge.WayId, out var s))
             {
                 freeflow = s.FreeflowSpeed > 0 ? s.FreeflowSpeed : 1;
-                // Prefer live EMA, then time-of-day historical, then freeflow baseline
-                if (s.ConstrainedSpeed.HasValue)
+                if (s.ConstrainedSpeed.HasValue) // null if stale (>1h)
                 {
                     live    = Math.Max(s.ConstrainedSpeed.Value, 1);
-                    hasData = true;
-                }
-                else if (historicalSpeeds.TryGetValue(edge.WayId, out var hist) && hist > 0)
-                {
-                    live    = hist;
                     hasData = true;
                 }
                 else
                 {
                     live    = freeflow;
-                    hasData = false;
                 }
             }
 
             if (freeflow <= 0) freeflow = 50;
             if (live     <= 0) live     = freeflow;
 
-            double edgeFreeflowSec = edge.LengthKm / freeflow * 3600;
-            double edgeLiveSec     = edge.LengthKm / live     * 3600;
-            double edgeDelaySec    = edgeLiveSec - edgeFreeflowSec;
-
-            freeflowSec += edgeFreeflowSec;
-            liveSec     += edgeLiveSec;
-            totalKm     += edge.LengthKm;
-            if (hasData) coveredKm += edge.LengthKm;
-
-            edgeInfo.Add((edge, freeflow, live, edge.LengthKm, hasData));
-
-            // Distribute delay across this edge's matched shape points
-            if (edge.ShapeIndices.Count > 0 && edgeDelaySec > 0)
-            {
-                double delayPerPoint = edgeDelaySec / edge.ShapeIndices.Count;
-                foreach (var idx in edge.ShapeIndices)
-                    if ((uint)idx < (uint)shapePointDelays.Length)
-                        shapePointDelays[idx] += delayPerPoint;
-            }
+            AccumulateEdge(edge, freeflow, live, hasData, shapePointDelays, edgeInfo,
+                ref freeflowSec, ref liveSec, ref totalKm, ref coveredKm);
         }
 
         return (shapePointDelays, edgeInfo, freeflowSec, liveSec, totalKm, coveredKm);
+    }
+
+    /// <summary>
+    /// Predicted mode: use historical speeds for the correct time bucket,
+    /// advancing the clock along the route based on cumulative travel time.
+    /// </summary>
+    private static (
+        double[] ShapePointDelays,
+        List<(EdgeData, double, double, double, bool)> EdgeInfo,
+        double FreeflowSec, double LiveSec, double TotalKm, double CoveredKm)
+        ComputeLegDelaysPredicted(
+            List<EdgeData> edges,
+            int shapePointCount,
+            Dictionary<long, WaySpeedSummary> summaries,
+            Dictionary<(long WayId, int Dow, int Bucket), double> historicalByTime,
+            DateTime departure,
+            double priorCumulativeSec)
+    {
+        var shapePointDelays = new double[shapePointCount];
+        var edgeInfo = new List<(EdgeData, double, double, double, bool)>();
+        double freeflowSec = 0, liveSec = 0, totalKm = 0, coveredKm = 0;
+        double edgeCumulativeSec = priorCumulativeSec;
+
+        foreach (var edge in edges)
+        {
+            double freeflow = 0, live = 0;
+            bool hasData = false;
+
+            if (summaries.TryGetValue(edge.WayId, out var s))
+                freeflow = s.FreeflowSpeed > 0 ? s.FreeflowSpeed : 1;
+            if (freeflow <= 0) freeflow = 50;
+
+            // Calculate what time we arrive at this edge
+            var edgeTime  = departure.AddSeconds(edgeCumulativeSec);
+            int dow       = (int)edgeTime.DayOfWeek;
+            int bucket    = (edgeTime.Hour * 60 + edgeTime.Minute) / 5;
+
+            if (historicalByTime.TryGetValue((edge.WayId, dow, bucket), out var hist) && hist > 0)
+            {
+                live    = hist;
+                hasData = true;
+            }
+            else
+            {
+                live = freeflow;
+            }
+
+            if (live <= 0) live = freeflow;
+
+            AccumulateEdge(edge, freeflow, live, hasData, shapePointDelays, edgeInfo,
+                ref freeflowSec, ref liveSec, ref totalKm, ref coveredKm);
+
+            // Advance clock by this edge's travel time
+            edgeCumulativeSec += edge.LengthKm / live * 3600;
+        }
+
+        return (shapePointDelays, edgeInfo, freeflowSec, liveSec, totalKm, coveredKm);
+    }
+
+    /// <summary>Shared edge accumulation logic for both live and predicted modes.</summary>
+    private static void AccumulateEdge(
+        EdgeData edge, double freeflow, double live, bool hasData,
+        double[] shapePointDelays,
+        List<(EdgeData, double, double, double, bool)> edgeInfo,
+        ref double freeflowSec, ref double liveSec, ref double totalKm, ref double coveredKm)
+    {
+        double edgeFreeflowSec = edge.LengthKm / freeflow * 3600;
+        double edgeLiveSec     = edge.LengthKm / live     * 3600;
+        double edgeDelaySec    = edgeLiveSec - edgeFreeflowSec;
+
+        freeflowSec += edgeFreeflowSec;
+        liveSec     += edgeLiveSec;
+        totalKm     += edge.LengthKm;
+        if (hasData) coveredKm += edge.LengthKm;
+
+        edgeInfo.Add((edge, freeflow, live, edge.LengthKm, hasData));
+
+        if (edge.ShapeIndices.Count > 0 && edgeDelaySec > 0)
+        {
+            double delayPerPoint = edgeDelaySec / edge.ShapeIndices.Count;
+            foreach (var idx in edge.ShapeIndices)
+                if ((uint)idx < (uint)shapePointDelays.Length)
+                    shapePointDelays[idx] += delayPerPoint;
+        }
     }
 
     // ── Valhalla trace_attributes (edge_walk) ─────────────────────────────────
@@ -616,6 +839,7 @@ public class ValhallaRoutingService(
     private async Task<List<(JsonNode TripNode, RouteAnalysisResult Result)>> TryJamDetourAsync(
         JsonElement originalRequest,
         List<TrafficJam> jams,
+        DateTime? departureUtc,
         CancellationToken ct)
     {
         var excludeLocations = BuildExcludeLocations(jams);
@@ -643,7 +867,7 @@ public class ValhallaRoutingService(
             if (detourParsed?.Trip?.Legs == null || detourParsed.Trip.Legs.Count == 0) return [];
 
             var legShapes = ExtractLegShapes(detourParsed.Trip);
-            var result    = await AnalyseRouteAsync(0, legShapes, ct);
+            var result    = await AnalyseRouteAsync(0, legShapes, departureUtc, ct);
             var tripNode  = JsonNode.Parse(rawJson)!.AsObject()["trip"]?.DeepClone();
             if (tripNode is null) return [];
 
@@ -747,6 +971,24 @@ public class ValhallaRoutingService(
     }
 
     // ── Request manipulation ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Extract the departure time from the Valhalla date_time object.
+    /// Returns null if not present or not parseable (meaning "now").
+    /// Supports type 1 (depart_at) with value "YYYY-MM-DDTHH:MM".
+    /// </summary>
+    private static DateTime? ExtractDepartureTime(JsonElement source)
+    {
+        if (!source.TryGetProperty("date_time", out var dt)) return null;
+        if (!dt.TryGetProperty("type", out var typeProp)) return null;
+        int type = typeProp.GetInt32();
+        // type 0 = current time, type 1 = depart_at, type 2 = arrive_by
+        if (type == 0) return null;
+        if (!dt.TryGetProperty("value", out var valueProp)) return null;
+        var valueStr = valueProp.GetString();
+        if (string.IsNullOrEmpty(valueStr)) return null;
+        return DateTime.TryParse(valueStr, out var parsed) ? parsed : null;
+    }
 
     private static int ReadAlternates(JsonElement source)
     {

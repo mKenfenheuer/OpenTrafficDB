@@ -51,6 +51,38 @@ public class RouteTrafficAnalysis
     public List<TrafficJam> Jams { get; set; } = [];
 }
 
+public class TravelTimeBucketRequest
+{
+    public required List<TravelTimeBucketLocation> Locations { get; set; }
+
+    /// <summary>Width of each time bucket in hours (1–12). Default: 3.</summary>
+    public int BucketWidthHours { get; set; } = 3;
+}
+
+public class TravelTimeBucketLocation
+{
+    public double Lat { get; set; }
+    public double Lon { get; set; }
+}
+
+public class TravelTimeBucketResponse
+{
+    public List<TravelTimeBucketLocation> Locations { get; set; } = [];
+    public int BucketWidthHours { get; set; }
+    public double DistanceKm { get; set; }
+    public List<TravelTimeBucket> Buckets { get; set; } = [];
+}
+
+public class TravelTimeBucket
+{
+    public string Start { get; set; } = string.Empty;
+    public string End { get; set; } = string.Empty;
+    public double TravelTimeMinutes { get; set; }
+    public double FreeflowTimeMinutes { get; set; }
+    public double DelayMinutes { get; set; }
+    public double AverageSpeedKmh { get; set; }
+}
+
 public class EnrichedRouteResponse
 {
     [JsonPropertyName("requestedRoutes")]

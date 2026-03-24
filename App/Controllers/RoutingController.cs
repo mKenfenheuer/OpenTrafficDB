@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OpenTrafficDB.Shared.Models.DTOs;
 using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.App.Controllers;
@@ -72,6 +73,33 @@ public class RoutingController(
         {
             return BadRequest(new { error = "Provide the Valhalla route request as a POST body or as the 'json' query parameter." });
         }
+
+        return new EmptyResult();
+    }
+
+    /// <summary>
+    /// Get predicted travel times for each time-of-day bucket across a full day.
+    /// </summary>
+    [HttpPost("buckets")]
+    [ProducesResponseType(typeof(TravelTimeBucketResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> TravelTimeBuckets(
+        [FromBody] TravelTimeBucketRequest request,
+        CancellationToken ct = default)
+    {
+        var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var keyId = User.FindFirstValue("keyId") ?? string.Empty;
+        var userId = int.Parse(User.FindFirstValue("sub") ?? "0");
+
+        if (!abuseDetection.CheckReadRate(ip, keyId))
+            return StatusCode(429, new { error = "Rate limit exceeded." });
+
+        var bodyJson = JsonSerializer.Serialize(request);
+        await workers.ProxyAsync("Routing", HttpMethod.Post, "/internal/route/buckets",
+            userId, keyId, string.Empty,
+            new System.Net.Http.StringContent(bodyJson, System.Text.Encoding.UTF8, "application/json"),
+            Response, ct: ct);
 
         return new EmptyResult();
     }
