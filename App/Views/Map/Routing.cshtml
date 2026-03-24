@@ -1187,7 +1187,10 @@
             + '<div class="time-chart-bars">';
 
         data.forEach(function (d) {
-            var pct = d.mins != null ? Math.max(15, (d.mins / maxMins) * 100) : 15;
+            var range = maxMins - minMins;
+            var pct = d.mins != null
+                ? (range > 0 ? 15 + ((d.mins - minMins) / range) * 85 : 50)
+                : 15;
             var isActive = d.hour === selectedSlot;
             var barClass = isActive ? 'active' : 'faded';
             var valTxt = d.mins != null ? fmtMins(d.mins) : '—';
