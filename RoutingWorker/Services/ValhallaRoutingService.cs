@@ -438,12 +438,14 @@ public class ValhallaRoutingService(
             int endBucket   = (depMinOfDay + windowMinutes) / 5;
 
             // Build list of (dow, bucket) pairs — may wrap across midnight / next day
+            // Pad ±12 buckets (60 min) so nearest-bucket fallback has data to search
+            const int BucketPad = 12;
             var dowBuckets = new HashSet<(int Dow, int Bucket)>();
-            for (int b = startBucket; b <= endBucket; b++)
+            for (int b = startBucket - BucketPad; b <= endBucket + BucketPad; b++)
             {
-                int actualBucket = b % 288; // 288 = 24*60/5
-                int dayOffset    = b / 288;
-                int dow          = ((int)dep.DayOfWeek + dayOffset) % 7;
+                int actualBucket = ((b % 288) + 288) % 288;
+                int dayOffset    = b < 0 ? -1 : b / 288;
+                int dow          = (((int)dep.DayOfWeek + dayOffset) % 7 + 7) % 7;
                 dowBuckets.Add((dow, actualBucket));
             }
 
@@ -621,7 +623,17 @@ public class ValhallaRoutingService(
             }
             else
             {
-                live = freeflow;
+                // Search nearest bucket within ±60 min (12 five-minute buckets)
+                var nearest = FindNearestBucket(historicalByTime, edge.WayId, dow, bucket, 12);
+                if (nearest > 0)
+                {
+                    live    = nearest;
+                    hasData = true;
+                }
+                else
+                {
+                    live = freeflow;
+                }
             }
 
             if (live <= 0) live = freeflow;
@@ -1158,6 +1170,28 @@ public class ValhallaRoutingService(
 
         if (trip.TryGetPropertyValue("summary", out var tripSumNode) && tripSumNode is JsonObject tripSummary)
             tripSummary["time"] = Math.Round(tripTime, 3);
+    }
+
+    // ── Nearest-bucket fallback ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Search for the nearest populated 5-minute bucket within ±<paramref name="maxOffset"/>
+    /// buckets of <paramref name="bucket"/> on the same day-of-week. Returns the speed
+    /// value of the closest match, or 0 if nothing is found.
+    /// </summary>
+    private static double FindNearestBucket(
+        Dictionary<(long WayId, int Dow, int Bucket), double> hist,
+        long wayId, int dow, int bucket, int maxOffset)
+    {
+        for (int d = 1; d <= maxOffset; d++)
+        {
+            int before = ((bucket - d) % 288 + 288) % 288;
+            if (hist.TryGetValue((wayId, dow, before), out var vb) && vb > 0) return vb;
+
+            int after = (bucket + d) % 288;
+            if (hist.TryGetValue((wayId, dow, after), out var va) && va > 0) return va;
+        }
+        return 0;
     }
 
     // ── Internal types ────────────────────────────────────────────────────────
