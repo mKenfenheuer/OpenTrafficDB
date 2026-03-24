@@ -71,23 +71,6 @@ services:
       retries: 12
       start_period: 60s
 
-  valhalla-dev:
-    image: ghcr.io/valhalla/valhalla-scripted:latest
-    restart: unless-stopped
-    volumes:
-      - /mnt/opentraffic/valhalla_dev:/custom_files
-    ports:
-      - 0.0.0.0:8097:8002
-    environment:
-      tile_building_blocked: "0"
-      tile_urls: ${VALHALLA_TILE_URL}
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8002/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 60s
-
   redis:
     image: redis:7-alpine
     restart: unless-stopped
