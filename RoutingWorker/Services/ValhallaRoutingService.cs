@@ -308,44 +308,88 @@ public class ValhallaRoutingService(
         var legShapes = ExtractLegShapes(parsed.Trip);
         double distanceKm = parsed.Trip.Summary?.Length ?? 0;
 
-        // Run traffic analysis for each bucket's midpoint (using next Monday as reference)
-        int bucketCount = 24 / width;
+        // ── Get edges once (trace_attributes) ────────────────────────────────
+        var legEdges = new List<List<EdgeData>>(legShapes.Count);
+        foreach (var legCoords in legShapes)
+            legEdges.Add(legCoords.Count >= 2 ? await GetEdgesAsync(legCoords, ct) : []);
+
+        var wayIds = legEdges
+            .SelectMany(edges => edges.Select(e => e.WayId))
+            .Where(id => id != 0).Distinct().ToList();
+
+        // ── Load DB data once: summaries + ALL aggregates for the whole week ─
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        var summaries = await db.WaySpeedSummaries
+            .AsNoTracking()
+            .Where(s => wayIds.Contains(s.OsmWayId))
+            .ToDictionaryAsync(s => s.OsmWayId, ct);
+
+        var rawHist = await db.WaySpeedAggregates
+            .AsNoTracking()
+            .Where(a => wayIds.Contains(a.OsmWayId) && a.SampleCount > 0)
+            .ToListAsync(ct);
+
+        var historicalByTime = rawHist.ToDictionary(
+            a => (a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket),
+            a => a.SumSpeedKmh / a.SampleCount);
+
+        // ── Compute per display-bucket: average over all 5-min sub-buckets ───
+        int bucketCount    = 24 / width;
+        int subBucketsEach = width * 12; // 12 five-minute slots per hour
         var today = DateTime.UtcNow.Date;
-        // Use next Monday to get a representative weekday
         int daysUntilMonday = ((int)DayOfWeek.Monday - (int)today.DayOfWeek + 7) % 7;
         if (daysUntilMonday == 0) daysUntilMonday = 7;
         var referenceDay = today.AddDays(daysUntilMonday);
 
         var buckets = new TravelTimeBucket[bucketCount];
-        using var sem = new SemaphoreSlim(4);
 
-        await Task.WhenAll(Enumerable.Range(0, bucketCount).Select(async i =>
+        for (int i = 0; i < bucketCount; i++)
         {
             int startHour = i * width;
-            int midHour   = startHour + width / 2;
-            int midMinute = (width % 2 == 1) ? 30 : 0;
-            var departure = referenceDay.AddHours(midHour).AddMinutes(midMinute);
+            double sumLiveSec = 0, sumFfSec = 0, sumTotalKm = 0;
+            int sampledCount = 0;
 
-            await sem.WaitAsync(ct);
-            try
+            for (int sub = 0; sub < subBucketsEach; sub++)
             {
-                var result = await AnalyseRouteAsync(i, legShapes, departure, ct);
-                buckets[i] = new TravelTimeBucket
+                var departure = referenceDay.AddHours(startHour).AddMinutes(sub * 5);
+
+                double ffSec = 0, liveSec = 0, totalKm = 0;
+                for (int li = 0; li < legEdges.Count; li++)
                 {
-                    Start              = $"{startHour:D2}:00",
-                    End                = startHour + width == 24 ? "24:00" : $"{startHour + width:D2}:00",
-                    TravelTimeMinutes  = Math.Round(result.Analysis.LiveDurationMinutes, 1),
-                    FreeflowTimeMinutes = Math.Round(result.Analysis.FreeflowDurationMinutes, 1),
-                    DelayMinutes       = Math.Round(result.Analysis.TotalDelayMinutes, 1),
-                    AverageSpeedKmh    = Math.Round(result.Analysis.AverageSpeedKmh, 1)
-                };
+                    var (_, _, legFf, legLive, legKm, _) = ComputeLegDelaysPredicted(
+                        legEdges[li], legShapes[li].Count,
+                        summaries, historicalByTime, departure, 0);
+                    ffSec   += legFf;
+                    liveSec += legLive;
+                    totalKm += legKm;
+                }
+
+                sumLiveSec += liveSec;
+                sumFfSec   += ffSec;
+                sumTotalKm += totalKm;
+                sampledCount++;
             }
-            finally { sem.Release(); }
-        }));
+
+            double avgLiveMin = sumLiveSec / sampledCount / 60.0;
+            double avgFfMin   = sumFfSec   / sampledCount / 60.0;
+            double avgKm      = sumTotalKm / sampledCount;
+            double avgSpeed   = sumLiveSec > 0 ? avgKm / (sumLiveSec / sampledCount) * 3600 : 0;
+
+            buckets[i] = new TravelTimeBucket
+            {
+                Start               = $"{startHour:D2}:00",
+                End                 = startHour + width == 24 ? "24:00" : $"{startHour + width:D2}:00",
+                TravelTimeMinutes   = Math.Round(avgLiveMin, 1),
+                FreeflowTimeMinutes = Math.Round(avgFfMin, 1),
+                DelayMinutes        = Math.Round(Math.Max(0, avgLiveMin - avgFfMin), 1),
+                AverageSpeedKmh     = Math.Round(avgSpeed, 1)
+            };
+        }
 
         var resp = new TravelTimeBucketResponse
         {
-            Locations       = request.Locations,
+            Locations        = request.Locations,
             BucketWidthHours = width,
             DistanceKm       = Math.Round(distanceKm, 2),
             Buckets          = buckets.ToList()

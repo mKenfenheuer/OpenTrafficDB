@@ -528,6 +528,16 @@
             </select>
         </div>
 
+        <div class="depart-row">
+            <label>Bucket</label>
+            <select id="bucket-width" class="depart-select" style="max-width:80px">
+                <option value="1">1 h</option>
+                <option value="2">2 h</option>
+                <option value="3" selected>3 h</option>
+                <option value="4">4 h</option>
+                <option value="6">6 h</option>
+            </select>
+        </div>
         <div id="time-chart-container"></div>
 
         <button id="route-btn" class="btn btn-primary" onclick="getRoute()">Get Route</button>
@@ -575,6 +585,9 @@
 
         document.getElementById('depart-day').addEventListener('change', function () {
             hourSel.disabled = !this.value;
+        });
+        document.getElementById('bucket-width').addEventListener('change', function () {
+            if (typeof fetchTimeChart === 'function') fetchTimeChart();
         });
     })();
 
@@ -1140,12 +1153,13 @@
         var daySel = document.getElementById('depart-day').value;
         var selectedHour = daySel !== '' ? parseInt(document.getElementById('depart-hour').value) : new Date().getHours();
 
+        var bucketWidth = parseInt(document.getElementById('bucket-width').value) || 3;
         var body = {
             locations: [
                 { lat: originLngLat[1], lon: originLngLat[0] },
                 { lat: destLngLat[1],   lon: destLngLat[0] }
             ],
-            bucketWidthHours: 3
+            bucketWidthHours: bucketWidth
         };
 
         try {
@@ -1180,7 +1194,8 @@
         var minMins = Math.min.apply(null, validMins);
 
         // Find which slot the selected hour falls into
-        var selectedSlot = Math.floor(selectedHour / 3) * 3;
+        var bucketWidth = parseInt(document.getElementById('bucket-width').value) || 3;
+        var selectedSlot = Math.floor(selectedHour / bucketWidth) * bucketWidth;
 
         var html = '<div class="time-chart">'
             + '<div class="time-chart-label">Predicted travel time</div>'
@@ -1194,7 +1209,8 @@
             var isActive = d.hour === selectedSlot;
             var barClass = isActive ? 'active' : 'faded';
             var valTxt = d.mins != null ? fmtMins(d.mins) : '—';
-            var label = String(d.hour).padStart(2, '0') + '-' + String(d.hour + 3).padStart(2, '0');
+            var endH = d.hour + bucketWidth;
+            var label = String(d.hour).padStart(2, '0') + '-' + (endH === 24 ? '24' : String(endH).padStart(2, '0'));
 
             html += '<div class="time-bar-wrap" data-hour="' + d.hour + '">'
                 + '<div class="time-bar-value">' + valTxt + '</div>'
