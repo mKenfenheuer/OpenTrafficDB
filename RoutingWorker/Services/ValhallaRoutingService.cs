@@ -348,6 +348,7 @@ public class ValhallaRoutingService(
         {
             int startHour = i * width;
             double sumLiveSec = 0, sumFfSec = 0, sumTotalKm = 0;
+            double minLiveSec = double.MaxValue, maxLiveSec = 0;
             int sampledCount = 0;
 
             for (int sub = 0; sub < subBucketsEach; sub++)
@@ -368,6 +369,8 @@ public class ValhallaRoutingService(
                 sumLiveSec += liveSec;
                 sumFfSec   += ffSec;
                 sumTotalKm += totalKm;
+                if (liveSec < minLiveSec) minLiveSec = liveSec;
+                if (liveSec > maxLiveSec) maxLiveSec = liveSec;
                 sampledCount++;
             }
 
@@ -378,12 +381,14 @@ public class ValhallaRoutingService(
 
             buckets[i] = new TravelTimeBucket
             {
-                Start               = $"{startHour:D2}:00",
-                End                 = startHour + width == 24 ? "24:00" : $"{startHour + width:D2}:00",
-                TravelTimeMinutes   = Math.Round(avgLiveMin, 1),
-                FreeflowTimeMinutes = Math.Round(avgFfMin, 1),
-                DelayMinutes        = Math.Round(Math.Max(0, avgLiveMin - avgFfMin), 1),
-                AverageSpeedKmh     = Math.Round(avgSpeed, 1)
+                Start                = $"{startHour:D2}:00",
+                End                  = startHour + width == 24 ? "24:00" : $"{startHour + width:D2}:00",
+                TravelTimeMinutes    = Math.Round(avgLiveMin, 1),
+                MinTravelTimeMinutes = Math.Round(minLiveSec / 60.0, 1),
+                MaxTravelTimeMinutes = Math.Round(maxLiveSec / 60.0, 1),
+                FreeflowTimeMinutes  = Math.Round(avgFfMin, 1),
+                DelayMinutes         = Math.Round(Math.Max(0, avgLiveMin - avgFfMin), 1),
+                AverageSpeedKmh      = Math.Round(avgSpeed, 1)
             };
         }
 

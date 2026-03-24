@@ -78,6 +78,8 @@ public class TravelTimeBucket
     public string Start { get; set; } = string.Empty;
     public string End { get; set; } = string.Empty;
     public double TravelTimeMinutes { get; set; }
+    public double MinTravelTimeMinutes { get; set; }
+    public double MaxTravelTimeMinutes { get; set; }
     public double FreeflowTimeMinutes { get; set; }
     public double DelayMinutes { get; set; }
     public double AverageSpeedKmh { get; set; }

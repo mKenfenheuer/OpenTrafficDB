@@ -251,6 +251,15 @@
             justify-content: flex-end;
             cursor: pointer;
         }
+        .time-bar-col {
+            width: 100%;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            height: 100%;
+        }
         .time-bar {
             width: 100%;
             border-radius: 3px 3px 0 0;
@@ -259,6 +268,23 @@
         }
         .time-bar.faded { background: rgba(88,166,255,0.25); }
         .time-bar.active { background: var(--accent); }
+        .time-bar-range {
+            position: absolute;
+            width: 2px;
+            background: var(--text-muted);
+            opacity: 0.5;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .time-bar-range-cap {
+            position: absolute;
+            width: 8px;
+            height: 1px;
+            background: var(--text-muted);
+            opacity: 0.5;
+            left: 50%;
+            transform: translateX(-50%);
+        }
         .time-bar-label {
             font-size: 0.62rem;
             color: var(--text-muted);
@@ -1174,7 +1200,7 @@
 
             chartData = (data.buckets || []).map(function (b) {
                 var hour = parseInt(b.start.split(':')[0]);
-                return { hour: hour, mins: b.travelTimeMinutes };
+                return { hour: hour, mins: b.travelTimeMinutes, minMins: b.minTravelTimeMinutes, maxMins: b.maxTravelTimeMinutes };
             });
             renderTimeChart(chartData, selectedHour);
         } catch (e) {
@@ -1193,6 +1219,11 @@
         var maxMins = Math.max.apply(null, validMins);
         var minMins = Math.min.apply(null, validMins);
 
+        // Global min/max across all sub-bucket extremes (for range whisker scaling)
+        var allMin = data.reduce(function (m, d) { return d.minMins != null ? Math.min(m, d.minMins) : m; }, Infinity);
+        var allMax = data.reduce(function (m, d) { return d.maxMins != null ? Math.max(m, d.maxMins) : m; }, 0);
+        var globalRange = allMax - allMin;
+
         // Find which slot the selected hour falls into
         var bucketWidth = parseInt(document.getElementById('bucket-width').value) || 3;
         var selectedSlot = Math.floor(selectedHour / bucketWidth) * bucketWidth;
@@ -1202,6 +1233,7 @@
             + '<div class="time-chart-bars">';
 
         data.forEach(function (d) {
+            // Bar height: avg travel time scaled to [15%, 100%]
             var range = maxMins - minMins;
             var pct = d.mins != null
                 ? (range > 0 ? 15 + ((d.mins - minMins) / range) * 85 : 50)
@@ -1212,9 +1244,23 @@
             var endH = d.hour + bucketWidth;
             var label = String(d.hour).padStart(2, '0') + '-' + (endH === 24 ? '24' : String(endH).padStart(2, '0'));
 
+            // Min-max whisker positions (as % of chart height)
+            var rangeHtml = '';
+            if (d.minMins != null && d.maxMins != null && globalRange > 0 && d.minMins !== d.maxMins) {
+                var whiskerBottom = 15 + ((d.minMins - allMin) / globalRange) * 85;
+                var whiskerTop    = 15 + ((d.maxMins - allMin) / globalRange) * 85;
+                var whiskerH      = whiskerTop - whiskerBottom;
+                rangeHtml = '<div class="time-bar-range" style="bottom:' + whiskerBottom + '%;height:' + whiskerH + '%"></div>'
+                    + '<div class="time-bar-range-cap" style="bottom:' + whiskerBottom + '%"></div>'
+                    + '<div class="time-bar-range-cap" style="bottom:' + whiskerTop + '%"></div>';
+            }
+
             html += '<div class="time-bar-wrap" data-hour="' + d.hour + '">'
                 + '<div class="time-bar-value">' + valTxt + '</div>'
+                + '<div class="time-bar-col">'
+                + rangeHtml
                 + '<div class="time-bar ' + barClass + '" style="height:' + pct + '%"></div>'
+                + '</div>'
                 + '<div class="time-bar-label">' + label + '</div>'
                 + '</div>';
         });
