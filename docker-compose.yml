@@ -70,6 +70,10 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 8G
 
   redis:
     image: redis:7-alpine
