@@ -5,8 +5,8 @@ services:
     shm_size: 1024mb
     command: >
       postgres
-      -c shared_buffers=6GB
-      -c effective_cache_size=1GB
+      -c shared_buffers=8GB
+      -c effective_cache_size=4GB
       -c work_mem=64MB
       -c maintenance_work_mem=1GB
       -c max_worker_processes=12
@@ -65,12 +65,6 @@ services:
       tile_building_blocked: "0"
       tile_urls: ${VALHALLA_TILE_URL}
       server_threads: 4
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8096/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 60s
     deploy:
       resources:
         limits:
