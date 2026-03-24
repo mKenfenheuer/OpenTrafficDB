@@ -64,6 +64,7 @@ services:
     environment:
       tile_building_blocked: "0"
       tile_urls: ${VALHALLA_TILE_URL}
+      server_threads: 4
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8002/status"]
       interval: 10s
