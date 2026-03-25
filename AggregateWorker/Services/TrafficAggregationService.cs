@@ -221,11 +221,33 @@ public class TrafficAggregationService(
             var buf  = new float[2016];
             var fill = (float)r.Freeflow;
             Array.Fill(buf, fill);
+            // Track which slots have real data vs freeflow fill
+            var hasData = new bool[2016];
             if (aggregatesByWay.TryGetValue(r.WayId, out var wayAggs))
             {
                 foreach (var a in wayAggs)
-                    buf[(a.DayOfWeek + 6) % 7 * 288 + a.FiveMinuteBucket] =
-                        (float)BlendedAvg(a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt, r.Freeflow, now);
+                {
+                    int idx = (a.DayOfWeek + 6) % 7 * 288 + a.FiveMinuteBucket;
+                    buf[idx]     = (float)BlendedAvg(a.SumSpeedKmh, a.SampleCount, a.FirstSeenAt, r.Freeflow, now);
+                    hasData[idx] = true;
+                }
+
+                // Fill gaps from nearest populated bucket within ±60 min (12 slots), same day
+                for (int day = 0; day < 7; day++)
+                {
+                    int dayBase = day * 288;
+                    for (int slot = 0; slot < 288; slot++)
+                    {
+                        if (hasData[dayBase + slot]) continue;
+                        for (int d = 1; d <= 12; d++)
+                        {
+                            int before = dayBase + ((slot - d) % 288 + 288) % 288;
+                            if (hasData[before]) { buf[dayBase + slot] = buf[before]; break; }
+                            int after = dayBase + (slot + d) % 288;
+                            if (hasData[after])  { buf[dayBase + slot] = buf[after];  break; }
+                        }
+                    }
+                }
             }
             encodedSpeeds[i] = ValhallaSpeedEncoder.Encode(buf);
         });
