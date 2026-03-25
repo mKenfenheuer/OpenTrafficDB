@@ -57,6 +57,9 @@ public class TravelTimeBucketRequest
 
     /// <summary>Width of each time bucket in hours (1–12). Default: 3.</summary>
     public int BucketWidthHours { get; set; } = 3;
+
+    /// <summary>Day of week (0=Sunday .. 6=Saturday). Null = next Monday.</summary>
+    public int? DayOfWeek { get; set; }
 }
 
 public class TravelTimeBucketLocation

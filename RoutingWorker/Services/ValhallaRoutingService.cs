@@ -338,9 +338,12 @@ public class ValhallaRoutingService(
         int bucketCount    = 24 / width;
         int subBucketsEach = width * 12; // 12 five-minute slots per hour
         var today = DateTime.UtcNow.Date;
-        int daysUntilMonday = ((int)DayOfWeek.Monday - (int)today.DayOfWeek + 7) % 7;
-        if (daysUntilMonday == 0) daysUntilMonday = 7;
-        var referenceDay = today.AddDays(daysUntilMonday);
+        int targetDow = request.DayOfWeek.HasValue
+            ? Math.Clamp(request.DayOfWeek.Value, 0, 6)
+            : (int)System.DayOfWeek.Monday;
+        int daysUntil = (targetDow - (int)today.DayOfWeek + 7) % 7;
+        if (daysUntil == 0) daysUntil = 7;
+        var referenceDay = today.AddDays(daysUntil);
 
         var buckets = new TravelTimeBucket[bucketCount];
 

@@ -632,6 +632,7 @@
 
         document.getElementById('depart-day').addEventListener('change', function () {
             hourSel.disabled = !this.value;
+            if (typeof fetchTimeChart === 'function') fetchTimeChart();
         });
         document.getElementById('bucket-width').addEventListener('change', function () {
             if (typeof fetchTimeChart === 'function') fetchTimeChart();
@@ -1201,12 +1202,14 @@
         var selectedHour = daySel !== '' ? parseInt(document.getElementById('depart-hour').value) : new Date().getHours();
 
         var bucketWidth = parseInt(document.getElementById('bucket-width').value) || 3;
+        var dayVal = document.getElementById('depart-day').value;
         var body = {
             locations: [
                 { lat: originLngLat[1], lon: originLngLat[0] },
                 { lat: destLngLat[1],   lon: destLngLat[0] }
             ],
-            bucketWidthHours: bucketWidth
+            bucketWidthHours: bucketWidth,
+            dayOfWeek: dayVal !== '' ? parseInt(dayVal) : null
         };
 
         try {
