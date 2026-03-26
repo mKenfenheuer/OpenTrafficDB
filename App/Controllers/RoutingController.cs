@@ -20,7 +20,7 @@ public class RoutingController(
 {
     /// <summary>
     /// Route with traffic enrichment.
-    /// Accepts a standard Valhalla /route request as POST body or GET ?json= parameter.
+    /// Accepts a route request as POST body or GET ?json= parameter.
     /// </summary>
     [HttpGet]
     [HttpPost]
@@ -71,7 +71,7 @@ public class RoutingController(
         }
         else
         {
-            return BadRequest(new { error = "Provide the Valhalla route request as a POST body or as the 'json' query parameter." });
+            return BadRequest(new { error = "Provide the route request as a POST body or as the 'json' query parameter." });
         }
 
         return new EmptyResult();

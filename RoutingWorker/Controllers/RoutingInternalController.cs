@@ -10,7 +10,7 @@ namespace OpenTrafficDB.RoutingWorker.Controllers;
 [Route("internal/route")]
 [Authorize]
 public class RoutingInternalController(
-    ValhallaRoutingService routing,
+    RoutingService routing,
     ILogger<RoutingInternalController> logger) : ControllerBase
 {
     [HttpGet]
@@ -43,7 +43,7 @@ public class RoutingInternalController(
         }
         else
         {
-            return BadRequest(new { error = "Provide the Valhalla route request as a POST body or as the 'json' query parameter." });
+            return BadRequest(new { error = "Provide the route request as a POST body or as the 'json' query parameter." });
         }
 
         if (raw)
@@ -64,7 +64,7 @@ public class RoutingInternalController(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Traffic enrichment failed, falling back to raw Valhalla route.");
+            logger.LogError(ex, "Traffic enrichment failed, falling back to raw route.");
 
             var (fallback, statusCode, error) = await routing.RouteRawAsync(request, ct);
             if (fallback is null)

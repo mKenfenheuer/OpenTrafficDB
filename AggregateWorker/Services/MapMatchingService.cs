@@ -13,22 +13,26 @@ namespace OpenTrafficDB.AggregateWorker.Services;
 
 /// <summary>
 /// Performs server-side map matching of GPS observations to OSM road segments
-/// using the Valhalla /trace_attributes API.
+/// using the OpenTrafficRouting /api/v1/trace/bulk endpoint.
 ///
-/// Stable way identity: (OsmWayId, OsmStartNodeId, OsmEndNodeId).
-/// These three values uniquely identify a directed road segment in OSM and
-/// remain stable across Valhalla tile rebuilds.
+/// The bulk endpoint accepts multiple encoded polylines in a single request,
+/// which is more efficient than individual trace calls per trip segment.
 /// </summary>
-public class ValhallaMapMatchingService(
+public class MapMatchingService(
     IHttpClientFactory httpClientFactory,
     IConfiguration config,
-    ILogger<ValhallaMapMatchingService> logger)
+    ILogger<MapMatchingService> logger)
 {
-    private readonly string _valhallaBaseUrl        = config["Valhalla:BaseUrl"] ?? "http://localhost:8002";
-    private          int    MaxConcurrentValhalla   => int.Parse(config["Valhalla:MaxConcurrent"] ?? "12");
+    private readonly string _otrBaseUrl = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
 
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
         LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
+
+    private static readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
 
     /// <summary>Result of matching a single GPS point to an OSM road segment.</summary>
     public record MatchResult(
@@ -36,8 +40,69 @@ public class ValhallaMapMatchingService(
         double? SpeedLimitKmh);
 
     /// <summary>
-    /// Match a GPS trace to OSM ways via Valhalla trace_attributes.
-    /// Returns a map from observation index to its MatchResult.
+    /// Match multiple GPS traces to OSM ways via the OpenTrafficRouting /api/v1/trace/bulk endpoint.
+    /// Each polyline in the input corresponds to one trace segment.
+    /// Returns a list of dictionaries (one per polyline), mapping observation index to MatchResult.
+    /// </summary>
+    public async Task<List<Dictionary<int, MatchResult>>> MatchTracesBulkAsync(
+        IReadOnlyList<string> encodedPolylines,
+        CancellationToken ct = default)
+    {
+        if (encodedPolylines.Count == 0) return [];
+
+        var request = new
+        {
+            polylines = encodedPolylines,
+            costing = "auto",
+            gps_accuracy = 100.0,
+            search_radius = 100.0,
+            interpolate = true,
+            attributes = new[]
+            {
+                "edge.way_id",
+                "edge.speed",
+                "edge.use",
+                "edge.road_class",
+                "matched.type",
+                "matched.point",
+                "matched.edge_index"
+            },
+            filters = new
+            {
+                min_confidence = 0.5
+            }
+        };
+
+        var json = JsonSerializer.Serialize(request, _jsonOptions);
+        var client = httpClientFactory.CreateClient("otr");
+
+        try
+        {
+            using var response = await client.PostAsync(
+                $"{_otrBaseUrl}/api/v1/trace/bulk",
+                new StringContent(json, Encoding.UTF8, "application/json"),
+                ct);
+
+            if (!response.IsSuccessStatusCode)
+                return Enumerable.Repeat(new Dictionary<int, MatchResult>(), encodedPolylines.Count).ToList();
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var results = JsonSerializer.Deserialize<List<TraceAttributesResponse>>(body);
+
+            if (results == null)
+                return Enumerable.Repeat(new Dictionary<int, MatchResult>(), encodedPolylines.Count).ToList();
+
+            return results.Select(ParseTraceResult).ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "OpenTrafficRouting bulk trace failed.");
+            return Enumerable.Repeat(new Dictionary<int, MatchResult>(), encodedPolylines.Count).ToList();
+        }
+    }
+
+    /// <summary>
+    /// Match a single GPS trace. Delegates to the bulk endpoint with one polyline.
     /// </summary>
     public async Task<Dictionary<int, MatchResult>> MatchTraceAsync(
         IReadOnlyList<(double Lat, double Lon, DateTime Time)> data,
@@ -45,87 +110,16 @@ public class ValhallaMapMatchingService(
     {
         var points = data.ToList();
         if (points.Count == 0) return [];
-
         if (points.Count == 1)
             points = [points[0], points[0]];
 
-        var request = new
-        {
-            encoded_polyline = EncodePolyline6(points),
-            costing = "auto",
-            costing_options = new
-            {
-                auto = new
-                {
-                    // Strongly discourage routing through private-access roads during map matching
-                    private_access_penalty = 10000
-                }
-            },
-            shape_match = "map_snap",
-            trace_options = new { search_radius = 100 },
-            filters = new
-            {
-                attributes = new[]
-                {
-                    "matched.type",
-                    "edge.way_id",
-                    "edge.speed",
-                    "edge.use",
-                    "edge.road_class",
-                    "matched.point",
-                    "matched.edge_index"
-                },
-                action = "include"
-            }
-        };
-
-        var json = JsonSerializer.Serialize(request);
-        var client = httpClientFactory.CreateClient("valhalla");
-
-        try
-        {
-            using var response = await client.PostAsync(
-                $"{_valhallaBaseUrl}/trace_attributes",
-                new StringContent(json, Encoding.UTF8, "application/json"),
-                ct);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                //var errBody = await response.Content.ReadAsStringAsync(ct);
-                //logger.LogWarning("Valhalla trace_attributes {Status}: {Body}", response.StatusCode, errBody);
-                return [];
-            }
-
-            var body = await response.Content.ReadAsStringAsync(ct);
-            var result = JsonSerializer.Deserialize<TraceAttributesResponse>(body);
-
-            if (result?.MatchedPoints == null || result.Edges == null) return [];
-
-            var results = new Dictionary<int, MatchResult>();
-            for (int i = 0; i < result.MatchedPoints.Count; i++)
-            {
-                var mp = result.MatchedPoints[i];
-                if ((mp.Type != "matched" && mp.Type != "interpolated") || mp.EdgeIndex is null or ulong.MaxValue || mp.Lat is null || mp.Lon is null) continue;
-
-                var way = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
-                if (way?.WayId is null || way.IsExcluded) continue;
-
-                results[i] = new MatchResult(
-                    OsmWayId:      way.WayId.Value,
-                    SpeedLimitKmh: way.Speed);
-            }
-            return results;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Valhalla map matching failed.");
-            return [];
-        }
+        var polyline = EncodePolyline6(points);
+        var results = await MatchTracesBulkAsync([polyline], ct);
+        return results.Count > 0 ? results[0] : [];
     }
 
     /// <summary>
-    /// Match observations in [from, to) time window. Processes all trips in parallel
-    /// (up to <see cref="MaxConcurrentValhalla"/> concurrent Valhalla calls).
+    /// Match observations across multiple trips using the bulk trace endpoint.
     /// Returns the number of observations matched.
     /// </summary>
     public async Task<MatchJobResult> ProcessRangeAsync(
@@ -140,80 +134,72 @@ public class ValhallaMapMatchingService(
         if (unmatched.Count == 0) return new MatchJobResult(0);
 
         var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
-        var trips       = unmatched.GroupBy(o => o.TripId).ToList();
+        var trips = unmatched.GroupBy(o => o.TripId).ToList();
 
-        var tripResults = new (List<(int Idx, MatchResult Match)>[] SegmentMatches,
-                               List<SpeedObservation>              Sorted,
-                               List<List<SpeedObservation>>        Segments)[trips.Count];
-
-        using var sem = new SemaphoreSlim(MaxConcurrentValhalla);
-
-        await Task.WhenAll(trips.Select(async (trip, i) =>
-        {
-            var sorted   = trip.OrderBy(o => o.Timestamp).ToList();
-            var segments = SplitTrace(sorted);
-
-            var segmentMatches = new List<(int, MatchResult)>[segments.Count];
-
-            await Task.WhenAll(segments.Select(async (segment, si) =>
-            {
-                await sem.WaitAsync(ct);
-                try
-                {
-                    var matchMap = await MatchTraceAsync(
-                        segment.Select(o => (o.Latitude, o.Longitude, o.Timestamp)).ToList(), ct);
-                    segmentMatches[si] = [.. matchMap
-                        .Where(kv => kv.Key < segment.Count)
-                        .Select(kv => (kv.Key, kv.Value))];
-                }
-                finally { sem.Release(); }
-            }));
-
-            tripResults[i] = (segmentMatches, sorted, segments);
-        }));
-
-        // Collect match results and stale IDs — no EF change tracking involved.
-        var matchedIds    = new List<long>();
-        var matchedWayIds = new List<long>();
-        var matchedLimits = new List<double?>();
-        var staleIds      = new List<long>();
+        // Build all segments across all trips and collect their polylines
+        var allSegments = new List<(int TripIndex, int SegmentIndex, List<SpeedObservation> Segment)>();
+        var allPolylines = new List<string>();
+        var tripSegments = new List<List<SpeedObservation>>[trips.Count];
 
         for (int i = 0; i < trips.Count; i++)
         {
-            var (segmentMatches, sorted, segments) = tripResults[i];
+            var sorted = trips[i].OrderBy(o => o.Timestamp).ToList();
+            var segments = SplitTrace(sorted);
+            tripSegments[i] = segments;
 
             for (int si = 0; si < segments.Count; si++)
             {
-                if (segmentMatches[si] is null) continue;
                 var segment = segments[si];
-                foreach (var (idx, match) in segmentMatches[si])
-                {
-                    var obs = segment[idx];
-                    matchedIds.Add(obs.Id);
-                    matchedWayIds.Add(match.OsmWayId);
-                    matchedLimits.Add(match.SpeedLimitKmh);
-                }
-            }
+                var points = segment.Select(o => (o.Latitude, o.Longitude, o.Timestamp)).ToList();
+                if (points.Count == 1)
+                    points = [points[0], points[0]];
 
-            // Build per-trip matched ID set: in-memory OsmWayId is always null (loaded before
-            // Valhalla ran), so we must exclude matched IDs from the stale list explicitly.
-            var tripMatchedIds = new HashSet<long>();
-            for (int si = 0; si < segments.Count; si++)
-            {
-                if (segmentMatches[si] is null) continue;
-                foreach (var (idx, _) in segmentMatches[si])
-                    tripMatchedIds.Add(segments[si][idx].Id);
+                allSegments.Add((i, si, segment));
+                allPolylines.Add(EncodePolyline6(points));
             }
+        }
 
-            foreach (var obs in sorted)
+        // Single bulk request for all segments across all trips
+        var bulkResults = await MatchTracesBulkAsync(allPolylines, ct);
+
+        // Collect match results and stale IDs
+        var matchedIds = new List<long>();
+        var matchedWayIds = new List<long>();
+        var matchedLimits = new List<double?>();
+        var staleIds = new List<long>();
+
+        // Build per-trip matched ID sets for stale detection
+        var tripMatchedIds = new HashSet<long>[trips.Count];
+        for (int i = 0; i < trips.Count; i++)
+            tripMatchedIds[i] = [];
+
+        for (int bi = 0; bi < allSegments.Count; bi++)
+        {
+            var (tripIdx, segIdx, segment) = allSegments[bi];
+            var matchMap = bi < bulkResults.Count ? bulkResults[bi] : [];
+
+            foreach (var (idx, match) in matchMap)
             {
-                if (!tripMatchedIds.Contains(obs.Id) && obs.CreatedAt < staleCutoff)
+                if (idx >= segment.Count) continue;
+                var obs = segment[idx];
+                matchedIds.Add(obs.Id);
+                matchedWayIds.Add(match.OsmWayId);
+                matchedLimits.Add(match.SpeedLimitKmh);
+                tripMatchedIds[tripIdx].Add(obs.Id);
+            }
+        }
+
+        // Find stale unmatched observations
+        for (int i = 0; i < trips.Count; i++)
+        {
+            foreach (var obs in trips[i])
+            {
+                if (!tripMatchedIds[i].Contains(obs.Id) && obs.CreatedAt < staleCutoff)
                     staleIds.Add(obs.Id);
             }
         }
 
         // Bulk UPDATE matched observations using unnest — one round-trip for all rows.
-        // Use ExecuteSqlRawAsync + explicit NpgsqlParameter so Npgsql knows the array element types.
         if (matchedIds.Count > 0)
         {
             await db.Database.ExecuteSqlRawAsync("""
@@ -249,7 +235,7 @@ public class ValhallaMapMatchingService(
     }
 
     /// <summary>
-    /// Splits a sorted observation list into sub-segments suitable for Valhalla map matching.
+    /// Splits a sorted observation list into sub-segments suitable for map matching.
     /// A new segment starts when:
     ///   - the distance between consecutive points exceeds 500 m, or
     ///   - the accumulated path length exceeds 20,000 m.
@@ -259,8 +245,8 @@ public class ValhallaMapMatchingService(
         const double maxSegmentMeters = 20_000;
         const double maxGapMeters     =    500;
 
-        var segments  = new List<List<SpeedObservation>>();
-        var current   = new List<SpeedObservation> ([sorted[0]]);
+        var segments = new List<List<SpeedObservation>>();
+        var current  = new List<SpeedObservation>([sorted[0]]);
         double length = 0;
 
         for (int i = 1; i < sorted.Count; i++)
@@ -298,7 +284,29 @@ public class ValhallaMapMatchingService(
     private static string EncodePolyline6(IEnumerable<(double Lat, double Lon, DateTime Time)> coords) =>
         PolylineEncoder.Encode(coords.Select(c => (c.Lat, c.Lon)));
 
-    // --- Valhalla response DTOs ---
+    private static Dictionary<int, MatchResult> ParseTraceResult(TraceAttributesResponse? result)
+    {
+        if (result?.MatchedPoints == null || result.Edges == null) return [];
+
+        var results = new Dictionary<int, MatchResult>();
+        for (int i = 0; i < result.MatchedPoints.Count; i++)
+        {
+            var mp = result.MatchedPoints[i];
+            if ((mp.Type != "matched" && mp.Type != "interpolated") ||
+                mp.EdgeIndex is null or ulong.MaxValue ||
+                mp.Lat is null || mp.Lon is null) continue;
+
+            var way = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
+            if (way?.WayId is null || way.IsExcluded) continue;
+
+            results[i] = new MatchResult(
+                OsmWayId:      way.WayId.Value,
+                SpeedLimitKmh: way.Speed);
+        }
+        return results;
+    }
+
+    // --- OpenTrafficRouting trace response DTOs ---
 
     private class TraceAttributesResponse
     {
@@ -314,27 +322,17 @@ public class ValhallaMapMatchingService(
         [JsonPropertyName("way_id")]
         public long? WayId { get; set; }
 
-        /// <summary>Max allowed speed in km/h for this edge, as reported by Valhalla.</summary>
         [JsonPropertyName("speed")]
         public double? Speed { get; set; }
 
-        /// <summary>
-        /// Valhalla road-use classification (e.g. "driveway", "parking_aisle", "road", ...).
-        /// Driveways and other non-public road uses are excluded from map matching results.
-        /// </summary>
         [JsonPropertyName("use")]
         public string? Use { get; set; }
 
-        /// <summary>
-        /// Valhalla road class (e.g. "motorway", "primary", "residential", "service_other", ...).
-        /// </summary>
         [JsonPropertyName("road_class")]
         public string? RoadClass { get; set; }
 
-        // Valhalla use values to exclude: driveways, parking aisles, emergency/drive-through access.
         private static readonly HashSet<string> _excludedUses = ["driveway", "parking_aisle", "emergency_access", "drive_through_road"];
 
-        // Only these road classes represent publicly-drivable through-roads.
         private static readonly HashSet<string> _allowedRoadClasses =
         [
             "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential"
@@ -348,11 +346,9 @@ public class ValhallaMapMatchingService(
 
     private class MatchedPoint
     {
-        /// <summary>ulong.MaxValue (18446744073709551615) = Valhalla sentinel for "no way matched"</summary>
         [JsonPropertyName("edge_index")]
         public ulong? EdgeIndex { get; set; }
 
-        /// <summary>"matched" | "interpolated" | "unmatched"</summary>
         [JsonPropertyName("type")]
         public string? Type { get; set; }
 

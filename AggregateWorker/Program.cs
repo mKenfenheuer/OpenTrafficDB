@@ -44,18 +44,18 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(
 
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<TrafficAggregationService>();
-builder.Services.AddScoped<ValhallaMapMatchingService>();
+builder.Services.AddScoped<MapMatchingService>();
 builder.Services.AddScoped<TrafficTileService>();
 builder.Services.AddHostedService<PartitionMaintenanceService>();
 builder.Services.AddTransient<RateLimitRetryHandler>();
 
 // ── HTTP clients ──────────────────────────────────────────────────────────────
-// Valhalla: resilience pipeline — retry (x2) + circuit breaker + per-attempt timeout
-var valhallaUrl = builder.Configuration["Valhalla:BaseUrl"] ?? "http://localhost:8002";
-builder.Services.AddHttpClient("valhalla", client =>
+// OpenTrafficRouting: resilience pipeline — retry (x2) + circuit breaker + per-attempt timeout
+var otrUrl = builder.Configuration["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
+builder.Services.AddHttpClient("otr", client =>
 {
-    client.BaseAddress = new Uri(valhallaUrl);
-}).AddResilienceHandler("valhalla-pipeline", pipeline =>
+    client.BaseAddress = new Uri(otrUrl);
+}).AddResilienceHandler("otr-pipeline", pipeline =>
 {
     pipeline.AddTimeout(TimeSpan.FromSeconds(35));
     pipeline.AddRetry(new HttpRetryStrategyOptions
@@ -113,7 +113,7 @@ builder.Services.AddControllers();
 builder.Services.AddHealthChecks()
     .AddNpgSql(builder.Configuration.GetConnectionString("DefaultConnection")!)
     .AddRedis(redisConn, name: "redis")
-    .AddUrlGroup(new Uri(valhallaUrl + "/status"), name: "valhalla",
+    .AddUrlGroup(new Uri(otrUrl + "/api/v1/graph/status"), name: "opentrafficrouting",
         timeout: TimeSpan.FromSeconds(5));
 
 var app = builder.Build();

@@ -54,22 +54,6 @@ services:
       postgres:
         condition: service_healthy
 
-  valhalla:
-    image: ghcr.io/valhalla/valhalla-scripted:latest
-    restart: unless-stopped
-    volumes:
-      - /mnt/opentraffic/valhalla:/custom_files
-    ports:
-      - 0.0.0.0:8096:8002
-    environment:
-      tile_building_blocked: "0"
-      tile_urls: ${VALHALLA_TILE_URL}
-      server_threads: 4
-    deploy:
-      resources:
-        limits:
-          memory: 8G
-
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -104,14 +88,12 @@ services:
       ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD}"
       Jwt__Key: ${JWT_KEY}
       Security__IpHashPepper: ${IP_HASH_PEPPER}
-      Valhalla__BaseUrl: http://valhalla:8002
+      OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
     depends_on:
       pgbouncer:
         condition: service_started
       redis:
         condition: service_healthy
-      valhalla:
-        condition: service_started
 
   osm-importer:
     image: ${OSM_IMPORTER_IMAGE:-registry.gitlab.com/opentrafficdb/osm-importer:latest}
@@ -136,11 +118,9 @@ services:
       ConnectionStrings__ReadConnection: "Host=${READ_DB_HOST:-pgbouncer};Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
       Jwt__Key: ${JWT_KEY}
       Security__IpHashPepper: ${IP_HASH_PEPPER}
-      Valhalla__BaseUrl: http://valhalla:8002
+      OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
     depends_on:
       pgbouncer:
-        condition: service_started
-      valhalla:
         condition: service_started
 
   api:

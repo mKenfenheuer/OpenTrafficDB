@@ -112,7 +112,7 @@ public class Program
 
                     Contributors submit anonymized GPS speed observations which are
                     server-side map-matched to OSM way IDs and aggregated into
-                    Valhalla-compatible predicted traffic exports.
+                    predicted traffic exports.
 
                     **Machine authentication flow:**
                     1. Register at `/Home/Register` — creates an account and sends email verification

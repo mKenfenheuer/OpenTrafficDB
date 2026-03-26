@@ -10,7 +10,7 @@ namespace OpenTrafficDB.AggregateWorker.Controllers;
 [Route("internal/jobs")]
 [Authorize]
 public class JobController(
-    ValhallaMapMatchingService matchingService,
+    MapMatchingService matchingService,
     TrafficAggregationService aggregationService,
     AppDbContext db) : ControllerBase
 {

@@ -27,10 +27,10 @@ builder.Services.AddDbContext<ReadOnlyAppDbContext>(options =>
     options.UseNpgsql(readConn, o => o.UseNetTopologySuite()));
 
 // ── Services ──────────────────────────────────────────────────────────────────
-builder.Services.AddScoped<ValhallaRoutingService>();
+builder.Services.AddScoped<RoutingService>();
 builder.Services.AddTransient<RateLimitRetryHandler>();
 
-builder.Services.AddHttpClient("valhalla", client =>
+builder.Services.AddHttpClient("otr", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);
 }).AddHttpMessageHandler<RateLimitRetryHandler>();
