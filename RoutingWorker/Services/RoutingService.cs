@@ -17,20 +17,14 @@ public class RoutingService(
 {
     private readonly string _otrBaseUrl = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
 
-    private static readonly JsonSerializerOptions _jsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-    };
-
     /// <summary>
     /// Forward the request to OpenTrafficRouting and return the raw response.
     /// </summary>
     public async Task<(JsonElement? Result, int Status, string? Error)>
         RouteRawAsync(JsonElement clientRequest, CancellationToken ct)
     {
-        var request = ApplyDefaults(clientRequest);
         var client = httpClientFactory.CreateClient("otr");
-        var body = new StringContent(request.ToJsonString(), Encoding.UTF8, "application/json");
+        var body = new StringContent(clientRequest.GetRawText(), Encoding.UTF8, "application/json");
 
         HttpResponseMessage response;
         try
@@ -111,15 +105,13 @@ public class RoutingService(
             ["costing"] = "auto",
             ["alternates"] = 0
         };
-        var baseReqElement = JsonDocument.Parse(baseReq.ToJsonString()).RootElement;
-        var withDefaults = ApplyDefaults(baseReqElement);
 
         HttpResponseMessage baseResponse;
         try
         {
             baseResponse = await client.PostAsync(
                 $"{_otrBaseUrl}/api/v1/route",
-                new StringContent(withDefaults.ToJsonString(), Encoding.UTF8, "application/json"),
+                new StringContent(baseReq.ToJsonString(), Encoding.UTF8, "application/json"),
                 ct);
         }
         catch (Exception ex)
@@ -155,7 +147,7 @@ public class RoutingService(
             var departure = referenceDay.AddHours(midHour);
 
             bucketTasks[i] = GetBucketAsync(
-                locations, withDefaults, departure, startHour, width, distanceKm, client, sem, ct);
+                locations, baseReq, departure, startHour, width, distanceKm, client, sem, ct);
         }
 
         await Task.WhenAll(bucketTasks);
@@ -234,60 +226,6 @@ public class RoutingService(
         {
             sem.Release();
         }
-    }
-
-    /// <summary>
-    /// Apply server-side defaults for costing options.
-    /// Only sets values that are not already present in the request.
-    /// </summary>
-    private static JsonObject ApplyDefaults(JsonElement source)
-    {
-        var node = JsonNode.Parse(source.GetRawText())!.AsObject();
-
-        node.TryAdd("shortcuts", false);
-
-        var costing = node["costing"]?.GetValue<string>() ?? "auto";
-
-        if (!node.ContainsKey("costing_options"))
-            node["costing_options"] = new JsonObject();
-
-        var costingOptions = node["costing_options"]!.AsObject();
-        if (!costingOptions.ContainsKey(costing))
-            costingOptions[costing] = new JsonObject();
-
-        var modelOptions = costingOptions[costing]!.AsObject();
-
-        // Speed
-        modelOptions.TryAdd("top_speed", 120);
-        modelOptions.TryAdd("fixed_speed", 0);
-
-        // Road preferences
-        modelOptions.TryAdd("use_highways", 0.4);
-        modelOptions.TryAdd("use_living_streets", 0.8);
-        modelOptions.TryAdd("use_tolls", (JsonNode)1);
-        modelOptions.TryAdd("use_ferry", (JsonNode)1);
-        modelOptions.TryAdd("use_tracks", (JsonNode)0);
-
-        // Costs & penalties
-        modelOptions.TryAdd("maneuver_penalty", 11);
-        modelOptions.TryAdd("country_crossing_penalty", (JsonNode)0);
-        modelOptions.TryAdd("country_crossing_cost", 600);
-        modelOptions.TryAdd("ferry_cost", 300);
-        modelOptions.TryAdd("private_access_penalty", 450);
-        modelOptions.TryAdd("destination_only_penalty", 300);
-        modelOptions.TryAdd("service_penalty", 15);
-        modelOptions.TryAdd("service_factor", (JsonNode)1);
-        modelOptions.TryAdd("gate_penalty", 300);
-        modelOptions.TryAdd("gate_cost", 30);
-        modelOptions.TryAdd("toll_booth_penalty", (JsonNode)0);
-        modelOptions.TryAdd("toll_booth_cost", 15);
-        modelOptions.TryAdd("closure_factor", (JsonNode)9);
-
-        // Vehicle dimensions
-        modelOptions.TryAdd("width", 1.6);
-        modelOptions.TryAdd("height", 1.9);
-
-        return node;
     }
 
     // ── Response models ──────────────────────────────────────────────────────
