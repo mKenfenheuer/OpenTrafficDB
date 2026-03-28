@@ -23,8 +23,8 @@ public class MapMatchingService(
     IConfiguration config,
     ILogger<MapMatchingService> logger)
 {
-    private readonly string _otrBaseUrl      = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
-    private readonly int    _maxConcurrent   = int.TryParse(config["OpenTrafficRouting:MaxConcurrent"], out var mc) ? mc : 4;
+    private readonly string _otrBaseUrl    = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
+    private readonly int    _maxConcurrent = int.TryParse(config["OpenTrafficRouting:MaxConcurrent"], out var mc) ? mc : 4;
 
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
         LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
@@ -55,10 +55,10 @@ public class MapMatchingService(
 
     /// <summary>
     /// Match multiple GPS traces to OSM ways via the OpenTrafficRouting /api/v1/trace/bulk endpoint.
-    /// Each polyline in the input corresponds to one trace segment.
-    /// Returns a list of dictionaries (one per polyline), mapping observation index to MatchResult.
+    /// Returns raw TraceResult objects (one per polyline) so callers can access both point matches
+    /// and interpolated edges.
     /// </summary>
-    public async Task<List<Dictionary<int, MatchResult>>> MatchTracesBulkAsync(
+    public async Task<List<TraceResult?>> MatchTracesBulkAsync(
         IReadOnlyList<string> encodedPolylines,
         CancellationToken ct = default)
     {
@@ -68,8 +68,8 @@ public class MapMatchingService(
         {
             polylines = encodedPolylines,
             costing = "auto",
-            gps_accuracy = 25.0,
-            search_radius = 100.0,
+            gps_accuracy = 10.0,
+            search_radius = 50.0,
             interpolate = true
         };
 
@@ -87,7 +87,7 @@ public class MapMatchingService(
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
                 _logOtrError(logger, (int)response.StatusCode, encodedPolylines.Count, errorBody, null);
-                return Enumerable.Repeat(new Dictionary<int, MatchResult>(), encodedPolylines.Count).ToList();
+                return Enumerable.Repeat<TraceResult?>(null, encodedPolylines.Count).ToList();
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);
@@ -95,19 +95,20 @@ public class MapMatchingService(
             var results = wrapper?.Results;
 
             if (results == null)
-                return Enumerable.Repeat(new Dictionary<int, MatchResult>(), encodedPolylines.Count).ToList();
+                return Enumerable.Repeat<TraceResult?>(null, encodedPolylines.Count).ToList();
 
-            return [..results.Select(ParseTraceResult)];
+            return results.Cast<TraceResult?>().ToList();
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "OpenTrafficRouting bulk trace failed.");
-            return Enumerable.Repeat(new Dictionary<int, MatchResult>(), encodedPolylines.Count).ToList();
+            return Enumerable.Repeat<TraceResult?>(null, encodedPolylines.Count).ToList();
         }
     }
 
     /// <summary>
     /// Match a single GPS trace. Delegates to the bulk endpoint with one polyline.
+    /// Returns a dictionary mapping observation index to MatchResult (point matches only).
     /// </summary>
     public async Task<Dictionary<int, MatchResult>> MatchTraceAsync(
         IReadOnlyList<(double Lat, double Lon, DateTime Time)> data,
@@ -120,11 +121,13 @@ public class MapMatchingService(
 
         var polyline = EncodePolyline6(points);
         var results = await MatchTracesBulkAsync([polyline], ct);
-        return results.Count > 0 ? results[0] : [];
+        return results.Count > 0 ? ParsePointMatches(results[0]) : [];
     }
 
     /// <summary>
     /// Match observations across multiple trips using the bulk trace endpoint.
+    /// Handles both direct point matches (UPDATE existing observations) and interpolated
+    /// edges (INSERT synthetic observations with the same ApiKeyId and TripId).
     /// Returns the number of observations matched.
     /// </summary>
     public async Task<MatchJobResult> ProcessRangeAsync(
@@ -173,7 +176,7 @@ public class MapMatchingService(
         for (int offset = 0; offset < allPolylines.Count; offset += batchSize)
             batches.Add(allPolylines.GetRange(offset, Math.Min(batchSize, allPolylines.Count - offset)));
 
-        var batchResultsByIndex = new Dictionary<int, MatchResult>[allPolylines.Count];
+        var rawResults = new TraceResult?[allPolylines.Count];
         var sem = new SemaphoreSlim(_maxConcurrent, _maxConcurrent);
 
         await Task.WhenAll(batches.Select(async (batch, bi) =>
@@ -184,30 +187,25 @@ public class MapMatchingService(
                 var results = await MatchTracesBulkAsync(batch, ct);
                 int baseIdx = bi * batchSize;
                 for (int i = 0; i < results.Count; i++)
-                    batchResultsByIndex[baseIdx + i] = results[i];
+                    rawResults[baseIdx + i] = results[i];
             }
             finally { sem.Release(); }
         }));
 
-        var bulkResults = batchResultsByIndex
-            .Select(r => r ?? [])
-            .ToList();
-
-        // Collect match results and stale IDs
-        var matchedIds = new List<long>();
+        // ── Point matches: UPDATE existing observations with their matched way ──
+        var matchedIds    = new List<long>();
         var matchedWayIds = new List<long>();
         var matchedLimits = new List<double?>();
-        var staleIds = new List<long>();
+        var staleIds      = new List<long>();
 
-        // Build per-trip matched ID sets for stale detection
         var tripMatchedIds = new HashSet<long>[trips.Count];
         for (int i = 0; i < trips.Count; i++)
             tripMatchedIds[i] = [];
 
         for (int bi = 0; bi < allSegments.Count; bi++)
         {
-            var (tripIdx, segIdx, segment) = allSegments[bi];
-            var matchMap = bi < bulkResults.Count ? bulkResults[bi] : [];
+            var (tripIdx, _, segment) = allSegments[bi];
+            var matchMap = ParsePointMatches(bi < rawResults.Length ? rawResults[bi] : null);
 
             foreach (var (idx, match) in matchMap)
             {
@@ -220,7 +218,6 @@ public class MapMatchingService(
             }
         }
 
-        // Find stale unmatched observations
         for (int i = 0; i < trips.Count; i++)
         {
             foreach (var obs in trips[i])
@@ -230,7 +227,6 @@ public class MapMatchingService(
             }
         }
 
-        // Bulk UPDATE matched observations using unnest — one round-trip for all rows.
         if (matchedIds.Count > 0)
         {
             await db.Database.ExecuteSqlRawAsync("""
@@ -249,7 +245,6 @@ public class MapMatchingService(
                 ct);
         }
 
-        // Mark stale unmatched observations so they are cleaned up in FinalizeAsync.
         if (staleIds.Count > 0)
         {
             await db.Database.ExecuteSqlRawAsync("""
@@ -261,8 +256,102 @@ public class MapMatchingService(
                 ct);
         }
 
-        _logMapMatched(logger, matchedIds.Count, null);
-        return new MatchJobResult(matchedIds.Count);
+        // ── Interpolated edges: INSERT synthetic observations ────────────────────
+        // Each interpolated edge represents a road segment traversed between two GPS
+        // points. Speed, timestamp, and position are weighted by interpolation_references.
+        var synthApiKeys   = new List<int>();
+        var synthTripIds   = new List<string>();
+        var synthTimestamp = new List<DateTime>();
+        var synthLats      = new List<double>();
+        var synthLons      = new List<double>();
+        var synthSpeeds    = new List<double>();
+        var synthAccuracy  = new List<float>();
+        var synthWayIds    = new List<long>();
+        var synthLimits    = new List<double?>();
+
+        for (int bi = 0; bi < allSegments.Count; bi++)
+        {
+            var (tripIdx, _, segment) = allSegments[bi];
+            var result = bi < rawResults.Length ? rawResults[bi] : null;
+            if (result?.Edges == null || result.MatchedPoints == null) continue;
+
+            var matchedPoints = result.MatchedPoints;
+            var tripId = trips[tripIdx].Key;
+
+            foreach (var edge in result.Edges)
+            {
+                if (!edge.IsInterpolated
+                    || edge.Edge == null
+                    || edge.InterpolationReferences == null
+                    || edge.Edge.OsmWayId == 0
+                    || IsExcludedRoadType(edge.Edge.RoadType)) continue;
+
+                double speedMs = 0, lat = 0, lon = 0, accuracy = 0;
+                long ticks = 0;
+                int apiKeyId = 0;
+                bool hasRef = false;
+
+                foreach (var iref in edge.InterpolationReferences)
+                {
+                    if (iref.PointIndex >= matchedPoints.Count) continue;
+                    var mp = matchedPoints[iref.PointIndex];
+                    if (mp.OriginalIndex >= segment.Count) continue;
+                    var obs = segment[mp.OriginalIndex];
+
+                    speedMs  += iref.Percentage * obs.SpeedMs;
+                    lat      += iref.Percentage * obs.Latitude;
+                    lon      += iref.Percentage * obs.Longitude;
+                    ticks    += (long)(iref.Percentage * obs.Timestamp.Ticks);
+                    accuracy += iref.Percentage * obs.GpsAccuracyMeters;
+                    if (!hasRef) { apiKeyId = obs.ApiKeyId; hasRef = true; }
+                }
+
+                if (!hasRef) continue;
+
+                synthApiKeys.Add(apiKeyId);
+                synthTripIds.Add(tripId);
+                synthTimestamp.Add(new DateTime(ticks, DateTimeKind.Utc));
+                synthLats.Add(lat);
+                synthLons.Add(lon);
+                synthSpeeds.Add(speedMs);
+                synthAccuracy.Add((float)accuracy);
+                synthWayIds.Add(edge.Edge.OsmWayId);
+                synthLimits.Add(edge.Edge.MaxSpeedKmh > 0 ? edge.Edge.MaxSpeedKmh : null);
+            }
+        }
+
+        if (synthWayIds.Count > 0)
+        {
+            await db.Database.ExecuteSqlRawAsync("""
+                INSERT INTO "SpeedObservations"
+                    ("ApiKeyId", "TripId", "Timestamp", "Latitude", "Longitude",
+                     "SpeedMs", "GpsAccuracyMeters", "OsmWayId", "SpeedLimitKmh",
+                     "IsAggregated", "CreatedAt")
+                SELECT v.api_key_id, v.trip_id, v.ts, v.lat, v.lon,
+                       v.speed_ms, v.gps_accuracy, v.way_id, v.speed_limit,
+                       FALSE, NOW()
+                FROM unnest(@api_key_ids, @trip_ids, @timestamps, @lats, @lons,
+                            @speeds, @accuracies, @way_ids, @speed_limits)
+                     AS v(api_key_id, trip_id, ts, lat, lon,
+                          speed_ms, gps_accuracy, way_id, speed_limit)
+                """,
+                [
+                    new NpgsqlParameter("api_key_ids", NpgsqlDbType.Array | NpgsqlDbType.Integer)     { Value = synthApiKeys.ToArray()   },
+                    new NpgsqlParameter("trip_ids",    NpgsqlDbType.Array | NpgsqlDbType.Text)         { Value = synthTripIds.ToArray()   },
+                    new NpgsqlParameter("timestamps",  NpgsqlDbType.Array | NpgsqlDbType.TimestampTz)  { Value = synthTimestamp.ToArray() },
+                    new NpgsqlParameter("lats",        NpgsqlDbType.Array | NpgsqlDbType.Double)       { Value = synthLats.ToArray()      },
+                    new NpgsqlParameter("lons",        NpgsqlDbType.Array | NpgsqlDbType.Double)       { Value = synthLons.ToArray()      },
+                    new NpgsqlParameter("speeds",      NpgsqlDbType.Array | NpgsqlDbType.Double)       { Value = synthSpeeds.ToArray()    },
+                    new NpgsqlParameter("accuracies",  NpgsqlDbType.Array | NpgsqlDbType.Real)         { Value = synthAccuracy.ToArray()  },
+                    new NpgsqlParameter("way_ids",     NpgsqlDbType.Array | NpgsqlDbType.Bigint)       { Value = synthWayIds.ToArray()    },
+                    new NpgsqlParameter("speed_limits",NpgsqlDbType.Array | NpgsqlDbType.Double)       { Value = synthLimits.ToArray()    },
+                ],
+                ct);
+        }
+
+        var total = matchedIds.Count + synthWayIds.Count;
+        _logMapMatched(logger, total, null);
+        return new MatchJobResult(total);
     }
 
     /// <summary>
@@ -327,15 +416,23 @@ public class MapMatchingService(
         "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link"
     ];
 
-    private Dictionary<int, MatchResult> ParseTraceResult(TraceResult? result)
+    private static bool IsExcludedRoadType(string? roadType) =>
+        roadType != null &&
+        (_excludedRoadTypes.Contains(roadType) || !_allowedRoadTypes.Contains(roadType));
+
+    /// <summary>
+    /// Extracts direct point matches from a TraceResult.
+    /// Returns a dictionary mapping original_index → MatchResult.
+    /// </summary>
+    private Dictionary<int, MatchResult> ParsePointMatches(TraceResult? result)
     {
         if (result?.MatchedPoints == null || result.Edges == null) return [];
 
-        // Build point-index → (osm_way_id, max_speed_kmh) from top-level edge coverage ranges
-        // as fallback when per-point edge is absent.
+        // Build fallback: point-index → edge info from non-interpolated edge coverage ranges.
         var pointToEdge = new Dictionary<int, (long WayId, int SpeedKmh)>();
         foreach (var edge in result.Edges)
         {
+            if (edge.IsInterpolated) continue;
             for (int i = edge.BeginPointIndex; i <= edge.EndPointIndex; i++)
                 pointToEdge[i] = (edge.Edge?.OsmWayId ?? 0, edge.Edge?.MaxSpeedKmh ?? 0);
         }
@@ -352,22 +449,15 @@ public class MapMatchingService(
                 continue;
             }
 
-            // Prefer per-point edge info; fall back to route-edge coverage
             var edgeInfo = mp.Edge;
             if ((edgeInfo?.OsmWayId ?? 0) == 0 && pointToEdge.TryGetValue(i, out var re) && re.WayId != 0)
                 edgeInfo = new TraceEdgeInfo { OsmWayId = re.WayId, MaxSpeedKmh = re.SpeedKmh };
 
             if (edgeInfo == null || edgeInfo.OsmWayId == 0) { noEdge++; continue; }
 
-            if (edgeInfo.RoadType != null &&
-                (_excludedRoadTypes.Contains(edgeInfo.RoadType) ||
-                 !_allowedRoadTypes.Contains(edgeInfo.RoadType)))
-            {
-                excluded++;
-                continue;
-            }
+            if (IsExcludedRoadType(edgeInfo.RoadType)) { excluded++; continue; }
 
-            results[i] = new MatchResult(
+            results[mp.OriginalIndex] = new MatchResult(
                 OsmWayId:      edgeInfo.OsmWayId,
                 SpeedLimitKmh: edgeInfo.MaxSpeedKmh > 0 ? edgeInfo.MaxSpeedKmh : null);
         }
@@ -386,7 +476,7 @@ public class MapMatchingService(
         public List<TraceResult>? Results { get; set; }
     }
 
-    private class TraceResult
+    public class TraceResult
     {
         [JsonPropertyName("edges")]
         public List<TraceRouteEdge>? Edges { get; set; }
@@ -395,14 +485,19 @@ public class MapMatchingService(
         public List<TraceMatchedPoint>? MatchedPoints { get; set; }
     }
 
-    // Covers matched points [BeginPointIndex..EndPointIndex] on one road segment.
-    private class TraceRouteEdge
+    public class TraceRouteEdge
     {
         [JsonPropertyName("begin_point_index")]
         public int BeginPointIndex { get; set; }
 
         [JsonPropertyName("end_point_index")]
         public int EndPointIndex { get; set; }
+
+        [JsonPropertyName("is_interpolated")]
+        public bool IsInterpolated { get; set; }
+
+        [JsonPropertyName("interpolation_references")]
+        public List<InterpolationReference>? InterpolationReferences { get; set; }
 
         [JsonPropertyName("edge")]
         public TraceEdgeInfo? Edge { get; set; }
@@ -411,7 +506,16 @@ public class MapMatchingService(
         public TraceNodeInfo? Node { get; set; }
     }
 
-    private class TraceMatchedPoint
+    public class InterpolationReference
+    {
+        [JsonPropertyName("point_index")]
+        public int PointIndex { get; set; }
+
+        [JsonPropertyName("percentage")]
+        public double Percentage { get; set; }
+    }
+
+    public class TraceMatchedPoint
     {
         [JsonPropertyName("match_type")]
         public string MatchType { get; set; } = "unmatched";
@@ -426,7 +530,7 @@ public class MapMatchingService(
         public TraceNodeInfo? Node { get; set; }
     }
 
-    private class TraceEdgeInfo
+    public class TraceEdgeInfo
     {
         [JsonPropertyName("osm_way_id")]
         public long OsmWayId { get; set; }
@@ -438,7 +542,7 @@ public class MapMatchingService(
         public string? RoadType { get; set; }
     }
 
-    private class TraceNodeInfo
+    public class TraceNodeInfo
     {
         [JsonPropertyName("id")]
         public long Id { get; set; }
