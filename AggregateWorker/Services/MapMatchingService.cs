@@ -104,14 +104,13 @@ public class MapMatchingService(
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);
-            if (logger.IsEnabled(LogLevel.Debug))
-                logger.LogDebug("OTR bulk trace response ({Polylines} polylines): {Body}", encodedPolylines.Count, body);
-            var results = JsonSerializer.Deserialize<List<TraceAttributesResponse>>(body);
+            var wrapper = JsonSerializer.Deserialize<BulkTraceResponse>(body, _jsonOptions);
+            var results = wrapper?.Results;
 
             if (results == null)
                 return Enumerable.Repeat(new Dictionary<int, MatchResult>(), encodedPolylines.Count).ToList();
 
-            return results.Select(ParseTraceResult).ToList();
+            return [..results.Select(ParseTraceResult)];
         }
         catch (Exception ex)
         {
@@ -312,96 +311,114 @@ public class MapMatchingService(
     private static string EncodePolyline6(IEnumerable<(double Lat, double Lon, DateTime Time)> coords) =>
         PolylineEncoder.Encode(coords.Select(c => (c.Lat, c.Lon)));
 
-    private Dictionary<int, MatchResult> ParseTraceResult(TraceAttributesResponse? result)
+    private Dictionary<int, MatchResult> ParseTraceResult(TraceResult? result)
     {
         if (result?.MatchedPoints == null || result.Edges == null) return [];
 
+        // Build point-index → (osm_way_id, max_speed_kmh, node_id) from edge coverage ranges.
+        // osm_way_id is preferred; fall back to node ID when edge info is absent.
+        var pointToEdge = new Dictionary<int, (long WayId, int SpeedKmh, long NodeId)>();
+        foreach (var edge in result.Edges)
+        {
+            for (int i = edge.BeginPointIndex; i <= edge.EndPointIndex; i++)
+                pointToEdge[i] = (edge.Edge?.OsmWayId ?? 0, edge.Edge?.MaxSpeedKmh ?? 0, edge.Node?.Id ?? 0);
+        }
+
         var results = new Dictionary<int, MatchResult>();
-        int badType = 0, noEdge = 0, excluded = 0;
+        int badType = 0, noEdge = 0;
 
         for (int i = 0; i < result.MatchedPoints.Count; i++)
         {
             var mp = result.MatchedPoints[i];
-            if ((mp.Type != "matched" && mp.Type != "interpolated") ||
-                mp.Lat is null || mp.Lon is null)
+            if (mp.MatchType != "matched" && mp.MatchType != "interpolated")
             {
                 badType++;
                 continue;
             }
-            if (mp.EdgeIndex is null or ulong.MaxValue)
+
+            // Prefer per-point edge info, fall back to route-edge coverage
+            var wayId  = mp.Edge?.OsmWayId  ?? 0;
+            var speed  = mp.Edge?.MaxSpeedKmh ?? 0;
+            if (wayId == 0 && pointToEdge.TryGetValue(i, out var re))
             {
-                noEdge++;
-                continue;
+                wayId = re.WayId != 0 ? re.WayId : re.NodeId;
+                speed = re.SpeedKmh;
             }
 
-            var way = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
-            if (way?.WayId is null || way.IsExcluded)
-            {
-                excluded++;
-                continue;
-            }
+            if (wayId == 0) { noEdge++; continue; }
 
-            results[i] = new MatchResult(
-                OsmWayId:      way.WayId.Value,
-                SpeedLimitKmh: way.Speed);
+            results[i] = new MatchResult(OsmWayId: wayId, SpeedLimitKmh: speed > 0 ? speed : null);
         }
 
-        if (badType + noEdge + excluded > 0)
-            _logParseSkip(logger, result.MatchedPoints.Count, results.Count, badType, noEdge, excluded, null);
+        if (badType + noEdge > 0)
+            _logParseSkip(logger, result.MatchedPoints.Count, results.Count, badType, noEdge, 0, null);
 
         return results;
     }
 
-    // --- OpenTrafficRouting trace response DTOs ---
+    // --- OpenTrafficRouting trace response DTOs (mirrors OTR TraceModels) ---
 
-    private class TraceAttributesResponse
+    private class BulkTraceResponse
+    {
+        [JsonPropertyName("results")]
+        public List<TraceResult>? Results { get; set; }
+    }
+
+    private class TraceResult
     {
         [JsonPropertyName("edges")]
-        public List<EdgeResult>? Edges { get; set; }
+        public List<TraceRouteEdge>? Edges { get; set; }
 
         [JsonPropertyName("matched_points")]
-        public List<MatchedPoint>? MatchedPoints { get; set; }
+        public List<TraceMatchedPoint>? MatchedPoints { get; set; }
     }
 
-    private class EdgeResult
+    // Covers matched points [BeginPointIndex..EndPointIndex] on one road segment.
+    private class TraceRouteEdge
     {
-        [JsonPropertyName("way_id")]
-        public long? WayId { get; set; }
+        [JsonPropertyName("begin_point_index")]
+        public int BeginPointIndex { get; set; }
 
-        [JsonPropertyName("speed")]
-        public double? Speed { get; set; }
+        [JsonPropertyName("end_point_index")]
+        public int EndPointIndex { get; set; }
 
-        [JsonPropertyName("use")]
-        public string? Use { get; set; }
+        [JsonPropertyName("edge")]
+        public TraceEdgeInfo? Edge { get; set; }
 
-        [JsonPropertyName("road_class")]
-        public string? RoadClass { get; set; }
-
-        private static readonly HashSet<string> _excludedUses = ["driveway", "parking_aisle", "emergency_access", "drive_through_road"];
-
-        private static readonly HashSet<string> _allowedRoadClasses =
-        [
-            "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential"
-        ];
-
-        [JsonIgnore]
-        public bool IsExcluded =>
-            (Use is not null && _excludedUses.Contains(Use)) ||
-            (RoadClass is not null && !_allowedRoadClasses.Contains(RoadClass));
+        [JsonPropertyName("node")]
+        public TraceNodeInfo? Node { get; set; }
     }
 
-    private class MatchedPoint
+    private class TraceMatchedPoint
     {
-        [JsonPropertyName("edge_index")]
-        public ulong? EdgeIndex { get; set; }
+        [JsonPropertyName("match_type")]
+        public string MatchType { get; set; } = "unmatched";
 
-        [JsonPropertyName("type")]
-        public string? Type { get; set; }
+        [JsonPropertyName("original_index")]
+        public int OriginalIndex { get; set; }
 
-        [JsonPropertyName("lat")]
-        public double? Lat { get; set; }
+        [JsonPropertyName("edge")]
+        public TraceEdgeInfo? Edge { get; set; }
 
-        [JsonPropertyName("lon")]
-        public double? Lon { get; set; }
+        [JsonPropertyName("node")]
+        public TraceNodeInfo? Node { get; set; }
+    }
+
+    private class TraceEdgeInfo
+    {
+        [JsonPropertyName("osm_way_id")]
+        public long OsmWayId { get; set; }
+
+        [JsonPropertyName("max_speed_kmh")]
+        public int MaxSpeedKmh { get; set; }
+
+        [JsonPropertyName("road_type")]
+        public string? RoadType { get; set; }
+    }
+
+    private class TraceNodeInfo
+    {
+        [JsonPropertyName("id")]
+        public long Id { get; set; }
     }
 }
