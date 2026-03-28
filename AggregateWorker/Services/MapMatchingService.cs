@@ -104,6 +104,8 @@ public class MapMatchingService(
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);
+            if (logger.IsEnabled(LogLevel.Debug))
+                logger.LogDebug("OTR bulk trace response ({Polylines} polylines): {Body}", encodedPolylines.Count, body);
             var results = JsonSerializer.Deserialize<List<TraceAttributesResponse>>(body);
 
             if (results == null)
