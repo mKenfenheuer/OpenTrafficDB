@@ -28,6 +28,19 @@ public class MapMatchingService(
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
         LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
 
+    private static readonly Action<ILogger, int, int, Exception?> _logProcessing =
+        LoggerMessage.Define<int, int>(LogLevel.Debug, default, "Map-matching {ObsCount} observations across {TripCount} trips");
+
+    private static readonly Action<ILogger, int, int, Exception?> _logBulkRequest =
+        LoggerMessage.Define<int, int>(LogLevel.Debug, default, "Sending bulk trace request: {PolylineCount} polylines from {TripCount} trips");
+
+    private static readonly Action<ILogger, int, int, string, Exception?> _logOtrError =
+        LoggerMessage.Define<int, int, string>(LogLevel.Warning, default, "OTR bulk trace returned {StatusCode} for {PolylineCount} polylines: {Body}");
+
+    private static readonly Action<ILogger, int, int, int, int, int, Exception?> _logParseSkip =
+        LoggerMessage.Define<int, int, int, int, int>(LogLevel.Debug, default,
+            "Trace parse: {Total} points → {Matched} matched, {BadType} bad type, {NoEdge} no edge index, {Excluded} excluded edge");
+
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -84,7 +97,11 @@ public class MapMatchingService(
                 ct);
 
             if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                _logOtrError(logger, (int)response.StatusCode, encodedPolylines.Count, errorBody, null);
                 return Enumerable.Repeat(new Dictionary<int, MatchResult>(), encodedPolylines.Count).ToList();
+            }
 
             var body = await response.Content.ReadAsStringAsync(ct);
             var results = JsonSerializer.Deserialize<List<TraceAttributesResponse>>(body);
@@ -135,6 +152,7 @@ public class MapMatchingService(
 
         var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
         var trips = unmatched.GroupBy(o => o.TripId).ToList();
+        _logProcessing(logger, unmatched.Count, trips.Count, null);
 
         // Build all segments across all trips and collect their polylines
         var allSegments = new List<(int TripIndex, int SegmentIndex, List<SpeedObservation> Segment)>();
@@ -160,6 +178,7 @@ public class MapMatchingService(
         }
 
         // Single bulk request for all segments across all trips
+        _logBulkRequest(logger, allPolylines.Count, trips.Count, null);
         var bulkResults = await MatchTracesBulkAsync(allPolylines, ct);
 
         // Collect match results and stale IDs
@@ -284,25 +303,43 @@ public class MapMatchingService(
     private static string EncodePolyline6(IEnumerable<(double Lat, double Lon, DateTime Time)> coords) =>
         PolylineEncoder.Encode(coords.Select(c => (c.Lat, c.Lon)));
 
-    private static Dictionary<int, MatchResult> ParseTraceResult(TraceAttributesResponse? result)
+    private Dictionary<int, MatchResult> ParseTraceResult(TraceAttributesResponse? result)
     {
         if (result?.MatchedPoints == null || result.Edges == null) return [];
 
         var results = new Dictionary<int, MatchResult>();
+        int badType = 0, noEdge = 0, excluded = 0;
+
         for (int i = 0; i < result.MatchedPoints.Count; i++)
         {
             var mp = result.MatchedPoints[i];
             if ((mp.Type != "matched" && mp.Type != "interpolated") ||
-                mp.EdgeIndex is null or ulong.MaxValue ||
-                mp.Lat is null || mp.Lon is null) continue;
+                mp.Lat is null || mp.Lon is null)
+            {
+                badType++;
+                continue;
+            }
+            if (mp.EdgeIndex is null or ulong.MaxValue)
+            {
+                noEdge++;
+                continue;
+            }
 
             var way = result.Edges.ElementAtOrDefault((int)mp.EdgeIndex.Value);
-            if (way?.WayId is null || way.IsExcluded) continue;
+            if (way?.WayId is null || way.IsExcluded)
+            {
+                excluded++;
+                continue;
+            }
 
             results[i] = new MatchResult(
                 OsmWayId:      way.WayId.Value,
                 SpeedLimitKmh: way.Speed);
         }
+
+        if (badType + noEdge + excluded > 0)
+            _logParseSkip(logger, result.MatchedPoints.Count, results.Count, badType, noEdge, excluded, null);
+
         return results;
     }
 
