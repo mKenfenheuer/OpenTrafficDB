@@ -177,9 +177,16 @@ public class MapMatchingService(
             }
         }
 
-        // Single bulk request for all segments across all trips
+        // Batch into chunks of 100 (OTR limit) and merge results
+        const int batchSize = 100;
         _logBulkRequest(logger, allPolylines.Count, trips.Count, null);
-        var bulkResults = await MatchTracesBulkAsync(allPolylines, ct);
+        var bulkResults = new List<Dictionary<int, MatchResult>>(allPolylines.Count);
+        for (int offset = 0; offset < allPolylines.Count; offset += batchSize)
+        {
+            var batch = allPolylines.GetRange(offset, Math.Min(batchSize, allPolylines.Count - offset));
+            var batchResult = await MatchTracesBulkAsync(batch, ct);
+            bulkResults.AddRange(batchResult);
+        }
 
         // Collect match results and stale IDs
         var matchedIds = new List<long>();
