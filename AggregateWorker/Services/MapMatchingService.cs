@@ -23,7 +23,8 @@ public class MapMatchingService(
     IConfiguration config,
     ILogger<MapMatchingService> logger)
 {
-    private readonly string _otrBaseUrl = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
+    private readonly string _otrBaseUrl      = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
+    private readonly int    _maxConcurrent   = int.TryParse(config["OpenTrafficRouting:MaxConcurrent"], out var mc) ? mc : 4;
 
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
         LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
@@ -67,23 +68,9 @@ public class MapMatchingService(
         {
             polylines = encodedPolylines,
             costing = "auto",
-            gps_accuracy = 100.0,
+            gps_accuracy = 25.0,
             search_radius = 100.0,
-            interpolate = true,
-            attributes = new[]
-            {
-                "edge.way_id",
-                "edge.speed",
-                "edge.use",
-                "edge.road_class",
-                "matched.type",
-                "matched.point",
-                "matched.edge_index"
-            },
-            filters = new
-            {
-                min_confidence = 0.5
-            }
+            interpolate = true
         };
 
         var json = JsonSerializer.Serialize(request, _jsonOptions);
@@ -178,16 +165,33 @@ public class MapMatchingService(
             }
         }
 
-        // Batch into chunks of 100 (OTR limit) and merge results
+        // Split into 100-polyline chunks (OTR limit), dispatch up to _maxConcurrent in parallel.
         const int batchSize = 100;
         _logBulkRequest(logger, allPolylines.Count, trips.Count, null);
-        var bulkResults = new List<Dictionary<int, MatchResult>>(allPolylines.Count);
+
+        var batches = new List<List<string>>();
         for (int offset = 0; offset < allPolylines.Count; offset += batchSize)
+            batches.Add(allPolylines.GetRange(offset, Math.Min(batchSize, allPolylines.Count - offset)));
+
+        var batchResultsByIndex = new Dictionary<int, MatchResult>[allPolylines.Count];
+        var sem = new SemaphoreSlim(_maxConcurrent, _maxConcurrent);
+
+        await Task.WhenAll(batches.Select(async (batch, bi) =>
         {
-            var batch = allPolylines.GetRange(offset, Math.Min(batchSize, allPolylines.Count - offset));
-            var batchResult = await MatchTracesBulkAsync(batch, ct);
-            bulkResults.AddRange(batchResult);
-        }
+            await sem.WaitAsync(ct);
+            try
+            {
+                var results = await MatchTracesBulkAsync(batch, ct);
+                int baseIdx = bi * batchSize;
+                for (int i = 0; i < results.Count; i++)
+                    batchResultsByIndex[baseIdx + i] = results[i];
+            }
+            finally { sem.Release(); }
+        }));
+
+        var bulkResults = batchResultsByIndex
+            .Select(r => r ?? [])
+            .ToList();
 
         // Collect match results and stale IDs
         var matchedIds = new List<long>();
@@ -311,21 +315,33 @@ public class MapMatchingService(
     private static string EncodePolyline6(IEnumerable<(double Lat, double Lon, DateTime Time)> coords) =>
         PolylineEncoder.Encode(coords.Select(c => (c.Lat, c.Lon)));
 
+    private static readonly HashSet<string> _excludedRoadTypes =
+    [
+        "driveway", "parking_aisle", "emergency_access", "drive_through_road",
+        "footway", "cycleway", "path", "steps", "pedestrian", "service"
+    ];
+
+    private static readonly HashSet<string> _allowedRoadTypes =
+    [
+        "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential",
+        "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link"
+    ];
+
     private Dictionary<int, MatchResult> ParseTraceResult(TraceResult? result)
     {
         if (result?.MatchedPoints == null || result.Edges == null) return [];
 
-        // Build point-index → (osm_way_id, max_speed_kmh, node_id) from edge coverage ranges.
-        // osm_way_id is preferred; fall back to node ID when edge info is absent.
-        var pointToEdge = new Dictionary<int, (long WayId, int SpeedKmh, long NodeId)>();
+        // Build point-index → (osm_way_id, max_speed_kmh) from top-level edge coverage ranges
+        // as fallback when per-point edge is absent.
+        var pointToEdge = new Dictionary<int, (long WayId, int SpeedKmh)>();
         foreach (var edge in result.Edges)
         {
             for (int i = edge.BeginPointIndex; i <= edge.EndPointIndex; i++)
-                pointToEdge[i] = (edge.Edge?.OsmWayId ?? 0, edge.Edge?.MaxSpeedKmh ?? 0, edge.Node?.Id ?? 0);
+                pointToEdge[i] = (edge.Edge?.OsmWayId ?? 0, edge.Edge?.MaxSpeedKmh ?? 0);
         }
 
         var results = new Dictionary<int, MatchResult>();
-        int badType = 0, noEdge = 0;
+        int badType = 0, noEdge = 0, excluded = 0;
 
         for (int i = 0; i < result.MatchedPoints.Count; i++)
         {
@@ -336,22 +352,28 @@ public class MapMatchingService(
                 continue;
             }
 
-            // Prefer per-point edge info, fall back to route-edge coverage
-            var wayId  = mp.Edge?.OsmWayId  ?? 0;
-            var speed  = mp.Edge?.MaxSpeedKmh ?? 0;
-            if (wayId == 0 && pointToEdge.TryGetValue(i, out var re))
+            // Prefer per-point edge info; fall back to route-edge coverage
+            var edgeInfo = mp.Edge;
+            if ((edgeInfo?.OsmWayId ?? 0) == 0 && pointToEdge.TryGetValue(i, out var re) && re.WayId != 0)
+                edgeInfo = new TraceEdgeInfo { OsmWayId = re.WayId, MaxSpeedKmh = re.SpeedKmh };
+
+            if (edgeInfo == null || edgeInfo.OsmWayId == 0) { noEdge++; continue; }
+
+            if (edgeInfo.RoadType != null &&
+                (_excludedRoadTypes.Contains(edgeInfo.RoadType) ||
+                 !_allowedRoadTypes.Contains(edgeInfo.RoadType)))
             {
-                wayId = re.WayId != 0 ? re.WayId : re.NodeId;
-                speed = re.SpeedKmh;
+                excluded++;
+                continue;
             }
 
-            if (wayId == 0) { noEdge++; continue; }
-
-            results[i] = new MatchResult(OsmWayId: wayId, SpeedLimitKmh: speed > 0 ? speed : null);
+            results[i] = new MatchResult(
+                OsmWayId:      edgeInfo.OsmWayId,
+                SpeedLimitKmh: edgeInfo.MaxSpeedKmh > 0 ? edgeInfo.MaxSpeedKmh : null);
         }
 
-        if (badType + noEdge > 0)
-            _logParseSkip(logger, result.MatchedPoints.Count, results.Count, badType, noEdge, 0, null);
+        if (badType + noEdge + excluded > 0)
+            _logParseSkip(logger, result.MatchedPoints.Count, results.Count, badType, noEdge, excluded, null);
 
         return results;
     }
