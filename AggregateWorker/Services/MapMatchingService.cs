@@ -169,7 +169,7 @@ public class MapMatchingService(
         }
 
         // Split into 100-polyline chunks (OTR limit), dispatch up to _maxConcurrent in parallel.
-        const int batchSize = 100;
+        const int batchSize = 25;
         _logBulkRequest(logger, allPolylines.Count, trips.Count, null);
 
         var batches = new List<List<string>>();
