@@ -168,13 +168,43 @@ public class MapMatchingService(
             }
         }
 
-        // Split into 100-polyline chunks (OTR limit), dispatch up to _maxConcurrent in parallel.
+        // Sort segments by geographic proximity (first point) so each batch covers
+        // a small area and the map-matching service doesn't thrash tiles.
+        var sortedIndices = Enumerable.Range(0, allSegments.Count)
+            .OrderBy(idx =>
+            {
+                var seg = allSegments[idx].Segment;
+                var first = seg[0];
+                // Interleave lat/lon bits for a simple spatial sort (poor-man's geohash).
+                // Quantize to ~1 km grid cells, then interleave for locality.
+                int latQ = (int)((first.Latitude + 90.0) * 100);
+                int lonQ = (int)((first.Longitude + 180.0) * 100);
+                long key = 0;
+                for (int b = 15; b >= 0; b--)
+                {
+                    key = (key << 1) | (uint)((latQ >> b) & 1);
+                    key = (key << 1) | (uint)((lonQ >> b) & 1);
+                }
+                return key;
+            })
+            .ToArray();
+
+        // Build batches of polylines in proximity order.
         const int batchSize = 25;
         _logBulkRequest(logger, allPolylines.Count, trips.Count, null);
 
-        var batches = new List<List<string>>();
-        for (int offset = 0; offset < allPolylines.Count; offset += batchSize)
-            batches.Add(allPolylines.GetRange(offset, Math.Min(batchSize, allPolylines.Count - offset)));
+        var batches = new List<List<(int OrigIndex, string Polyline)>>();
+        for (int offset = 0; offset < sortedIndices.Length; offset += batchSize)
+        {
+            int count = Math.Min(batchSize, sortedIndices.Length - offset);
+            var batch = new List<(int, string)>(count);
+            for (int j = 0; j < count; j++)
+            {
+                int orig = sortedIndices[offset + j];
+                batch.Add((orig, allPolylines[orig]));
+            }
+            batches.Add(batch);
+        }
 
         var rawResults = new TraceResult?[allPolylines.Count];
         var sem = new SemaphoreSlim(_maxConcurrent, _maxConcurrent);
@@ -184,10 +214,9 @@ public class MapMatchingService(
             await sem.WaitAsync(ct);
             try
             {
-                var results = await MatchTracesBulkAsync(batch, ct);
-                int baseIdx = bi * batchSize;
+                var results = await MatchTracesBulkAsync(batch.Select(b => b.Polyline).ToList(), ct);
                 for (int i = 0; i < results.Count; i++)
-                    rawResults[baseIdx + i] = results[i];
+                    rawResults[batch[i].OrigIndex] = results[i];
             }
             finally { sem.Release(); }
         }));
