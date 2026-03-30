@@ -55,6 +55,7 @@ var otrUrl = builder.Configuration["OpenTrafficRouting:BaseUrl"] ?? "http://loca
 builder.Services.AddHttpClient("otr", client =>
 {
     client.BaseAddress = new Uri(otrUrl);
+    client.Timeout = TimeSpan.FromMinutes(5);
 }).AddResilienceHandler("otr-pipeline", pipeline =>
 {
     pipeline.AddTimeout(TimeSpan.FromSeconds(35));
@@ -69,10 +70,10 @@ builder.Services.AddHttpClient("otr", client =>
     });
     pipeline.AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
     {
-        SamplingDuration   = TimeSpan.FromSeconds(30),
+        SamplingDuration   = TimeSpan.FromMinutes(5),
         FailureRatio       = 0.5,
         MinimumThroughput  = 5,
-        BreakDuration      = TimeSpan.FromSeconds(30)
+        BreakDuration      = TimeSpan.FromMinutes(5)
     });
 });
 
