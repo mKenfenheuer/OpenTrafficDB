@@ -25,6 +25,7 @@ public class MapMatchingService(
 {
     private readonly string _otrBaseUrl    = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
     private readonly int    _maxConcurrent = int.TryParse(config["OpenTrafficRouting:MaxConcurrent"], out var mc) ? mc : 4;
+    private readonly int    _batchSize     = int.TryParse(config["OpenTrafficRouting:BatchSize"], out var bs) ? bs : 25;
 
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
         LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
@@ -139,7 +140,7 @@ public class MapMatchingService(
             .OrderBy(o => o.Timestamp)
             .ToListAsync(ct);
 
-        if (unmatched.Count == 0) return new MatchJobResult(0);
+        if (unmatched.Count == 0) return new MatchJobResult(0, [], []);
 
         var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
         var trips = unmatched.GroupBy(o => o.TripId).ToList();
@@ -190,7 +191,7 @@ public class MapMatchingService(
             .ToArray();
 
         // Build batches of polylines in proximity order.
-        const int batchSize = 25;
+        var batchSize = _batchSize;
         _logBulkRequest(logger, allPolylines.Count, trips.Count, null);
 
         var batches = new List<List<(int OrigIndex, string Polyline)>>();
@@ -380,7 +381,23 @@ public class MapMatchingService(
 
         var total = matchedIds.Count + synthWayIds.Count;
         _logMapMatched(logger, total, null);
-        return new MatchJobResult(total);
+        var distinctWayIds = matchedWayIds.Concat(synthWayIds).Distinct().ToArray();
+
+        // Trips where zero observations were matched (neither point-match nor interpolated).
+        var tripHasMatch = new bool[trips.Count];
+        for (int bi = 0; bi < allSegments.Count; bi++)
+        {
+            var (tripIdx, _, _) = allSegments[bi];
+            var result = bi < rawResults.Length ? rawResults[bi] : null;
+            if (result?.MatchedPoints?.Count > 0 || result?.Edges?.Count > 0)
+                tripHasMatch[tripIdx] = true;
+        }
+        var failedTripIds = trips
+            .Where((_, i) => !tripHasMatch[i])
+            .Select(g => g.Key)
+            .ToArray();
+
+        return new MatchJobResult(total, distinctWayIds, failedTripIds);
     }
 
     /// <summary>
