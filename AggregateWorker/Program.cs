@@ -58,7 +58,7 @@ builder.Services.AddHttpClient("otr", client =>
     client.Timeout = TimeSpan.FromMinutes(5);
 }).AddResilienceHandler("otr-pipeline", pipeline =>
 {
-    pipeline.AddTimeout(TimeSpan.FromSeconds(35));
+    pipeline.AddTimeout(TimeSpan.FromMinutes(5));
     pipeline.AddRetry(new HttpRetryStrategyOptions
     {
         MaxRetryAttempts = 2,

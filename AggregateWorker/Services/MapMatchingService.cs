@@ -24,7 +24,7 @@ public class MapMatchingService(
     ILogger<MapMatchingService> logger)
 {
     private readonly string _otrBaseUrl    = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
-    private readonly int    _maxConcurrent = int.TryParse(config["OpenTrafficRouting:MaxConcurrent"], out var mc) ? mc : 8;
+    private readonly int    _maxConcurrent = int.TryParse(config["OpenTrafficRouting:MaxConcurrent"], out var mc) ? mc : 4;
     private readonly int    _batchSize     = int.TryParse(config["OpenTrafficRouting:BatchSize"], out var bs) ? bs : 25;
 
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
