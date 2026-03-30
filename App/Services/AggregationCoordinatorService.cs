@@ -25,7 +25,8 @@ public class AggregationCoordinatorService(
     ILogger<AggregationCoordinatorService> logger) : BackgroundService
 {
     private TimeSpan Interval          => TimeSpan.FromSeconds(double.Parse(config["Coordinator:IntervalSeconds"] ?? "60"));
-    private int      ChunkSize         => int.Parse(config["Coordinator:ChunkSize"] ?? "200");
+    private int      MapMatchingTripChunkSize         => int.Parse(config["Coordinator:MapMatchingTripChunkSize"] ?? "200");
+    private int      AggregateWayIdChunkSize         => int.Parse(config["Coordinator:AggregateWayIdChunkSize"] ?? "200");
     private int      MatchConcurrency  => int.Parse(config["Coordinator:MatchConcurrencyPerWorker"] ?? "2");
 
     private static readonly Action<ILogger, int, int, int, Exception?> _logCycle =
@@ -55,8 +56,8 @@ public class AggregationCoordinatorService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        logger.LogInformation("Aggregation coordinator started. Interval: {Interval}, ChunkSize: {Chunk}.",
-            Interval, ChunkSize);
+        logger.LogInformation("Aggregation coordinator started. Interval: {Interval}, AggregateWayIdChunkSize: {AggregateWayIdChunkSize}, MapMatchingTripChunkSize: {MapMatchingTripChunkSize}.",
+            Interval, AggregateWayIdChunkSize, MapMatchingTripChunkSize);
 
         await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
@@ -125,8 +126,8 @@ public class AggregationCoordinatorService(
     private async Task<List<long>> DispatchInterleavedAsync(
         List<string> trips, List<long> ways, string[] workerUrls, CancellationToken ct)
     {
-        var matchChunks = Chunk(trips, ChunkSize);
-        var aggChunks   = Chunk(ways,  ChunkSize);
+        var matchChunks = Chunk(trips, MapMatchingTripChunkSize);
+        var aggChunks   = Chunk(ways,  AggregateWayIdChunkSize);
 
         logger.LogInformation("Dispatching {M} match + {A} aggregate chunks across {W} workers.",
             matchChunks.Count, aggChunks.Count, workerUrls.Length);
@@ -216,7 +217,7 @@ public class AggregationCoordinatorService(
     private async Task DispatchAggregateAsync(
         List<long> ways, string[] workerUrls, CancellationToken ct)
     {
-        var aggChunks = Chunk(ways, ChunkSize);
+        var aggChunks = Chunk(ways, AggregateWayIdChunkSize);
         var aggChannel = Channel.CreateBounded<long[]>(new BoundedChannelOptions(aggChunks.Count + 1)
             { FullMode = BoundedChannelFullMode.Wait, SingleWriter = true });
 
