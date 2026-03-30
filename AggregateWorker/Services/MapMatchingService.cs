@@ -319,7 +319,7 @@ public class MapMatchingService(
                     || edge.Edge.OsmWayId == 0
                     || IsExcludedRoadType(edge.Edge.RoadType)) continue;
 
-                double speedMs = 0, lat = 0, lon = 0, accuracy = 0;
+                double speedMs = 0, maxSpeedMs = 0, lat = 0, lon = 0, accuracy = 0;
                 long ticks = 0;
                 int apiKeyId = 0;
                 bool hasRef = false;
@@ -332,6 +332,7 @@ public class MapMatchingService(
                     var obs = segment[mp.OriginalIndex];
 
                     speedMs  += iref.Percentage * obs.SpeedMs;
+                    maxSpeedMs += iref.Percentage * edge.Edge.MaxSpeedKmh / 3.6;
                     lat      += iref.Percentage * obs.Latitude;
                     lon      += iref.Percentage * obs.Longitude;
                     ticks    += (long)(iref.Percentage * obs.Timestamp.Ticks);
@@ -340,6 +341,8 @@ public class MapMatchingService(
                 }
 
                 if (!hasRef) continue;
+
+                if(speedMs > maxSpeedMs * 0.65) continue;
 
                 synthApiKeys.Add(apiKeyId);
                 synthTripIds.Add(tripId);
