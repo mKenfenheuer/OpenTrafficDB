@@ -65,7 +65,8 @@ builder.Services.AddHttpClient("otr", client =>
         Delay            = TimeSpan.FromSeconds(1),
         BackoffType      = DelayBackoffType.Constant,
         ShouldHandle     = args => ValueTask.FromResult(
-            args.Outcome.Exception is not null ||
+            (args.Outcome.Exception is not null
+                && args.Outcome.Exception is not Polly.CircuitBreaker.BrokenCircuitException) ||
             (int?)args.Outcome.Result?.StatusCode >= 500)
     });
     pipeline.AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
