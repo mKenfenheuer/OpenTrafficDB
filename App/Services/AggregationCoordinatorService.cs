@@ -93,13 +93,7 @@ public class AggregationCoordinatorService(
             return;
         }
 
-        // Discover both sets in parallel — they are disjoint (match=OsmWayId IS NULL,
-        // aggregate=OsmWayId IS NOT NULL) so the two discovery queries are independent.
-        var unmatchedTask  = GetUnmatchedTripIdsAsync(ct);
-        var unaggregatedTask = GetUnaggregatedWayIdsAsync(ct);
-        await Task.WhenAll(unmatchedTask, unaggregatedTask);
-        var unmatchedTrips   = unmatchedTask.Result;
-        var unaggregatedWays = unaggregatedTask.Result;
+        var unmatchedTrips   = await GetUnmatchedTripIdsAsync(ct);
 
         // Filter out trips that have repeatedly failed map matching.
         var maxRetries = MaxMatchRetries;
@@ -107,32 +101,18 @@ public class AggregationCoordinatorService(
         if (skipped > 0)
             logger.LogDebug("Skipping {Count} trips that failed map matching {Max}+ times.", skipped, maxRetries);
 
-        _logCycle(logger, unmatchedTrips.Count, unaggregatedWays.Count, workerUrls.Length, null);
 
-        bool didAggregate = unaggregatedWays.Count > 0;
-
+        var unaggregatedWays = await GetUnaggregatedWayIdsAsync(ct);
         // ── 1+2. Match and aggregate interleaved across workers ───────────────
         List<long> newlyMatchedWayIds = [];
         if (unmatchedTrips.Count > 0 || unaggregatedWays.Count > 0)
-            newlyMatchedWayIds = await DispatchInterleavedAsync(unmatchedTrips, unaggregatedWays, workerUrls, ct);
+            _ = DispatchInterleavedAsync(unmatchedTrips, unaggregatedWays, workerUrls, ct);
 
-        // ── 2b. Follow-up: aggregate ways that were just matched this cycle ───
-        // These weren't in the initial unaggregatedWays discovery, so they'd
-        // normally wait until the next cycle. Aggregate them immediately.
-        var followUpWays = newlyMatchedWayIds
-            .Except(unaggregatedWays)
-            .Distinct()
-            .ToList();
 
-        if (followUpWays.Count > 0)
-        {
-            logger.LogInformation("Follow-up: aggregating {Count} newly matched ways immediately.", followUpWays.Count);
-            await DispatchAggregateAsync(followUpWays, workerUrls, ct);
-            didAggregate = true;
-        }
+        _logCycle(logger, unmatchedTrips.Count, unaggregatedWays.Count, workerUrls.Length, null);
 
         // ── 3. Finalize — only needed when aggregation ran ────────────────────
-        if (didAggregate)
+        if (unaggregatedWays.Count > 0)
             await workerClient.SendFinalizeAsync(ct);
     }
 
