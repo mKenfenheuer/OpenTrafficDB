@@ -106,7 +106,7 @@ public class AggregationCoordinatorService(
         // ── 1+2. Match and aggregate interleaved across workers ───────────────
         List<long> newlyMatchedWayIds = [];
         if (unmatchedTrips.Count > 0 || unaggregatedWays.Count > 0)
-            _ = DispatchInterleavedAsync(unmatchedTrips, unaggregatedWays, workerUrls, ct);
+            await DispatchInterleavedAsync(unmatchedTrips, unaggregatedWays, workerUrls, ct);
 
 
         _logCycle(logger, unmatchedTrips.Count, unaggregatedWays.Count, workerUrls.Length, null);
