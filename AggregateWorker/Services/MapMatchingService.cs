@@ -42,6 +42,9 @@ public class MapMatchingService(
     private static readonly Action<ILogger, int, int, int, int, int, Exception?> _logParseSkip =
         LoggerMessage.Define<int, int, int, int, int>(LogLevel.Debug, default,
             "Trace parse: {Total} points → {Matched} matched, {BadType} bad type, {NoEdge} no edge index, {Excluded} excluded edge");
+    private static readonly Action<ILogger, int, Exception?> _logInterpolated =
+        LoggerMessage.Define<int>(LogLevel.Debug, default,
+            "Map-matching returned {Interpoladed} edges.");
 
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -377,6 +380,7 @@ public class MapMatchingService(
                     new NpgsqlParameter("speed_limits",NpgsqlDbType.Array | NpgsqlDbType.Double)       { Value = synthLimits.ToArray()    },
                 ],
                 ct);
+            _logInterpolated(logger, synthWayIds.Count, null);
         }
 
         var total = matchedIds.Count + synthWayIds.Count;
