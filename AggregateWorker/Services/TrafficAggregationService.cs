@@ -14,17 +14,6 @@ public class TrafficAggregationService(
     ReadOnlyAppDbContext readDb,
     ILogger<TrafficAggregationService> logger)
 {
-
-    // ── Traffic jam estimation ───────────────────────────────────────────────────
-
-    public static double ComputeJam(double delay) => delay switch
-    {
-        <= 0    => 0.0,
-        <= 0.6  => delay * (0.7 / 0.6),
-        <= 0.85 => 0.7 + (delay - 0.6) * (0.3 / 0.25),
-        _       => 1.0
-    };
-
     // ── Time-bucket helpers ─────────────────────────────────────────────────────
 
     private static readonly TimeSpan UnmatchedRetention = TimeSpan.FromHours(24);

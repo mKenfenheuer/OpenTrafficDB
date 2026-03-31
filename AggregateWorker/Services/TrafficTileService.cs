@@ -55,9 +55,9 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                     CASE WHEN base."ConstrainedSpeed" IS NOT NULL THEN 'live'
                          ELSE 'historic' END                                            AS source,
                     base.speed_limit_kmh,
-                    CASE WHEN base.speed_limit_kmh > 0
+                    CASE WHEN base."FreeflowSpeed" IS NOT NULL
                          THEN ROUND(base.delay::numeric, 3)::float8 END                AS delay_factor,
-                    CASE WHEN base.speed_limit_kmh > 0
+                    CASE WHEN base."FreeflowSpeed" IS NOT NULL
                          THEN ROUND((CASE
                                  WHEN base.delay <= 0    THEN 0.0
                                  WHEN base.delay <= 0.6  THEN base.delay * (0.7 / 0.6)
@@ -74,7 +74,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                         COALESCE(wss."SpeedLimitKmh", wg."MaxSpeedKmh")                AS speed_limit_kmh,
                         LEAST(GREATEST(
                             1.0 - COALESCE(wss."ConstrainedSpeed", wss."FreeflowSpeed")
-                                / NULLIF(COALESCE(wss."SpeedLimitKmh", wg."MaxSpeedKmh"), 0),
+                                / NULLIF(wss."FreeflowSpeed", 0),
                             0.0), 1.0)                                                  AS delay
                     FROM "WayGeometries" wg
                     JOIN "WaySpeedSummaries" wss ON wss."OsmWayId" = wg."OsmWayId"
