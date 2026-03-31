@@ -136,8 +136,8 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
       Jwt__Key: ${JWT_KEY}
-      Coordinator__MapMatchingTripChunkSize: 15
-      Coordinator__AggregateWayIdChunkSize: 1000
+      Coordinator__MapMatchingTripChunkSize: 100
+      Coordinator__AggregateWayIdChunkSize: 5000
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       BaseUrl: ${BASE_URL}
       Email__SmtpHost: ${SMTP_HOST:-}
