@@ -74,7 +74,7 @@ public class MapMatchingService(
             costing = "auto",
             gps_accuracy = 10.0,
             search_radius = 50.0,
-            interpolate = true
+            interpolate = false
         };
 
         var json = JsonSerializer.Serialize(request, _jsonOptions);
@@ -342,7 +342,7 @@ public class MapMatchingService(
 
                 if (!hasRef) continue;
 
-                if(speedMs > maxSpeedMs * 0.65) continue;
+                //if(speedMs > maxSpeedMs * 0.65) continue;
 
                 synthApiKeys.Add(apiKeyId);
                 synthTripIds.Add(tripId);
