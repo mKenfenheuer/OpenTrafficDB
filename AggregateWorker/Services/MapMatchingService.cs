@@ -74,7 +74,7 @@ public class MapMatchingService(
             costing = "auto",
             gps_accuracy = 10.0,
             search_radius = 50.0,
-            interpolate = false
+            interpolate = true
         };
 
         var json = JsonSerializer.Serialize(request, _jsonOptions);
