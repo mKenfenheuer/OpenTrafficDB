@@ -93,6 +93,7 @@ services:
       Jwt__Key: ${JWT_KEY}
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
+      Logging__LogLevel__OpenTrafficDB: Information
     depends_on:
       pgbouncer:
         condition: service_started
