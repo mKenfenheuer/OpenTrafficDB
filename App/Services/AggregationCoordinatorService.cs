@@ -105,15 +105,14 @@ public class AggregationCoordinatorService(
 
         var unaggregatedWays = await GetUnaggregatedWayIdsAsync(ct);
         // ── 1+2. Match and aggregate interleaved across workers ───────────────
-        List<long> newlyMatchedWayIds = [];
         if (unmatchedTrips.Count > 0 || unaggregatedWays.Count > 0)
             await DispatchInterleavedAsync(unmatchedTrips, unaggregatedWays, workerUrls, ct);
 
 
         _logCycle(logger, unmatchedTrips.Count, unaggregatedWays.Count, workerUrls.Length, null);
 
-        // ── 3. Finalize — only needed when aggregation ran ────────────────────
-        if (unaggregatedWays.Count > 0)
+        // ── 3. Finalize — needed when aggregation ran (initial or from match results) ──
+        if (unaggregatedWays.Count > 0 || unmatchedTrips.Count > 0)
             await workerClient.SendFinalizeAsync(ct);
     }
 
@@ -121,9 +120,12 @@ public class AggregationCoordinatorService(
     /// Dispatches match and aggregate chunks to workers via two independent channels.
     /// Each worker runs a match lane and an aggregate lane concurrently, so Valhalla I/O
     /// and DB aggregation overlap — neither waits on the other.
-    /// Returns the set of OsmWayIds produced by match jobs for follow-up aggregation.
+    ///
+    /// The aggregate channel stays open while matching runs: each completed match job
+    /// feeds its newly-matched way IDs straight into the aggregate channel so workers
+    /// aggregate continuously instead of waiting for the next coordinator cycle.
     /// </summary>
-    private async Task<List<long>> DispatchInterleavedAsync(
+    private async Task DispatchInterleavedAsync(
         List<string> trips, List<long> ways, string[] workerUrls, CancellationToken ct)
     {
         var matchChunks = Chunk(trips, MapMatchingTripChunkSize);
@@ -134,81 +136,83 @@ public class AggregationCoordinatorService(
 
         var matchChannel = Channel.CreateBounded<string[]>(new BoundedChannelOptions(matchChunks.Count + 1)
             { FullMode = BoundedChannelFullMode.Wait, SingleWriter = true });
-        var aggChannel   = Channel.CreateBounded<long[]>(new BoundedChannelOptions(aggChunks.Count + 1)
-            { FullMode = BoundedChannelFullMode.Wait, SingleWriter = true });
+        // Unbounded + multi-writer: match results feed new aggregate work from concurrent tasks.
+        var aggChannel   = Channel.CreateUnbounded<long[]>(new UnboundedChannelOptions
+            { SingleWriter = false });
 
         foreach (var chunk in matchChunks) await matchChannel.Writer.WriteAsync(chunk);
         foreach (var chunk in aggChunks)   await aggChannel.Writer.WriteAsync(chunk);
         matchChannel.Writer.Complete();
-        aggChannel.Writer.Complete();
-
-        // Collect matched way IDs from all match results for follow-up aggregation.
-        var matchedWayIdBag = new System.Collections.Concurrent.ConcurrentBag<long[]>();
+        // aggChannel stays open — completed after all match lanes finish.
 
         var matchConcurrency = MatchConcurrency;
+        var aggChunkSize = AggregateWayIdChunkSize;
 
-        await Task.WhenAll(workerUrls.Select(url => Task.Run(async () =>
+        // ── Match lanes (one per worker, each with semaphore-limited concurrency) ──
+        var matchTasks = workerUrls.Select(url => Task.Run(async () =>
         {
-            // Match lane: process up to matchConcurrency chunks concurrently per worker.
-            var matchLane = Task.Run(async () =>
-            {
-                var sem = new SemaphoreSlim(matchConcurrency, matchConcurrency);
-                var inflight = new List<Task>();
+            var sem = new SemaphoreSlim(matchConcurrency, matchConcurrency);
+            var inflight = new List<Task>();
 
-                await foreach (var tripIds in matchChannel.Reader.ReadAllAsync(ct))
+            await foreach (var tripIds in matchChannel.Reader.ReadAllAsync(ct))
+            {
+                await sem.WaitAsync(ct);
+                var captured = tripIds;
+                inflight.Add(Task.Run(async () =>
                 {
-                    await sem.WaitAsync(ct);
-                    var captured = tripIds;
-                    inflight.Add(Task.Run(async () =>
+                    try
                     {
-                        try
+                        var result = await workerClient.SendMatchJobAsync(url, new MatchJobRequest(captured), ct);
+                        if (result is not null)
                         {
-                            var result = await workerClient.SendMatchJobAsync(url, new MatchJobRequest(captured), ct);
-                            if (result is not null)
-                            {
-                                _logMatchChunkOk(logger, captured.Length, url, result.Matched, null);
-                                if (result.MatchedWayIds is { Length: > 0 })
-                                    matchedWayIdBag.Add(result.MatchedWayIds);
+                            _logMatchChunkOk(logger, captured.Length, url, result.Matched, null);
 
-                                // Track failures: increment for failed trips, remove for successful ones.
-                                if (result.FailedTripIds is { Length: > 0 })
-                                    foreach (var t in result.FailedTripIds)
-                                        _tripFailures.AddOrUpdate(t, 1, (_, c) => c + 1);
+                            // Feed newly matched ways straight into the aggregate channel.
+                            if (result.MatchedWayIds is { Length: > 0 })
+                                foreach (var chunk in Chunk(result.MatchedWayIds.ToList(), aggChunkSize))
+                                    await aggChannel.Writer.WriteAsync(chunk, ct);
 
-                                // Trips in the chunk that aren't in FailedTripIds succeeded — reset.
-                                var failedSet = result.FailedTripIds is { Length: > 0 }
-                                    ? new HashSet<string>(result.FailedTripIds)
-                                    : [];
-                                foreach (var t in captured)
-                                    if (!failedSet.Contains(t))
-                                        _tripFailures.TryRemove(t, out _);
-                            }
-                            else
-                            {
-                                _logMatchChunkFail(logger, captured.Length, url, null);
-                            }
+                            // Track failures: increment for failed trips, remove for successful ones.
+                            if (result.FailedTripIds is { Length: > 0 })
+                                foreach (var t in result.FailedTripIds)
+                                    _tripFailures.AddOrUpdate(t, 1, (_, c) => c + 1);
+
+                            var failedSet = result.FailedTripIds is { Length: > 0 }
+                                ? new HashSet<string>(result.FailedTripIds)
+                                : [];
+                            foreach (var t in captured)
+                                if (!failedSet.Contains(t))
+                                    _tripFailures.TryRemove(t, out _);
                         }
-                        finally { sem.Release(); }
-                    }, ct));
-                }
+                        else
+                        {
+                            _logMatchChunkFail(logger, captured.Length, url, null);
+                        }
+                    }
+                    finally { sem.Release(); }
+                }, ct));
+            }
 
-                await Task.WhenAll(inflight);
-            }, ct);
+            await Task.WhenAll(inflight);
+        }, ct)).ToArray();
 
-            var aggLane = Task.Run(async () =>
+        // ── Aggregate lanes (one per worker, sequential per lane) ──
+        var aggTasks = workerUrls.Select(url => Task.Run(async () =>
+        {
+            await foreach (var wayIds in aggChannel.Reader.ReadAllAsync(ct))
             {
-                await foreach (var wayIds in aggChannel.Reader.ReadAllAsync(ct))
-                {
-                    var result = await workerClient.SendAggregateJobAsync(url, new AggregateJobRequest(wayIds), ct);
-                    if (result is not null) _logAggChunkOk(logger, wayIds.Length, url, result.Processed, null);
-                    else                   _logAggChunkFail(logger, wayIds.Length, url, null);
-                }
-            }, ct);
+                var result = await workerClient.SendAggregateJobAsync(url, new AggregateJobRequest(wayIds), ct);
+                if (result is not null) _logAggChunkOk(logger, wayIds.Length, url, result.Processed, null);
+                else                   _logAggChunkFail(logger, wayIds.Length, url, null);
+            }
+        }, ct)).ToArray();
 
-            await Task.WhenAll(matchLane, aggLane);
-        }, ct)));
+        // Once all match lanes finish, no more aggregate work will arrive — close the channel.
+        await Task.WhenAll(matchTasks);
+        aggChannel.Writer.Complete();
 
-        return matchedWayIdBag.SelectMany(ids => ids).ToList();
+        // Now wait for the aggregate lanes to drain.
+        await Task.WhenAll(aggTasks);
     }
 
     /// <summary>
