@@ -184,8 +184,12 @@ public class TrafficAggregationService(
 
             // Freeflow must not drop below 60% of speed limit — protects against
             // systematic low-sample EMA drift dragging freeflow into congested range.
+            // Freeflow also must not exceed the speed limit.
             if (speedLimit is > 0)
+            {
                 emaFreeflow = Math.Max(emaFreeflow, speedLimit.Value * 0.6);
+                emaFreeflow = Math.Min(emaFreeflow, speedLimit.Value);
+            }
 
             results[i] = (wayId, Math.Round(emaConstrained, 1), Math.Round(emaFreeflow, 1),
                           speedLimit, group.Max(o => o.Timestamp));
