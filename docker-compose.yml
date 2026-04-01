@@ -100,6 +100,24 @@ services:
       redis:
         condition: service_healthy
 
+  aggregate-2:
+    image: ${AGGREGATE_IMAGE:-registry.gitlab.com/opentrafficdb/aggregate:latest}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
+      ConnectionStrings__ReadConnection: "Host=${READ_DB_HOST:-pgbouncer};Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD}"
+      Jwt__Key: ${JWT_KEY}
+      Security__IpHashPepper: ${IP_HASH_PEPPER}
+      OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
+      Logging__LogLevel__OpenTrafficDB: Information
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
   osm-importer:
     image: ${OSM_IMPORTER_IMAGE:-registry.gitlab.com/opentrafficdb/osm-importer:latest}
     restart: unless-stopped
@@ -137,7 +155,7 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
       Jwt__Key: ${JWT_KEY}
-      Coordinator__MapMatchingTripChunkSize: 100
+      Coordinator__MapMatchingTripChunkSize: 2500
       Coordinator__AggregateWayIdChunkSize: 5000
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       BaseUrl: ${BASE_URL}
@@ -150,7 +168,8 @@ services:
       Email__FromName: ${SMTP_FROM_NAME:-OpenTrafficDB}
       Workers__Ingest__Urls__0: http://ingest:8080
       Workers__Aggregate__Urls__0: http://aggregate:8080
-      Workers__Aggregate__Urls__1: http://localhost:8080
+      Workers__Aggregate__Urls__1: http://aggregate-2:8080
+      Workers__Aggregate__Urls__2: http://localhost:8080
       Workers__Routing__Urls__0: http://routing:8080
     depends_on:
       pgbouncer:

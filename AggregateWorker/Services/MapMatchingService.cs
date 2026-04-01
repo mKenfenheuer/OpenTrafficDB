@@ -24,9 +24,9 @@ public class MapMatchingService(
     IConfiguration config,
     ILogger<MapMatchingService> logger)
 {
-    private readonly string _otrBaseUrl    = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
-    private readonly int    _maxConcurrent = int.TryParse(config["OpenTrafficRouting:MaxConcurrent"], out var mc) ? mc : 4;
-    private readonly int    _batchSize     = int.TryParse(config["OpenTrafficRouting:BatchSize"], out var bs) ? bs : 25;
+    private readonly string _otrBaseUrl = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
+    private readonly int _maxConcurrent = int.TryParse(config["OpenTrafficRouting:MaxConcurrent"], out var mc) ? mc : 4;
+    private readonly int _batchSize = int.TryParse(config["OpenTrafficRouting:BatchSize"], out var bs) ? bs : 25;
 
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
         LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
@@ -214,6 +214,8 @@ public class MapMatchingService(
         var rawResults = new TraceResult?[allPolylines.Count];
         var sem = new SemaphoreSlim(_maxConcurrent, _maxConcurrent);
 
+        var stopwatch1 = new Stopwatch();
+        stopwatch1.Start();
         await Task.WhenAll(batches.Select(async (batch, bi) =>
         {
             await sem.WaitAsync(ct);
@@ -225,16 +227,19 @@ public class MapMatchingService(
                 for (int i = 0; i < results.Count; i++)
                     rawResults[batch[i].OrigIndex] = results[i];
                 stopwatch.Stop();
-                logger.LogInformation($"Batch completed: {batch.Count} polylines in {stopwatch.Elapsed} => {stopwatch.Elapsed / batch.Count} per polyline");
+                logger.LogDebug($"Batch completed: {batch.Count} polylines in {stopwatch.ElapsedMilliseconds}ms => {stopwatch.ElapsedMilliseconds / batch.Count}ms per polyline");
             }
             finally { sem.Release(); }
         }));
+        stopwatch1.Stop();
+
+        logger.LogInformation($"Batch completed: {batches.Sum(b => b.Count)} polylines in {stopwatch1.ElapsedMilliseconds}ms => {stopwatch1.ElapsedMilliseconds / batches.Sum(b => b.Count)}ms per polyline");
 
         // ── Point matches: UPDATE existing observations with their matched way ──
-        var matchedIds    = new List<long>();
+        var matchedIds = new List<long>();
         var matchedWayIds = new List<long>();
         var matchedLimits = new List<double?>();
-        var staleIds      = new List<long>();
+        var staleIds = new List<long>();
 
         var tripMatchedIds = new HashSet<long>[trips.Count];
         for (int i = 0; i < trips.Count; i++)
@@ -297,15 +302,15 @@ public class MapMatchingService(
         // ── Interpolated edges: INSERT synthetic observations ────────────────────
         // Each interpolated edge represents a road segment traversed between two GPS
         // points. Speed, timestamp, and position are weighted by interpolation_references.
-        var synthApiKeys   = new List<int>();
-        var synthTripIds   = new List<string>();
+        var synthApiKeys = new List<int>();
+        var synthTripIds = new List<string>();
         var synthTimestamp = new List<DateTime>();
-        var synthLats      = new List<double>();
-        var synthLons      = new List<double>();
-        var synthSpeeds    = new List<double>();
-        var synthAccuracy  = new List<float>();
-        var synthWayIds    = new List<long>();
-        var synthLimits    = new List<double?>();
+        var synthLats = new List<double>();
+        var synthLons = new List<double>();
+        var synthSpeeds = new List<double>();
+        var synthAccuracy = new List<float>();
+        var synthWayIds = new List<long>();
+        var synthLimits = new List<double?>();
 
         for (int bi = 0; bi < allSegments.Count; bi++)
         {
@@ -336,11 +341,11 @@ public class MapMatchingService(
                     if (mp.OriginalIndex >= segment.Count) continue;
                     var obs = segment[mp.OriginalIndex];
 
-                    speedMs  += iref.Percentage * obs.SpeedMs;
+                    speedMs += iref.Percentage * obs.SpeedMs;
                     maxSpeedMs += iref.Percentage * edge.Edge.MaxSpeedKmh / 3.6;
-                    lat      += iref.Percentage * obs.Latitude;
-                    lon      += iref.Percentage * obs.Longitude;
-                    ticks    += (long)(iref.Percentage * obs.Timestamp.Ticks);
+                    lat += iref.Percentage * obs.Latitude;
+                    lon += iref.Percentage * obs.Longitude;
+                    ticks += (long)(iref.Percentage * obs.Timestamp.Ticks);
                     accuracy += iref.Percentage * obs.GpsAccuracyMeters;
                     if (!hasRef) { apiKeyId = obs.ApiKeyId; hasRef = true; }
                 }
@@ -421,23 +426,23 @@ public class MapMatchingService(
     private static List<List<SpeedObservation>> SplitTrace(List<SpeedObservation> sorted)
     {
         const double maxSegmentMeters = 20_000;
-        const double maxGapMeters     =    500;
+        const double maxGapMeters = 500;
 
         var segments = new List<List<SpeedObservation>>();
-        var current  = new List<SpeedObservation>([sorted[0]]);
+        var current = new List<SpeedObservation>([sorted[0]]);
         double length = 0;
 
         for (int i = 1; i < sorted.Count; i++)
         {
             var prev = sorted[i - 1];
-            var pt   = sorted[i];
+            var pt = sorted[i];
             double d = HaversineMeters(prev.Latitude, prev.Longitude, pt.Latitude, pt.Longitude);
 
             if (d > maxGapMeters || length + d > maxSegmentMeters)
             {
                 segments.Add(current);
                 current = new List<SpeedObservation>();
-                length  = 0;
+                length = 0;
             }
 
             current.Add(pt);
@@ -516,7 +521,7 @@ public class MapMatchingService(
             if (IsExcludedRoadType(edgeInfo.RoadType)) { excluded++; continue; }
 
             results[mp.OriginalIndex] = new MatchResult(
-                OsmWayId:      edgeInfo.OsmWayId,
+                OsmWayId: edgeInfo.OsmWayId,
                 SpeedLimitKmh: edgeInfo.MaxSpeedKmh > 0 ? edgeInfo.MaxSpeedKmh : null);
         }
 
