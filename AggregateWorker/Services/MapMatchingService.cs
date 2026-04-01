@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -218,9 +219,13 @@ public class MapMatchingService(
             await sem.WaitAsync(ct);
             try
             {
+                var stopwatch = new Stopwatch();
+                stopwatch.Start();
                 var results = await MatchTracesBulkAsync(batch.Select(b => b.Polyline).ToList(), ct);
                 for (int i = 0; i < results.Count; i++)
                     rawResults[batch[i].OrigIndex] = results[i];
+                stopwatch.Stop();
+                logger.LogInformation($"Batch completed: {batch.Count} polylines in {stopwatch.Elapsed} => {stopwatch.Elapsed / batch.Count} per polyline");
             }
             finally { sem.Release(); }
         }));
