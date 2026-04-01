@@ -169,7 +169,6 @@ services:
       Workers__Ingest__Urls__0: http://ingest:8080
       Workers__Aggregate__Urls__0: http://aggregate:8080
       Workers__Aggregate__Urls__1: http://aggregate-2:8080
-      Workers__Aggregate__Urls__2: http://localhost:8080
       Workers__Routing__Urls__0: http://routing:8080
     depends_on:
       pgbouncer:
