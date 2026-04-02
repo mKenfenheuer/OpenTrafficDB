@@ -49,10 +49,6 @@ public class AggregationCoordinatorService(
     // A full coordinator lock requires Redis in the App tier; this handles single-instance overlap.
     private int _cycleRunning = 0;
 
-    // Tracks consecutive match failures per trip. Trips that fail MaxMatchRetries times
-    // are skipped to avoid wasting OTR calls on unmatchable GPS traces.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _tripFailures = new();
-    private int MaxMatchRetries => int.Parse(config["Coordinator:MaxMatchRetries"] ?? "3");
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -95,13 +91,6 @@ public class AggregationCoordinatorService(
         }
 
         var unmatchedTrips   = await GetUnmatchedTripIdsAsync(ct);
-
-        // Filter out trips that have repeatedly failed map matching.
-        var maxRetries = MaxMatchRetries;
-        var skipped = unmatchedTrips.RemoveAll(t => _tripFailures.TryGetValue(t, out var c) && c >= maxRetries);
-        if (skipped > 0)
-            logger.LogDebug("Skipping {Count} trips that failed map matching {Max}+ times.", skipped, maxRetries);
-
 
         var unaggregatedWays = await GetUnaggregatedWayIdsAsync(ct);
         // ── 1+2. Match and aggregate interleaved across workers ───────────────
@@ -172,17 +161,6 @@ public class AggregationCoordinatorService(
                                 foreach (var chunk in Chunk(result.MatchedWayIds.ToList(), aggChunkSize))
                                     await aggChannel.Writer.WriteAsync(chunk, ct);
 
-                            // Track failures: increment for failed trips, remove for successful ones.
-                            if (result.FailedTripIds is { Length: > 0 })
-                                foreach (var t in result.FailedTripIds)
-                                    _tripFailures.AddOrUpdate(t, 1, (_, c) => c + 1);
-
-                            var failedSet = result.FailedTripIds is { Length: > 0 }
-                                ? new HashSet<string>(result.FailedTripIds)
-                                : [];
-                            foreach (var t in captured)
-                                if (!failedSet.Contains(t))
-                                    _tripFailures.TryRemove(t, out _);
                         }
                         else
                         {
