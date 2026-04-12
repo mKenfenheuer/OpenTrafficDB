@@ -19,27 +19,19 @@ namespace OpenTrafficDB.Shared.Migrations
                   AND left(trim("Metadata"), 1) != '{';
                 """);
 
-            migrationBuilder.AlterColumn<string>(
-                name: "Metadata",
-                table: "HazardAggregates",
-                type: "jsonb",
-                nullable: true,
-                oldClrType: typeof(string),
-                oldType: "text",
-                oldNullable: true);
+            migrationBuilder.Sql("""
+                ALTER TABLE "HazardAggregates"
+                ALTER COLUMN "Metadata" TYPE jsonb USING "Metadata"::jsonb;
+                """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AlterColumn<string>(
-                name: "Metadata",
-                table: "HazardAggregates",
-                type: "text",
-                nullable: true,
-                oldClrType: typeof(string),
-                oldType: "jsonb",
-                oldNullable: true);
+            migrationBuilder.Sql("""
+                ALTER TABLE "HazardAggregates"
+                ALTER COLUMN "Metadata" TYPE text USING "Metadata"::text;
+                """);
         }
     }
 }
