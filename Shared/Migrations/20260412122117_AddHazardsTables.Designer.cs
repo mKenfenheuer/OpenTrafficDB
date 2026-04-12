@@ -13,7 +13,7 @@ using OpenTrafficDB.Shared.Data;
 namespace OpenTrafficDB.Shared.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260412121301_AddHazardsTables")]
+    [Migration("20260412122117_AddHazardsTables")]
     partial class AddHazardsTables
     {
         /// <inheritdoc />
