@@ -21,6 +21,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<CryptoService>();
 builder.Services.AddScoped<SpeedValidationService>();
+builder.Services.AddScoped<HazardValidationService>();
 builder.Services.AddHostedService<PartitionMaintenanceService>();
 
 // ── Internal JWT Authentication ───────────────────────────────────────────────

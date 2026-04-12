@@ -46,6 +46,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(
 builder.Services.AddScoped<TrafficAggregationService>();
 builder.Services.AddScoped<MapMatchingService>();
 builder.Services.AddScoped<TrafficTileService>();
+builder.Services.AddScoped<HazardTileService>();
 builder.Services.AddHostedService<PartitionMaintenanceService>();
 builder.Services.AddTransient<RateLimitRetryHandler>();
 

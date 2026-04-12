@@ -115,6 +115,135 @@ public class TileController(WorkerClient workers, IConfiguration config) : Contr
         return Content(json, "application/json");
     }
 
+    // ── Hazard tiles ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// TileJSON 3.0 metadata for the hazards overlay.
+    /// </summary>
+    [HttpGet("hazards/current.json")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetHazardTileJson()
+    {
+        var baseUrl = config["BaseUrl"]?.TrimEnd('/') ?? $"{Request.Scheme}://{Request.Host}";
+        return Ok(new
+        {
+            tilejson    = "3.0.0",
+            name        = "OpenTrafficDB — Hazards",
+            description = "User-reported traffic hazards: cameras, accidents, police, road works, and more.",
+            version     = "1.0.0",
+            attribution = "© OpenTrafficDB contributors, © OpenStreetMap contributors",
+            scheme      = "xyz",
+            tiles       = new[] { $"{baseUrl}/tiles/hazards/current/{{z}}/{{x}}/{{y}}" },
+            minzoom     = 6,
+            maxzoom     = 16,
+            bounds      = new[] { -180.0, -85.0511, 180.0, 85.0511 },
+            vector_layers = new[]
+            {
+                new
+                {
+                    id          = "hazards",
+                    description = "Point features representing active traffic hazards.",
+                    minzoom     = 6,
+                    maxzoom     = 16,
+                    fields      = new Dictionary<string, string>
+                    {
+                        ["osm_way_id"]          = "OSM way ID of the matched edge",
+                        ["hazard_type"]         = "Hazard type (SpeedCamera, Accident, PoliceControl, etc.)",
+                        ["metadata"]            = "JSON metadata (e.g. max_speed for cameras)",
+                        ["confirmation_count"]  = "Number of user confirmations",
+                        ["last_confirmed_epoch"] = "Unix epoch of last confirmation",
+                        ["expires_epoch"]        = "Unix epoch when hazard expires",
+                    }
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// MapLibre GL style JSON for the hazards overlay.
+    /// </summary>
+    [HttpGet("hazards/current/style.json")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetHazardStyleJson()
+    {
+        var baseUrl     = config["BaseUrl"]?.TrimEnd('/') ?? $"{Request.Scheme}://{Request.Host}";
+        var tileJsonUrl = $"{baseUrl}/tiles/hazards/current.json";
+
+        var json = $$"""
+            {
+              "version": 8,
+              "name": "OpenTrafficDB Hazards",
+              "sources": {
+                "hazards": {
+                  "type": "vector",
+                  "url": "{{tileJsonUrl}}"
+                }
+              },
+              "layers": [
+                {
+                  "id": "hazard-points",
+                  "type": "circle",
+                  "source": "hazards",
+                  "source-layer": "hazards",
+                  "minzoom": 6,
+                  "paint": {
+                    "circle-radius": [
+                      "interpolate", ["linear"], ["zoom"],
+                      6, 3,
+                      10, 5,
+                      14, 8
+                    ],
+                    "circle-color": [
+                      "match", ["get", "hazard_type"],
+                      "SpeedCamera",      "#ff6600",
+                      "DistanceCamera",   "#ff6600",
+                      "RedLightCamera",   "#ff0000",
+                      "MultiCamera",      "#ff3300",
+                      "SectionControl",   "#ff6600",
+                      "WeightControl",    "#996633",
+                      "Accident",         "#cc0000",
+                      "BrokenDownCar",    "#cc6600",
+                      "Debris",           "#999900",
+                      "Pedestrian",       "#0066cc",
+                      "PoliceGeneral",    "#0000cc",
+                      "PoliceRoadBlock",  "#0000ff",
+                      "PoliceControl",    "#3333ff",
+                      "PoliceAlcohol",    "#6600cc",
+                      "RoadWorks",        "#ff9900",
+                      "TrafficJam",       "#cc0000",
+                      "#888888"
+                    ],
+                    "circle-opacity": 0.9,
+                    "circle-stroke-width": 1,
+                    "circle-stroke-color": "#ffffff"
+                  }
+                }
+              ]
+            }
+            """;
+
+        return Content(json, "application/json");
+    }
+
+    /// <summary>
+    /// Hazard overlay tile in Mapbox Vector Tile format (gzip-compressed protobuf).
+    /// </summary>
+    [HttpGet("hazards/current/{z}/{x}/{y}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetHazardTile(int z, int x, int y, CancellationToken ct)
+    {
+        if (z is < 0 or > 22) return BadRequest(new { error = "Zoom level must be between 0 and 22." });
+
+        int maxCoord = 1 << z;
+        if (x < 0 || x >= maxCoord || y < 0 || y >= maxCoord)
+            return BadRequest(new { error = $"Tile coordinates out of range for zoom {z}." });
+
+        await workers.ProxyPublicAsync("Aggregate",
+            $"/internal/tiles/hazards/current/{z}/{x}/{y}", Response, ct);
+        return new EmptyResult();
+    }
+
     /// <summary>
     /// Current traffic overlay tile in Mapbox Vector Tile format (gzip-compressed protobuf).
     /// </summary>

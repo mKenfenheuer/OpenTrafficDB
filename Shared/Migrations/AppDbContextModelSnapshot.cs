@@ -125,6 +125,112 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.ToTable("BlockedIps");
                 });
 
+            modelBuilder.Entity("OpenTrafficDB.Shared.Models.HazardAggregate", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("ConfirmationCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("FirstReportedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("HazardType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("LastConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Metadata")
+                        .HasColumnType("text");
+
+                    b.Property<long>("OsmWayId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("Latitude", "Longitude");
+
+                    b.HasIndex("OsmWayId", "HazardType")
+                        .IsUnique();
+
+                    b.ToTable("HazardAggregates");
+
+                    b.HasAnnotation("Npgsql:StorageParameter:fillfactor", 80);
+                });
+
+            modelBuilder.Entity("OpenTrafficDB.Shared.Models.HazardObservation", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("ApiKeyId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<float>("GpsAccuracyMeters")
+                        .HasColumnType("real");
+
+                    b.Property<string>("HazardType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<float?>("Heading")
+                        .HasColumnType("real");
+
+                    b.Property<bool>("IsProcessed")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Metadata")
+                        .HasColumnType("text");
+
+                    b.Property<long?>("OsmWayId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyId");
+
+                    b.HasIndex("OsmWayId")
+                        .HasFilter("\"OsmWayId\" IS NOT NULL");
+
+                    b.HasIndex("IsProcessed", "CreatedAt");
+
+                    b.HasIndex("Latitude", "Longitude");
+
+                    b.ToTable("HazardObservations");
+                });
+
             modelBuilder.Entity("OpenTrafficDB.Shared.Models.SpeedObservation", b =>
                 {
                     b.Property<long>("Id")
@@ -407,6 +513,17 @@ namespace OpenTrafficDB.Shared.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("OpenTrafficDB.Shared.Models.HazardObservation", b =>
+                {
+                    b.HasOne("OpenTrafficDB.Shared.Models.ApiKey", "ApiKey")
+                        .WithMany()
+                        .HasForeignKey("ApiKeyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ApiKey");
                 });
 
             modelBuilder.Entity("OpenTrafficDB.Shared.Models.SpeedObservation", b =>

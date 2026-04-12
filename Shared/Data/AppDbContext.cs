@@ -21,6 +21,8 @@ public class AppDbContext : DbContext
     public DbSet<WayGeometry> WayGeometries => Set<WayGeometry>();
     public DbSet<WaySpeedSummary> WaySpeedSummaries => Set<WaySpeedSummary>();
     public DbSet<AggregationMetric> AggregationMetrics => Set<AggregationMetric>();
+    public DbSet<HazardObservation> HazardObservations => Set<HazardObservation>();
+    public DbSet<HazardAggregate> HazardAggregates => Set<HazardAggregate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -106,6 +108,28 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AggregationMetric>(e =>
         {
             e.HasIndex(m => m.ProcessedAt);
+        });
+
+        modelBuilder.Entity<HazardObservation>(e =>
+        {
+            e.Property(h => h.HazardType).HasConversion<string>();
+            e.HasIndex(h => new { h.IsProcessed, h.CreatedAt });
+            e.HasIndex(h => new { h.Latitude, h.Longitude });
+            e.HasIndex(h => h.OsmWayId).HasFilter("\"OsmWayId\" IS NOT NULL");
+            e.HasIndex(h => h.ApiKeyId);
+            e.HasOne(h => h.ApiKey)
+             .WithMany()
+             .HasForeignKey(h => h.ApiKeyId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<HazardAggregate>(e =>
+        {
+            e.Property(h => h.HazardType).HasConversion<string>();
+            e.HasIndex(h => new { h.OsmWayId, h.HazardType }).IsUnique();
+            e.HasIndex(h => h.ExpiresAt);
+            e.HasIndex(h => new { h.Latitude, h.Longitude });
+            e.HasStorageParameter("fillfactor", 80);
         });
     }
 }
