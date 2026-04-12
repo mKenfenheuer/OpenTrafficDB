@@ -156,7 +156,7 @@ namespace OpenTrafficDB.Shared.Migrations
                         .HasColumnType("double precision");
 
                     b.Property<string>("Metadata")
-                        .HasColumnType("text");
+                        .HasColumnType("jsonb");
 
                     b.Property<long>("OsmWayId")
                         .HasColumnType("bigint");

@@ -126,6 +126,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<HazardAggregate>(e =>
         {
             e.Property(h => h.HazardType).HasConversion<string>();
+            e.Property(h => h.Metadata).HasColumnType("jsonb");
             e.HasIndex(h => new { h.OsmWayId, h.HazardType }).IsUnique();
             e.HasIndex(h => h.ExpiresAt);
             e.HasIndex(h => new { h.Latitude, h.Longitude });

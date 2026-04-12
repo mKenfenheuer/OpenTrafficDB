@@ -10,7 +10,6 @@ namespace OpenTrafficDB.AggregateWorker.Controllers;
 [Route("internal")]
 public class HazardInternalController(
     HazardTileService tileService,
-    ReadOnlyAppDbContext db,
     ILogger<HazardInternalController> logger) : ControllerBase
 {
     /// <summary>Hazard tile in MVT format (gzip-compressed protobuf).</summary>
@@ -45,39 +44,13 @@ public class HazardInternalController(
     /// Returns all active (non-expired) hazard aggregates as JSON.
     /// Supports optional bbox filtering via query parameters.
     /// </summary>
-    [HttpGet("hazards/active")]
-    public async Task<IActionResult> GetActiveHazards(
-        [FromQuery] double? minLat, [FromQuery] double? minLon,
-        [FromQuery] double? maxLat, [FromQuery] double? maxLon,
-        CancellationToken ct)
+    [HttpGet("hazards/live/csv")]
+    [Produces("text/csv")]
+    public async Task<IActionResult> GetActiveHazards(CancellationToken ct)
     {
-        var now = DateTime.UtcNow;
-        var query = db.HazardAggregates
-            .Where(h => h.ExpiresAt > now);
-
-        if (minLat.HasValue && minLon.HasValue && maxLat.HasValue && maxLon.HasValue)
-        {
-            query = query.Where(h =>
-                h.Latitude >= minLat.Value && h.Latitude <= maxLat.Value &&
-                h.Longitude >= minLon.Value && h.Longitude <= maxLon.Value);
-        }
-
-        var hazards = await query
-            .OrderByDescending(h => h.LastConfirmedAt)
-            .Take(10_000)
-            .Select(h => new ActiveHazardDto
-            {
-                OsmWayId          = h.OsmWayId,
-                HazardType        = h.HazardType,
-                Latitude          = h.Latitude,
-                Longitude         = h.Longitude,
-                Metadata          = h.Metadata,
-                ConfirmationCount = h.ConfirmationCount,
-                LastConfirmedAt   = h.LastConfirmedAt,
-                ExpiresAt         = h.ExpiresAt
-            })
-            .ToListAsync(ct);
-
-        return Ok(hazards);
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"live_hazards.csv\"";
+        await tileService.WriteHazardsLiveCsv(Response.Body, ct);
+        return new EmptyResult();
     }
 }

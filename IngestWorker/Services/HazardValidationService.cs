@@ -1,3 +1,4 @@
+using System.Text.Json;
 using OpenTrafficDB.Shared.Models.DTOs;
 
 namespace OpenTrafficDB.IngestWorker.Services;
@@ -30,6 +31,14 @@ public class HazardValidationService(IConfiguration config)
 
         if (req.Metadata is { Length: > 0 } && req.Metadata.Length > _maxMetadataLength)
             errors.Add($"Metadata exceeds maximum length of {_maxMetadataLength} characters.");
+        try
+        {
+            var data = JsonSerializer.Deserialize<dynamic>(req.Metadata ?? "{}");
+        }
+        catch
+        {
+            errors.Add($"Metadata must be valid JSON.");
+        }
 
         if (errors.Count > 0)
             return ValidationResult.Fail([.. errors]);

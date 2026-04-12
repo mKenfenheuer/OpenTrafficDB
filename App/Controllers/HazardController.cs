@@ -67,20 +67,13 @@ public class HazardController(
     /// Get all currently active hazards. Supports optional bbox filtering.
     /// This endpoint is public — no authentication required.
     /// </summary>
-    [HttpGet]
+    [HttpGet("live/csv")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(List<ActiveHazardDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetActive(
-        [FromQuery] double? minLat, [FromQuery] double? minLon,
-        [FromQuery] double? maxLat, [FromQuery] double? maxLon,
-        CancellationToken ct)
+    public async Task<IActionResult> GetActive(CancellationToken ct)
     {
-        var query = "";
-        if (minLat.HasValue && minLon.HasValue && maxLat.HasValue && maxLon.HasValue)
-            query = $"?minLat={minLat}&minLon={minLon}&maxLat={maxLat}&maxLon={maxLon}";
-
         await workers.ProxyPublicAsync("Aggregate",
-            "/internal/hazards/active" + query, Response, ct);
+            "/internal/hazards/live/csv", Response, ct);
         return new EmptyResult();
     }
 

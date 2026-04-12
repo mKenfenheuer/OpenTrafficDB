@@ -190,7 +190,11 @@ public class HazardIngestController(
                 "ConfirmationCount" = "HazardAggregates"."ConfirmationCount" + 1,
                 "LastConfirmedAt"   = @now,
                 "ExpiresAt"         = @expires_at,
-                "Metadata"          = COALESCE(@metadata, "HazardAggregates"."Metadata"),
+                "Metadata"          = CASE
+                    WHEN @metadata IS NULL THEN "HazardAggregates"."Metadata"
+                    WHEN "HazardAggregates"."Metadata" IS NULL THEN @metadata
+                    ELSE "HazardAggregates"."Metadata" || @metadata
+                END,
                 "Latitude"          = @lat,
                 "Longitude"         = @lon
             """,
@@ -199,7 +203,7 @@ public class HazardIngestController(
                 new NpgsqlParameter("hazard_type", typeStr),
                 new NpgsqlParameter("lat",         lat),
                 new NpgsqlParameter("lon",         lon),
-                new NpgsqlParameter("metadata",    (object?)metadata ?? DBNull.Value),
+                new NpgsqlParameter("metadata", NpgsqlDbType.Jsonb) { Value = (object?)metadata ?? DBNull.Value },
                 new NpgsqlParameter("now",         now),
                 new NpgsqlParameter("expires_at",  expiresAt),
             ], ct);
