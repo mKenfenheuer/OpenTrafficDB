@@ -78,7 +78,7 @@ public class HazardTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
             .AsAsyncEnumerable()
             .WithCancellation(ct))
         {
-            await writer.WriteLineAsync($"{s.OsmWayId},{s.HazardType},{s.Latitude},{s.Longitude},\"{s.Metadata}\"");
+            await writer.WriteLineAsync($"{s.OsmWayId},{s.HazardType},{s.Latitude},{s.Longitude},\"{s.Metadata?.Replace("\"","\"\"")}\"");
         }
     }
 
