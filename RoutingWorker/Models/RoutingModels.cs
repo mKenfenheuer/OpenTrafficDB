@@ -260,6 +260,29 @@ public class TrafficAnalysis
 
     [JsonPropertyName("jams")]
     public List<Jam> Jams { get; set; }
+
+    [JsonPropertyName("hazards")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<VHazard>? Hazards { get; set; }
+}
+
+public class VHazard
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = string.Empty;
+
+    [JsonPropertyName("lat")]
+    public double Lat { get; set; }
+
+    [JsonPropertyName("lon")]
+    public double Lon { get; set; }
+
+    [JsonPropertyName("osmWayId")]
+    public long OsmWayId { get; set; }
+
+    [JsonPropertyName("metadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Metadata { get; set; }
 }
 
 public class Trip
