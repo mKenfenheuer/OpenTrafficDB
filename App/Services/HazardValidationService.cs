@@ -29,6 +29,9 @@ public class HazardValidationService(IConfiguration config)
         if (!Enum.IsDefined(req.HazardType))
             errors.Add($"Unknown hazard type: {req.HazardType}.");
 
+        if (req.Heading is < 0f or > 360f)
+            errors.Add($"Heading must be between 0 and 360 degrees (got {req.Heading}).");
+
         if (req.Metadata is { Length: > 0 } && req.Metadata.Length > _maxMetadataLength)
             errors.Add($"Metadata exceeds maximum length of {_maxMetadataLength} characters.");
         try

@@ -59,6 +59,7 @@ public class Program
         builder.Services.AddScoped<TrafficAggregationService>();
         builder.Services.AddScoped<TrafficTileService>();
         builder.Services.AddScoped<HazardTileService>();
+        builder.Services.AddScoped<HazardMapMatchingService>();
         builder.Services.AddScoped<RoutingService>();
         builder.Services.AddSingleton<SpeedValidationService>();
         builder.Services.AddSingleton<HazardValidationService>();
@@ -68,6 +69,7 @@ public class Program
 
         // Recurring in-process background jobs.
         builder.Services.AddHostedService<AggregationService>();
+        builder.Services.AddHostedService<HazardAggregationService>();
         builder.Services.AddHostedService<PartitionMaintenanceService>();
         builder.Services.AddHostedService<WayGeometryBackgroundService>();
 

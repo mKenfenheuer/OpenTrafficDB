@@ -31,12 +31,17 @@ public class HazardTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
     {
         var (minLat, minLon, maxLat, maxLon) = TileMath.TileBounds(z, x, y);
 
+        // Tiles only include active, map-matched aggregates — unmatched ones have no
+        // OsmWayId/StreetName yet so they aren't useful to navigation clients.
+        // Location is the snapped (matched) point when available.
         var result = await db.Database.SqlQuery<byte[]>($$"""
             SELECT ST_AsMVT(q, 'hazards', 4096, 'geom') AS "Value"
             FROM (
                 SELECT
                     ST_AsMVTGeom(
-                        ST_SetSRID(ST_MakePoint(ha."Longitude", ha."Latitude"), 4326),
+                        ST_SetSRID(ST_MakePoint(
+                            COALESCE(ha."MatchedLongitude", ha."Longitude"),
+                            COALESCE(ha."MatchedLatitude",  ha."Latitude")), 4326),
                         ST_MakeEnvelope({{minLon}}, {{minLat}}, {{maxLon}}, {{maxLat}}, 4326),
                         4096, 64, true
                     )                                   AS geom,
@@ -52,8 +57,9 @@ public class HazardTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
                     EXTRACT(EPOCH FROM ha."ExpiresAt")::bigint      AS expires_epoch
                 FROM "HazardAggregates" ha
                 WHERE ha."ExpiresAt" > NOW()
-                  AND ha."Latitude"  BETWEEN {{minLat}} AND {{maxLat}}
-                  AND ha."Longitude" BETWEEN {{minLon}} AND {{maxLon}}
+                  AND ha."OsmWayId" IS NOT NULL
+                  AND COALESCE(ha."MatchedLatitude",  ha."Latitude")  BETWEEN {{minLat}} AND {{maxLat}}
+                  AND COALESCE(ha."MatchedLongitude", ha."Longitude") BETWEEN {{minLon}} AND {{maxLon}}
             ) q
             WHERE q.geom IS NOT NULL
             """)
@@ -76,17 +82,30 @@ public class HazardTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
         await writer.WriteLineAsync("osm_way_id,hazard_type,lat,lon,heading,street_name,is_permanent,expires_at,metadata");
 
         var now = DateTime.UtcNow;
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
         await foreach (var s in db.HazardAggregates
-            .Where(h => h.ExpiresAt > now)
+            .Where(h => h.ExpiresAt > now && h.OsmWayId != null)
             .OrderBy(s => s.OsmWayId)
             .AsNoTracking()
-            .Select(s => new { s.OsmWayId, s.HazardType, s.Latitude, s.Longitude, s.Heading, s.StreetName, s.IsPermanent, s.ExpiresAt, s.Metadata })
+            .Select(s => new
+            {
+                s.OsmWayId,
+                s.HazardType,
+                Lat         = s.MatchedLatitude  ?? s.Latitude,
+                Lon         = s.MatchedLongitude ?? s.Longitude,
+                s.Heading,
+                s.StreetName,
+                s.IsPermanent,
+                s.ExpiresAt,
+                s.Metadata
+            })
             .AsAsyncEnumerable()
             .WithCancellation(ct))
         {
             await writer.WriteLineAsync(
-                $"{s.OsmWayId},{s.HazardType},{s.Latitude},{s.Longitude}," +
-                $"{s.Heading?.ToString(System.Globalization.CultureInfo.InvariantCulture)}," +
+                $"{s.OsmWayId},{s.HazardType}," +
+                $"{s.Lat.ToString(culture)},{s.Lon.ToString(culture)}," +
+                $"{s.Heading.ToString(culture)}," +
                 $"\"{s.StreetName?.Replace("\"","\"\"")}\"," +
                 $"{s.IsPermanent}," +
                 $"{s.ExpiresAt:O}," +

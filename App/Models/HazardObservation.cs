@@ -12,7 +12,7 @@ public class HazardObservation
     public double Latitude { get; set; }
     public double Longitude { get; set; }
     public float GpsAccuracyMeters { get; set; }
-    public float? Heading { get; set; }
+    public float Heading { get; set; }
     public HazardType HazardType { get; set; }
     /// <summary>Optional JSON metadata (e.g. {"max_speed":50} for speed cameras).</summary>
     public string? Metadata { get; set; }

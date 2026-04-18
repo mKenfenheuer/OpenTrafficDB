@@ -133,6 +133,12 @@ namespace OpenTrafficDB.Shared.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<int>("ClusterGridX")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ClusterGridY")
+                        .HasColumnType("integer");
+
                     b.Property<int>("ConfirmationCount")
                         .HasColumnType("integer");
 
@@ -146,14 +152,14 @@ namespace OpenTrafficDB.Shared.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<float?>("Heading")
+                    b.Property<float>("Heading")
                         .HasColumnType("real");
+
+                    b.Property<int>("HeadingBucket")
+                        .HasColumnType("integer");
 
                     b.Property<double>("HeadingCosSum")
                         .HasColumnType("double precision");
-
-                    b.Property<int>("HeadingSampleCount")
-                        .HasColumnType("integer");
 
                     b.Property<double>("HeadingSinSum")
                         .HasColumnType("double precision");
@@ -164,16 +170,31 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.Property<DateTime>("LastConfirmedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("LastMatchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double?>("LastMatchedCentroidLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("LastMatchedCentroidLon")
+                        .HasColumnType("double precision");
+
                     b.Property<double>("Latitude")
                         .HasColumnType("double precision");
 
                     b.Property<double>("Longitude")
                         .HasColumnType("double precision");
 
+                    b.Property<double?>("MatchedLatitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MatchedLongitude")
+                        .HasColumnType("double precision");
+
                     b.Property<string>("Metadata")
                         .HasColumnType("jsonb");
 
-                    b.Property<long>("OsmWayId")
+                    b.Property<long?>("OsmWayId")
                         .HasColumnType("bigint");
 
                     b.Property<string>("StreetName")
@@ -183,9 +204,14 @@ namespace OpenTrafficDB.Shared.Migrations
 
                     b.HasIndex("ExpiresAt");
 
+                    b.HasIndex("LastMatchedAt");
+
+                    b.HasIndex("OsmWayId")
+                        .HasFilter("\"OsmWayId\" IS NOT NULL");
+
                     b.HasIndex("Latitude", "Longitude");
 
-                    b.HasIndex("OsmWayId", "HazardType")
+                    b.HasIndex("ClusterGridX", "ClusterGridY", "HeadingBucket", "HazardType")
                         .IsUnique();
 
                     b.ToTable("HazardAggregates");
@@ -214,7 +240,7 @@ namespace OpenTrafficDB.Shared.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<float?>("Heading")
+                    b.Property<float>("Heading")
                         .HasColumnType("real");
 
                     b.Property<bool>("IsProcessed")

@@ -127,9 +127,12 @@ public class AppDbContext : DbContext
         {
             e.Property(h => h.HazardType).HasConversion<string>();
             e.Property(h => h.Metadata).HasColumnType("jsonb");
-            e.HasIndex(h => new { h.OsmWayId, h.HazardType }).IsUnique();
+            e.HasIndex(h => new { h.ClusterGridX, h.ClusterGridY, h.HeadingBucket, h.HazardType }).IsUnique();
             e.HasIndex(h => h.ExpiresAt);
             e.HasIndex(h => new { h.Latitude, h.Longitude });
+            e.HasIndex(h => h.OsmWayId).HasFilter("\"OsmWayId\" IS NOT NULL");
+            // Aggregation pass looks up rows whose centroid has drifted since LastMatchedAt.
+            e.HasIndex(h => h.LastMatchedAt);
             e.HasStorageParameter("fillfactor", 80);
         });
     }

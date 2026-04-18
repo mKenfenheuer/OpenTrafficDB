@@ -18,8 +18,8 @@ public class HazardObservationRequest
     [Required, Range(0.01, 10000.0)]
     public float GpsAccuracyMeters { get; set; }
 
-    [Range(0.0, 360.0)]
-    public float? Heading { get; set; }
+    [Required, Range(0.0, 360.0)]
+    public float Heading { get; set; }
 
     [Required]
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -58,8 +58,8 @@ public class ActiveHazardDto
 
     public double Latitude { get; set; }
     public double Longitude { get; set; }
-    /// <summary>Average travel direction (0–360°) across all reports. Null if unknown.</summary>
-    public float? Heading { get; set; }
+    /// <summary>Average travel direction (0–360°) across all reports.</summary>
+    public float Heading { get; set; }
     /// <summary>Street name of the matched OSM edge, if known.</summary>
     public string? StreetName { get; set; }
     /// <summary>True if repeatedly reported within the last 90 days.</summary>
