@@ -1,8 +1,8 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
-using OpenTrafficDB.Shared.Models;
+using OpenTrafficDBModels;
 
-namespace OpenTrafficDB.Shared.Models.DTOs;
+namespace OpenTrafficDBModels.DTOs;
 
 public class HazardObservationRequest
 {

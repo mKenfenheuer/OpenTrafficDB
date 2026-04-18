@@ -5,11 +5,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
-using OpenTrafficDB.Shared.Data;
+using OpenTrafficDBData;
 using OpenTrafficDB.App.Middleware;
 using OpenTrafficDB.App.Services;
-using OpenTrafficDB.Shared.Models;
-using OpenTrafficDB.Shared.Services;
+using OpenTrafficDBModels;
+using OpenTrafficDBServices;
 
 namespace OpenTrafficDB;
 

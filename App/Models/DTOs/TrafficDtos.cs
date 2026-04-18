@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace OpenTrafficDB.Shared.Models.DTOs;
+namespace OpenTrafficDBModels.DTOs;
 
 public class LiveTrafficQuery
 {

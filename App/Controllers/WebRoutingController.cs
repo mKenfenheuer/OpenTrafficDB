@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OpenTrafficDB.App.Services;
-using OpenTrafficDB.Shared.Models.DTOs;
+using OpenTrafficDBModels.DTOs;
 
 namespace OpenTrafficDB.App.Controllers;
 

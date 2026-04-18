@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.Shared.Models;
+namespace OpenTrafficDBModels;
 
 /// <summary>
 /// Aggregated hazard clustered from raw user reports.

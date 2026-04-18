@@ -4,10 +4,8 @@ EXPOSE 8080
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-COPY ["Shared/OpenTrafficDB.Shared.csproj", "Shared/"]
 COPY ["App/OpenTrafficDB.App.csproj", "App/"]
 RUN dotnet restore "App/OpenTrafficDB.App.csproj"
-COPY Shared/ Shared/
 COPY App/ App/
 RUN dotnet build "App/OpenTrafficDB.App.csproj" -c Release -o /app/build
 

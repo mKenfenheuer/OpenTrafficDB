@@ -2,8 +2,8 @@ using System.IO.Compression;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
-using OpenTrafficDB.Shared.Data;
-using OpenTrafficDB.Shared.Services;
+using OpenTrafficDBData;
+using OpenTrafficDBServices;
 
 namespace OpenTrafficDB.App.Services;
 

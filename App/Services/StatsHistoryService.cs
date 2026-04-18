@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.Shared.Data;
+using OpenTrafficDBData;
 
 namespace OpenTrafficDB.App.Services;
 

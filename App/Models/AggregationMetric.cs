@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.Shared.Models;
+namespace OpenTrafficDBModels;
 
 /// <summary>
 /// One row per aggregation job run, used to compute processing rates on the admin dashboard.

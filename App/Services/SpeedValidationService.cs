@@ -1,4 +1,4 @@
-using OpenTrafficDB.Shared.Models.DTOs;
+using OpenTrafficDBModels.DTOs;
 
 namespace OpenTrafficDB.App.Services;
 

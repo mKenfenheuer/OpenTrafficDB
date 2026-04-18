@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace OpenTrafficDB.Shared.Models.DTOs;
+namespace OpenTrafficDBModels.DTOs;
 
 public class TrafficJam
 {

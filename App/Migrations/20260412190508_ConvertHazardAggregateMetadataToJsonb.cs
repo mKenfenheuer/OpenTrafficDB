@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace OpenTrafficDB.Shared.Migrations
+namespace OpenTrafficDBMigrations
 {
     /// <inheritdoc />
     public partial class ConvertHazardAggregateMetadataToJsonb : Migration

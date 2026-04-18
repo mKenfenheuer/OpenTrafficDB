@@ -1,9 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using NetTopologySuite.Geometries;
-using OpenTrafficDB.Shared.Models;
+using OpenTrafficDBModels;
 
-namespace OpenTrafficDB.Shared.Data;
+namespace OpenTrafficDBData;
 
 public class AppDbContext : DbContext
 {

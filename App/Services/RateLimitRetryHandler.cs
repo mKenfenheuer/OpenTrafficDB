@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDBServices;
 
 /// <summary>HTTP client handler that retries on 429 Too Many Requests with exponential backoff.</summary>
 public class RateLimitRetryHandler : DelegatingHandler

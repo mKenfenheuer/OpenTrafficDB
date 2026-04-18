@@ -5,10 +5,10 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.Shared.Data;
-using OpenTrafficDB.Shared.Models;
-using OpenTrafficDB.Shared.Models.DTOs;
-using OpenTrafficDB.Shared.Services;
+using OpenTrafficDBData;
+using OpenTrafficDBModels;
+using OpenTrafficDBModels.DTOs;
+using OpenTrafficDBServices;
 
 namespace OpenTrafficDB.App.Controllers;
 

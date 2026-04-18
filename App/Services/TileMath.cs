@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDBServices;
 
 /// <summary>
 /// Web Mercator (XYZ) tile math utilities.

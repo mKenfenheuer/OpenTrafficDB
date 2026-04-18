@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Mail;
 
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDBServices;
 
 public class SmtpEmailService : IEmailService
 {

@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.Shared.Models;
+namespace OpenTrafficDBModels;
 
 public enum UserRole
 {

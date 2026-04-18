@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDBServices;
 
 /// <summary>
 /// Google / Valhalla polyline encoding at precision 6.

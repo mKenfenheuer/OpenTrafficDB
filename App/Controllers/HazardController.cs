@@ -2,10 +2,10 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OpenTrafficDB.App.Services;
-using OpenTrafficDB.Shared.Data;
-using OpenTrafficDB.Shared.Models;
-using OpenTrafficDB.Shared.Models.DTOs;
-using OpenTrafficDB.Shared.Services;
+using OpenTrafficDBData;
+using OpenTrafficDBModels;
+using OpenTrafficDBModels.DTOs;
+using OpenTrafficDBServices;
 
 namespace OpenTrafficDB.App.Controllers;
 

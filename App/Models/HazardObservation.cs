@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.Shared.Models;
+namespace OpenTrafficDBModels;
 
 /// <summary>
 /// A single user-reported hazard observation (raw GPS point before aggregation).

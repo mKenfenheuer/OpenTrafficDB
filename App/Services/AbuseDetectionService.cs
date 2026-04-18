@@ -1,10 +1,10 @@
 using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.Shared.Data;
-using OpenTrafficDB.Shared.Models;
-using OpenTrafficDB.Shared.Services;
+using OpenTrafficDBData;
+using OpenTrafficDBModels;
+using OpenTrafficDBServices;
 
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDBServices;
 
 /// <summary>
 /// Singleton service tracking rate-limit windows and blocked IPs in memory.

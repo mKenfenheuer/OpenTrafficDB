@@ -1,8 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using OpenTrafficDB.Shared.Models.DTOs;
-using OpenTrafficDB.Shared.Services;
+using OpenTrafficDBModels.DTOs;
+using OpenTrafficDBServices;
 
 namespace OpenTrafficDB.App.Services;
 

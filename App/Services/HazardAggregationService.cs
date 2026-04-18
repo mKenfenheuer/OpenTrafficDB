@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using OpenTrafficDB.Shared.Data;
-using OpenTrafficDB.Shared.Models;
+using OpenTrafficDBData;
+using OpenTrafficDBModels;
 
 namespace OpenTrafficDB.App.Services;
 

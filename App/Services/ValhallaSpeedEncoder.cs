@@ -1,4 +1,4 @@
-namespace OpenTrafficDB.Shared.Services;
+namespace OpenTrafficDBServices;
 
 /// <summary>
 /// Ports Valhalla's compress_speed_buckets, decompress_speed_bucket,

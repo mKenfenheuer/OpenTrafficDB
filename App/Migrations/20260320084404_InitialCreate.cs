@@ -5,7 +5,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace OpenTrafficDB.Shared.Migrations
+namespace OpenTrafficDBMigrations
 {
     /// <inheritdoc />
     public partial class InitialCreate : Migration

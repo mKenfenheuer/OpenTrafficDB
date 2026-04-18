@@ -1,6 +1,6 @@
 using NetTopologySuite.Geometries;
 
-namespace OpenTrafficDB.Shared.Models;
+namespace OpenTrafficDBModels;
 
 public class WayGeometry
 {

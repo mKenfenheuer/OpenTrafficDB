@@ -2,8 +2,8 @@ using Microsoft.EntityFrameworkCore;
 using NetTopologySuite.Geometries;
 using OsmSharp;
 using OsmSharp.Streams;
-using OpenTrafficDB.Shared.Data;
-using OpenTrafficDB.Shared.Models;
+using OpenTrafficDBData;
+using OpenTrafficDBModels;
 
 namespace OpenTrafficDB.App.Services;
 

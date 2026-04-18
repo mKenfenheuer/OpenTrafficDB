@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace OpenTrafficDB.Shared.Migrations
+namespace OpenTrafficDBMigrations
 {
     /// <inheritdoc />
     public partial class RefactorHazardAggregateClustering : Migration

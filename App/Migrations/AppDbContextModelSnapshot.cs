@@ -5,11 +5,11 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NetTopologySuite.Geometries;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
-using OpenTrafficDB.Shared.Data;
+using OpenTrafficDBData;
 
 #nullable disable
 
-namespace OpenTrafficDB.Shared.Migrations
+namespace OpenTrafficDBMigrations
 {
     [DbContext(typeof(AppDbContext))]
     partial class AppDbContextModelSnapshot : ModelSnapshot
@@ -24,7 +24,7 @@ namespace OpenTrafficDB.Shared.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "postgis");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.AggregationMetric", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.AggregationMetric", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -48,7 +48,7 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.ToTable("AggregationMetrics");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.ApiKey", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.ApiKey", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -92,7 +92,7 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.ToTable("ApiKeys");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.BlockedIp", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.BlockedIp", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -125,7 +125,7 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.ToTable("BlockedIps");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.HazardAggregate", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.HazardAggregate", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -219,7 +219,7 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.HasAnnotation("Npgsql:StorageParameter:fillfactor", 80);
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.HazardObservation", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.HazardObservation", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -275,7 +275,7 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.ToTable("HazardObservations");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.SpeedObservation", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.SpeedObservation", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -351,7 +351,7 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.ToTable("SpeedObservations");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.User", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.User", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -418,7 +418,7 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.ToTable("Users");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.WayGeometry", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.WayGeometry", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -471,7 +471,7 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.ToTable("WayGeometries");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.WaySpeedAggregate", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.WaySpeedAggregate", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -513,7 +513,7 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.HasAnnotation("Npgsql:StorageParameter:fillfactor", 80);
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.WaySpeedSummary", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.WaySpeedSummary", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -551,9 +551,9 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.HasAnnotation("Npgsql:StorageParameter:fillfactor", 80);
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.ApiKey", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.ApiKey", b =>
                 {
-                    b.HasOne("OpenTrafficDB.Shared.Models.User", "User")
+                    b.HasOne("OpenTrafficDBModels.User", "User")
                         .WithMany("ApiKeys")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -562,9 +562,9 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.HazardObservation", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.HazardObservation", b =>
                 {
-                    b.HasOne("OpenTrafficDB.Shared.Models.ApiKey", "ApiKey")
+                    b.HasOne("OpenTrafficDBModels.ApiKey", "ApiKey")
                         .WithMany()
                         .HasForeignKey("ApiKeyId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -573,9 +573,9 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.Navigation("ApiKey");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.SpeedObservation", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.SpeedObservation", b =>
                 {
-                    b.HasOne("OpenTrafficDB.Shared.Models.ApiKey", "ApiKey")
+                    b.HasOne("OpenTrafficDBModels.ApiKey", "ApiKey")
                         .WithMany("Observations")
                         .HasForeignKey("ApiKeyId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -584,12 +584,12 @@ namespace OpenTrafficDB.Shared.Migrations
                     b.Navigation("ApiKey");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.ApiKey", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.ApiKey", b =>
                 {
                     b.Navigation("Observations");
                 });
 
-            modelBuilder.Entity("OpenTrafficDB.Shared.Models.User", b =>
+            modelBuilder.Entity("OpenTrafficDBModels.User", b =>
                 {
                     b.Navigation("ApiKeys");
                 });
