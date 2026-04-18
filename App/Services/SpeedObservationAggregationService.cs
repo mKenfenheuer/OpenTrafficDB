@@ -56,20 +56,10 @@ public class SpeedObservationAggregationService(
     /// </summary>
     private async Task DrainAsync(CancellationToken ct)
     {
-        var didAnyWork = false;
-
         while (!ct.IsCancellationRequested)
         {
             var aggregatedCount = await ProcessOncePassAsync(ct);
             if (aggregatedCount == 0) break;
-            didAnyWork = true;
-        }
-
-        if (didAnyWork)
-        {
-            using var scope = scopeFactory.CreateScope();
-            var aggregation = scope.ServiceProvider.GetRequiredService<TrafficAggregationService>();
-            await aggregation.FinalizeAsync(ct);
         }
     }
 
@@ -98,6 +88,8 @@ public class SpeedObservationAggregationService(
             aggregated = result.Processed;
             logger.LogDebug("Aggregated {Count} observations in {ElapsedMs}ms, {MsPerObs}ms per observation .", aggregated, stopwatch.ElapsedMilliseconds, stopwatch.ElapsedMilliseconds / aggregated);
         }
+        
+        await aggregation.FinalizeAsync(ct);
 
         return aggregated;
     }
