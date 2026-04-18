@@ -58,6 +58,12 @@ public class ActiveHazardDto
 
     public double Latitude { get; set; }
     public double Longitude { get; set; }
+    /// <summary>Average travel direction (0–360°) across all reports. Null if unknown.</summary>
+    public float? Heading { get; set; }
+    /// <summary>Street name of the matched OSM edge, if known.</summary>
+    public string? StreetName { get; set; }
+    /// <summary>True if repeatedly reported within the last 90 days.</summary>
+    public bool IsPermanent { get; set; }
     public string? Metadata { get; set; }
     public int ConfirmationCount { get; set; }
     public DateTime LastConfirmedAt { get; set; }

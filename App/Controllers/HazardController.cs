@@ -61,6 +61,7 @@ public class HazardController(
             await UpsertAggregateAsync(
                 match.Value.OsmWayId, obs.HazardType,
                 match.Value.SnapLat, match.Value.SnapLon,
+                obs.Heading, match.Value.StreetName,
                 obs.Metadata, ct);
         }
 
@@ -163,6 +164,7 @@ public class HazardController(
                 await UpsertAggregateAsync(
                     match.Value.OsmWayId, obs.HazardType,
                     match.Value.SnapLat, match.Value.SnapLon,
+                    obs.Heading, match.Value.StreetName,
                     obs.Metadata, ct);
             }
 
@@ -174,6 +176,7 @@ public class HazardController(
 
     /// <summary>
     /// Find the nearest OSM way within MaxMatchDistanceMeters using PostGIS KNN.
+    /// Also returns the way's street name for denormalized storage on the aggregate.
     /// </summary>
     private async Task<NearestWayResult?> FindNearestWayAsync(
         double lat, double lon, CancellationToken ct)
@@ -184,6 +187,7 @@ public class HazardController(
         var result = await db.Database.SqlQuery<NearestWayRow>($"""
             SELECT
                 wg."OsmWayId"                                                            AS "OsmWayId",
+                wg."Name"                                                                AS "StreetName",
                 ST_Y(ST_ClosestPoint(wg."Geometry", ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326))) AS "SnapLat",
                 ST_X(ST_ClosestPoint(wg."Geometry", ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326))) AS "SnapLon",
                 ST_Distance(
@@ -200,43 +204,92 @@ public class HazardController(
         if (result == null || result.DistanceMeters > maxDistMeters)
             return null;
 
-        return new NearestWayResult(result.OsmWayId, result.SnapLat, result.SnapLon);
+        return new NearestWayResult(result.OsmWayId, result.SnapLat, result.SnapLon, result.StreetName);
     }
+
+    /// <summary>Number of confirmations in the last 90 days required to mark a hazard as permanent.</summary>
+    private const int PermanentConfirmationThreshold = 3;
 
     private async Task UpsertAggregateAsync(
         long osmWayId, HazardType hazardType, double lat, double lon,
-        string? metadata, CancellationToken ct)
+        float? heading, string? streetName, string? metadata, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var expiresAt = now + hazardType.GetDefaultExpiry();
         var typeStr = hazardType.ToString();
 
-        await db.Database.ExecuteSqlRawAsync("""
+        // Heading is an angular quantity — averaging via sum-of-sin/cos avoids the
+        // 359°/1° wrap-around problem. We store the running sums and sample count;
+        // the user-visible "Heading" is recomputed atomically on each upsert.
+        double sinInc = 0, cosInc = 0;
+        int headingInc = 0;
+        if (heading.HasValue)
+        {
+            var rad = heading.Value * Math.PI / 180.0;
+            sinInc = Math.Sin(rad);
+            cosInc = Math.Cos(rad);
+            headingInc = 1;
+        }
+
+        // A hazard is "permanent" when it has been confirmed at least
+        // PermanentConfirmationThreshold times AND the earliest of those confirmations
+        // is within the last 90 days (i.e. sustained recent activity, not a one-off stale entry).
+        var permanentSince = now.AddDays(-90);
+
+        await db.Database.ExecuteSqlRawAsync($"""
             INSERT INTO "HazardAggregates"
-                ("OsmWayId", "HazardType", "Latitude", "Longitude", "Metadata",
-                 "ConfirmationCount", "FirstReportedAt", "LastConfirmedAt", "ExpiresAt")
-            VALUES (@way_id, @hazard_type, @lat, @lon, @metadata,
-                    1, @now, @now, @expires_at)
+                ("OsmWayId", "HazardType", "Latitude", "Longitude",
+                 "Heading", "HeadingSinSum", "HeadingCosSum", "HeadingSampleCount",
+                 "StreetName", "Metadata",
+                 "ConfirmationCount", "IsPermanent",
+                 "FirstReportedAt", "LastConfirmedAt", "ExpiresAt")
+            VALUES (@way_id, @hazard_type, @lat, @lon,
+                    @heading_deg, @sin_inc, @cos_inc, @heading_inc,
+                    @street_name, @metadata,
+                    1, FALSE,
+                    @now, @now, @expires_at)
             ON CONFLICT ("OsmWayId", "HazardType") DO UPDATE SET
-                "ConfirmationCount" = "HazardAggregates"."ConfirmationCount" + 1,
-                "LastConfirmedAt"   = @now,
-                "ExpiresAt"         = @expires_at,
-                "Metadata"          = CASE
+                "ConfirmationCount"  = "HazardAggregates"."ConfirmationCount" + 1,
+                "LastConfirmedAt"    = @now,
+                "ExpiresAt"          = @expires_at,
+                "HeadingSinSum"      = "HazardAggregates"."HeadingSinSum" + @sin_inc,
+                "HeadingCosSum"      = "HazardAggregates"."HeadingCosSum" + @cos_inc,
+                "HeadingSampleCount" = "HazardAggregates"."HeadingSampleCount" + @heading_inc,
+                "Heading"            = CASE
+                    WHEN "HazardAggregates"."HeadingSampleCount" + @heading_inc > 0 THEN
+                        (DEGREES(ATAN2(
+                            "HazardAggregates"."HeadingSinSum" + @sin_inc,
+                            "HazardAggregates"."HeadingCosSum" + @cos_inc
+                        )) + 360)::double precision % 360
+                    ELSE NULL
+                END,
+                "StreetName"         = COALESCE(@street_name, "HazardAggregates"."StreetName"),
+                "Metadata"           = CASE
                     WHEN @metadata IS NULL THEN "HazardAggregates"."Metadata"
                     WHEN "HazardAggregates"."Metadata" IS NULL THEN @metadata
                     ELSE "HazardAggregates"."Metadata" || @metadata
                 END,
-                "Latitude"          = @lat,
-                "Longitude"         = @lon
+                "Latitude"           = @lat,
+                "Longitude"          = @lon,
+                "IsPermanent"        = (
+                    "HazardAggregates"."ConfirmationCount" + 1 >= {PermanentConfirmationThreshold}
+                    AND "HazardAggregates"."FirstReportedAt" >= @permanent_since
+                )
             """,
             [
-                new NpgsqlParameter("way_id",      osmWayId),
-                new NpgsqlParameter("hazard_type", typeStr),
-                new NpgsqlParameter("lat",         lat),
-                new NpgsqlParameter("lon",         lon),
+                new NpgsqlParameter("way_id",       osmWayId),
+                new NpgsqlParameter("hazard_type",  typeStr),
+                new NpgsqlParameter("lat",          lat),
+                new NpgsqlParameter("lon",          lon),
+                new NpgsqlParameter("heading_deg",  (object?)heading ?? DBNull.Value),
+                new NpgsqlParameter("sin_inc",      sinInc),
+                new NpgsqlParameter("cos_inc",      cosInc),
+                new NpgsqlParameter("heading_inc",  headingInc),
+                new NpgsqlParameter("street_name",  (object?)streetName ?? DBNull.Value),
                 new NpgsqlParameter("metadata", NpgsqlDbType.Jsonb) { Value = (object?)metadata ?? DBNull.Value },
-                new NpgsqlParameter("now",         now),
-                new NpgsqlParameter("expires_at",  expiresAt),
+                new NpgsqlParameter("now",          now),
+                new NpgsqlParameter("expires_at",   expiresAt),
+                new NpgsqlParameter("permanent_since", permanentSince),
             ], ct);
     }
 
@@ -266,11 +319,12 @@ public class HazardController(
         (int.Parse(User.FindFirstValue("sub") ?? "0"),
          int.Parse(User.FindFirstValue("keyId") ?? "0"));
 
-    private record struct NearestWayResult(long OsmWayId, double SnapLat, double SnapLon);
+    private record struct NearestWayResult(long OsmWayId, double SnapLat, double SnapLon, string? StreetName);
 
     private class NearestWayRow
     {
         public long OsmWayId { get; set; }
+        public string? StreetName { get; set; }
         public double SnapLat { get; set; }
         public double SnapLon { get; set; }
         public double DistanceMeters { get; set; }

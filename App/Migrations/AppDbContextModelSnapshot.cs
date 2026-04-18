@@ -146,6 +146,21 @@ namespace OpenTrafficDB.Shared.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<float?>("Heading")
+                        .HasColumnType("real");
+
+                    b.Property<double>("HeadingCosSum")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("HeadingSampleCount")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("HeadingSinSum")
+                        .HasColumnType("double precision");
+
+                    b.Property<bool>("IsPermanent")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime>("LastConfirmedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -160,6 +175,9 @@ namespace OpenTrafficDB.Shared.Migrations
 
                     b.Property<long>("OsmWayId")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("StreetName")
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
@@ -405,6 +423,9 @@ namespace OpenTrafficDB.Shared.Migrations
 
                     b.Property<double>("MinLon")
                         .HasColumnType("double precision");
+
+                    b.Property<string>("Name")
+                        .HasColumnType("text");
 
                     b.Property<int>("NodeCount")
                         .HasColumnType("integer");

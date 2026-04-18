@@ -13,6 +13,8 @@ public class WayGeometry
     /// <summary>Way geometry as a PostGIS LineString (SRID 4326, coordinates: lon/lat).</summary>
     public Geometry? Geometry { get; set; }
     public double? MaxSpeedKmh { get; set; }
+    /// <summary>Street name from the OSM "name" tag, if present.</summary>
+    public string? Name { get; set; }
     public int NodeCount { get; set; }
     public DateTime FetchedAt { get; set; }
 

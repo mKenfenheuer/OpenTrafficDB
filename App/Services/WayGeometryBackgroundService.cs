@@ -276,6 +276,9 @@ public class WayGeometryBackgroundService(
                 var maxspeedRaw = way.Tags != null && way.Tags.ContainsKey("maxspeed")
                     ? way.Tags["maxspeed"] : null;
 
+                var nameRaw = way.Tags != null && way.Tags.TryGetValue("name", out var n)
+                    ? n : null;
+
                 var lineString = factory.CreateLineString(
                     coords.Select(c => new Coordinate(c.Lon, c.Lat)).ToArray());
 
@@ -289,6 +292,7 @@ public class WayGeometryBackgroundService(
                     BBox        = bbox,
                     Geometry    = lineString,
                     MaxSpeedKmh = ParseMaxSpeed(maxspeedRaw),
+                    Name        = nameRaw,
                     NodeCount   = coords.Count,
                     FetchedAt   = DateTime.UtcNow
                 });
@@ -372,6 +376,7 @@ public class WayGeometryBackgroundService(
                 ex.BBox        = wg.BBox;
                 ex.Geometry    = wg.Geometry;
                 ex.MaxSpeedKmh = wg.MaxSpeedKmh;
+                ex.Name        = wg.Name;
                 ex.NodeCount   = wg.NodeCount;
                 ex.FetchedAt   = wg.FetchedAt;
             }

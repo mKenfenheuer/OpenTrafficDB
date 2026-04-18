@@ -42,6 +42,9 @@ public class HazardTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
                     )                                   AS geom,
                     ha."OsmWayId"                       AS osm_way_id,
                     ha."HazardType"                     AS hazard_type,
+                    ha."Heading"                        AS heading,
+                    ha."StreetName"                     AS street_name,
+                    ha."IsPermanent"                    AS is_permanent,
                     (SELECT jsonb_object_agg('metadata:' || key, value)
                      FROM jsonb_each(ha."Metadata"))    AS metadata_props,
                     ha."ConfirmationCount"               AS confirmation_count,
@@ -64,21 +67,30 @@ public class HazardTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
     }
 
     /// <summary>
-    /// Streams the live hazards CSV.
+    /// Streams the live hazards CSV. Only currently-valid hazards (ExpiresAt in the
+    /// future) are included — expired entries are filtered out.
     /// </summary>
     public async Task WriteHazardsLiveCsv(Stream output, CancellationToken ct = default)
     {
         await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 65536, leaveOpen: true);
-        await writer.WriteLineAsync("osm_way_id,hazard_type,lat,lon,metadata");
+        await writer.WriteLineAsync("osm_way_id,hazard_type,lat,lon,heading,street_name,is_permanent,expires_at,metadata");
 
+        var now = DateTime.UtcNow;
         await foreach (var s in db.HazardAggregates
+            .Where(h => h.ExpiresAt > now)
             .OrderBy(s => s.OsmWayId)
             .AsNoTracking()
-            .Select(s => new { s.OsmWayId, s.HazardType, s.Latitude, s.Longitude, s.Metadata })
+            .Select(s => new { s.OsmWayId, s.HazardType, s.Latitude, s.Longitude, s.Heading, s.StreetName, s.IsPermanent, s.ExpiresAt, s.Metadata })
             .AsAsyncEnumerable()
             .WithCancellation(ct))
         {
-            await writer.WriteLineAsync($"{s.OsmWayId},{s.HazardType},{s.Latitude},{s.Longitude},\"{s.Metadata?.Replace("\"","\"\"")}\"");
+            await writer.WriteLineAsync(
+                $"{s.OsmWayId},{s.HazardType},{s.Latitude},{s.Longitude}," +
+                $"{s.Heading?.ToString(System.Globalization.CultureInfo.InvariantCulture)}," +
+                $"\"{s.StreetName?.Replace("\"","\"\"")}\"," +
+                $"{s.IsPermanent}," +
+                $"{s.ExpiresAt:O}," +
+                $"\"{s.Metadata?.Replace("\"","\"\"")}\"");
         }
     }
 

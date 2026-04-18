@@ -152,6 +152,9 @@ public class TileController(
                     {
                         ["osm_way_id"]          = "OSM way ID of the matched edge",
                         ["hazard_type"]         = "Hazard type (SpeedCamera, Accident, PoliceControl, etc.)",
+                        ["heading"]             = "Average travel direction in degrees (0–360), or null if unknown",
+                        ["street_name"]         = "Street name of the matched OSM edge, if known",
+                        ["is_permanent"]        = "True when the hazard has been repeatedly confirmed in the last 90 days",
                         ["metadata"]            = "JSON metadata (e.g. max_speed for cameras)",
                         ["confirmation_count"]  = "Number of user confirmations",
                         ["last_confirmed_epoch"] = "Unix epoch of last confirmation",
