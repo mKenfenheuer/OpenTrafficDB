@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using OpenTrafficDBData;
 
@@ -79,6 +80,8 @@ public class SpeedObservationAggregationService(
     /// </summary>
     private async Task<int> ProcessOncePassAsync(CancellationToken ct)
     {
+        var stopwatch = new Stopwatch();
+        stopwatch.Start();
         using var scope = scopeFactory.CreateScope();
         var db          = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var aggregation = scope.ServiceProvider.GetRequiredService<TrafficAggregationService>();
@@ -94,8 +97,9 @@ public class SpeedObservationAggregationService(
         if (wayChunk.Length > 0)
         {
             var result = await aggregation.ReaggregateRangeAsync(wayChunk, ct);
+            stopwatch.Stop();
             aggregated = result.Processed;
-            logger.LogDebug("Aggregated {Count} observations across {WayCount} ways.", aggregated, wayChunk.Length);
+            logger.LogDebug("Aggregated {Count} observations across {WayCount} ways in {ElapsedMs}ms, {MsPerObs}ms per observation .", aggregated, wayChunk.Length, stopwatch.ElapsedMilliseconds, stopwatch.ElapsedMilliseconds / aggregated);
         }
 
         return aggregated;
