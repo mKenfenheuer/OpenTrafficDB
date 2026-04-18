@@ -10,7 +10,7 @@ using OpenTrafficDB.Shared.Models;
 using OpenTrafficDB.Shared.Models.DTOs;
 using OpenTrafficDB.Shared.Services;
 
-namespace OpenTrafficDB.AggregateWorker.Services;
+namespace OpenTrafficDB.App.Services;
 
 /// <summary>
 /// Performs server-side map matching of GPS observations to OSM road segments

@@ -5,7 +5,7 @@ using Microsoft.Extensions.Caching.Distributed;
 using OpenTrafficDB.Shared.Data;
 using OpenTrafficDB.Shared.Services;
 
-namespace OpenTrafficDB.AggregateWorker.Services;
+namespace OpenTrafficDB.App.Services;
 
 /// <summary>
 /// Builds gzip-compressed MVT tiles for the "hazards" layer.

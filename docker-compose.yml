@@ -70,95 +70,26 @@ services:
       timeout: 3s
       retries: 10
 
-  ingest:
-    image: ${INGEST_IMAGE:-registry.gitlab.com/opentrafficdb/ingest:latest}
-    restart: unless-stopped
-    environment:
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
-      Jwt__Key: ${JWT_KEY}
-      Security__IpHashPepper: ${IP_HASH_PEPPER}
-    depends_on:
-      pgbouncer:
-        condition: service_started
-
-  aggregate:
-    image: ${AGGREGATE_IMAGE:-registry.gitlab.com/opentrafficdb/aggregate:latest}
-    restart: unless-stopped
-    environment:
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
-      ConnectionStrings__ReadConnection: "Host=${READ_DB_HOST:-pgbouncer};Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
-      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD}"
-      Jwt__Key: ${JWT_KEY}
-      Security__IpHashPepper: ${IP_HASH_PEPPER}
-      OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
-      Logging__LogLevel__OpenTrafficDB: Information
-    depends_on:
-      pgbouncer:
-        condition: service_started
-      redis:
-        condition: service_healthy
-
-  aggregate-2:
-    image: ${AGGREGATE_IMAGE:-registry.gitlab.com/opentrafficdb/aggregate:latest}
-    restart: unless-stopped
-    environment:
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
-      ConnectionStrings__ReadConnection: "Host=${READ_DB_HOST:-pgbouncer};Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
-      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD}"
-      Jwt__Key: ${JWT_KEY}
-      Security__IpHashPepper: ${IP_HASH_PEPPER}
-      OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
-      Logging__LogLevel__OpenTrafficDB: Information
-    depends_on:
-      pgbouncer:
-        condition: service_started
-      redis:
-        condition: service_healthy
-
-  osm-importer:
-    image: ${OSM_IMPORTER_IMAGE:-registry.gitlab.com/opentrafficdb/osm-importer:latest}
-    restart: unless-stopped
-    volumes:
-      - /mnt/opentraffic/osm:/data
-    environment:
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=5;No Reset On Close=true"
-      Osm__PbfPath: /data/map.osm.pbf
-      Osm__PbfUrl: ${VALHALLA_TILE_URL}
-    depends_on:
-      pgbouncer:
-        condition: service_started
-
-  routing:
-    image: ${ROUTING_IMAGE:-registry.gitlab.com/opentrafficdb/routing:latest}
-    restart: unless-stopped
-    environment:
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
-      ConnectionStrings__ReadConnection: "Host=${READ_DB_HOST:-pgbouncer};Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
-      Jwt__Key: ${JWT_KEY}
-      Security__IpHashPepper: ${IP_HASH_PEPPER}
-      OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
-    depends_on:
-      pgbouncer:
-        condition: service_started
-
   api:
     image: ${APP_IMAGE:-registry.gitlab.com/opentrafficdb/app:latest}
     restart: unless-stopped
     ports:
       - "0.0.0.0:${APP_PORT:-8095}:8080"
+    volumes:
+      - /mnt/opentraffic/osm:/data
     environment:
       ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
-      Jwt__Key: ${JWT_KEY}
-      Coordinator__MapMatchingTripChunkSize: 2500
-      Coordinator__AggregateWayIdChunkSize: 5000
+      ConnectionStrings__DefaultConnection: "Host=pgbouncer;Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=20;No Reset On Close=true"
+      ConnectionStrings__ReadConnection: "Host=${READ_DB_HOST:-pgbouncer};Port=5432;Database=opentrafficdb;Username=opentraffic;Password=${POSTGRES_PASSWORD};Maximum Pool Size=10;No Reset On Close=true"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD}"
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       BaseUrl: ${BASE_URL}
+      OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
+      Osm__PbfPath: /data/map.osm.pbf
+      Osm__PbfUrl: ${VALHALLA_TILE_URL}
+      Aggregation__IntervalSeconds: 15
+      Aggregation__MapMatchingTripChunkSize: 2500
+      Aggregation__AggregateWayIdChunkSize: 5000
       Email__SmtpHost: ${SMTP_HOST:-}
       Email__SmtpPort: ${SMTP_PORT:-25}
       Email__SmtpUser: ${SMTP_USER:-}
@@ -166,16 +97,9 @@ services:
       Email__EnableSsl: ${SMTP_SSL:-false}
       Email__FromAddress: ${SMTP_FROM:-opentrafficdb@localhost}
       Email__FromName: ${SMTP_FROM_NAME:-OpenTrafficDB}
-      Workers__Ingest__Urls__0: http://ingest:8080
-      Workers__Aggregate__Urls__0: http://aggregate:8080
-      Workers__Aggregate__Urls__1: http://aggregate-2:8080
-      Workers__Routing__Urls__0: http://routing:8080
+      Logging__LogLevel__OpenTrafficDB: Information
     depends_on:
       pgbouncer:
         condition: service_started
-      ingest:
-        condition: service_started
-      aggregate:
-        condition: service_started
-      routing:
-        condition: service_started
+      redis:
+        condition: service_healthy

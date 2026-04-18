@@ -2,13 +2,14 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OpenTrafficDB.App.Services;
 using OpenTrafficDB.Shared.Models.DTOs;
 using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.App.Controllers;
 
 /// <summary>
-/// Traffic-enriched routing: forwards requests to RoutingWorker.
+/// Traffic-enriched routing.
 /// </summary>
 [ApiController]
 [Route("api/v1/route")]
@@ -16,7 +17,8 @@ namespace OpenTrafficDB.App.Controllers;
 [Produces("application/json")]
 public class RoutingController(
     AbuseDetectionService abuseDetection,
-    WorkerClient workers) : ControllerBase
+    RoutingService routing,
+    ILogger<RoutingController> logger) : ControllerBase
 {
     /// <summary>
     /// Route with traffic enrichment.
@@ -38,43 +40,36 @@ public class RoutingController(
     {
         var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var keyId = User.FindFirstValue("keyId") ?? string.Empty;
-        var userId = int.Parse(User.FindFirstValue("sub") ?? "0");
 
         if (!abuseDetection.CheckReadRate(ip, keyId))
             return StatusCode(429, new { error = "Rate limit exceeded." });
 
+        JsonElement request;
         if (Request.Method == HttpMethods.Post &&
             body.HasValue && body.Value.ValueKind == JsonValueKind.Object)
         {
-            await workers.ProxyAsync("Routing", HttpMethod.Post, "/internal/route",
-                userId, keyId, string.Empty,
-                new System.Net.Http.StringContent(body.Value.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
-                Response, query: raw ? "?raw=true" : null, ct: ct);
+            request = body.Value;
         }
         else if (!string.IsNullOrWhiteSpace(json))
         {
-            // Validate JSON before forwarding
             try
             {
                 var parsed = JsonDocument.Parse(json).RootElement;
                 if (parsed.ValueKind != JsonValueKind.Object)
                     return BadRequest(new { error = "The 'json' query parameter must be a JSON object." });
+                request = parsed;
             }
             catch (JsonException)
             {
                 return BadRequest(new { error = "The 'json' query parameter is not valid JSON." });
             }
-
-            await workers.ProxyAsync("Routing", HttpMethod.Get, "/internal/route",
-                userId, keyId, string.Empty, null, Response,
-                query: $"?json={Uri.EscapeDataString(json)}{(raw ? "&raw=true" : "")}", ct: ct);
         }
         else
         {
             return BadRequest(new { error = "Provide the route request as a POST body or as the 'json' query parameter." });
         }
 
-        return new EmptyResult();
+        return await RouteInternal(request, raw, ct);
     }
 
     /// <summary>
@@ -90,17 +85,43 @@ public class RoutingController(
     {
         var ip    = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var keyId = User.FindFirstValue("keyId") ?? string.Empty;
-        var userId = int.Parse(User.FindFirstValue("sub") ?? "0");
 
         if (!abuseDetection.CheckReadRate(ip, keyId))
             return StatusCode(429, new { error = "Rate limit exceeded." });
 
-        var bodyJson = JsonSerializer.Serialize(request);
-        await workers.ProxyAsync("Routing", HttpMethod.Post, "/internal/route/buckets",
-            userId, keyId, string.Empty,
-            new System.Net.Http.StringContent(bodyJson, System.Text.Encoding.UTF8, "application/json"),
-            Response, ct: ct);
+        var (result, statusCode, error) = await routing.RouteTravelTimeBucketsAsync(request, ct);
+        if (result is null)
+            return StatusCode(statusCode, new { error });
+        return Ok(result);
+    }
 
-        return new EmptyResult();
+    private async Task<IActionResult> RouteInternal(JsonElement request, bool raw, CancellationToken ct)
+    {
+        if (raw)
+        {
+            var (result, statusCode, error) = await routing.RouteRawAsync(request, ct);
+            if (result is null)
+                return StatusCode(statusCode, new { error });
+            return Ok(result);
+        }
+
+        try
+        {
+            var (result, statusCode, error) = await routing.RouteWithTrafficAsync(request, ct);
+            if (result is null)
+                return StatusCode(statusCode, new { error });
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Traffic enrichment failed, falling back to raw route.");
+
+            var (fallback, statusCode, error) = await routing.RouteRawAsync(request, ct);
+            if (fallback is null)
+                return StatusCode(statusCode, new { error });
+
+            Response.Headers["X-Traffic-Enrichment"] = "failed";
+            return Ok(fallback);
+        }
     }
 }

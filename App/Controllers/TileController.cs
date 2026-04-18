@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
-using OpenTrafficDB.Shared.Services;
+using OpenTrafficDB.App.Services;
 
 namespace OpenTrafficDB.App.Controllers;
 
@@ -11,7 +11,10 @@ namespace OpenTrafficDB.App.Controllers;
 [ApiController]
 [Route("tiles")]
 [EnableCors("Tiles")]
-public class TileController(WorkerClient workers, IConfiguration config) : ControllerBase
+public class TileController(
+    TrafficTileService trafficTiles,
+    HazardTileService hazardTiles,
+    IConfiguration config) : ControllerBase
 {
     /// <summary>
     /// TileJSON 3.0 metadata for the current traffic overlay.
@@ -239,9 +242,10 @@ public class TileController(WorkerClient workers, IConfiguration config) : Contr
         if (x < 0 || x >= maxCoord || y < 0 || y >= maxCoord)
             return BadRequest(new { error = $"Tile coordinates out of range for zoom {z}." });
 
-        await workers.ProxyPublicAsync("Aggregate",
-            $"/internal/tiles/hazards/current/{z}/{x}/{y}", Response, ct);
-        return new EmptyResult();
+        var bytes = await hazardTiles.BuildTileAsync(z, x, y, ct);
+        Response.Headers["Content-Encoding"] = "gzip";
+        Response.Headers["Cache-Control"] = "public, max-age=60";
+        return File(bytes, "application/vnd.mapbox-vector-tile");
     }
 
     /// <summary>
@@ -258,8 +262,9 @@ public class TileController(WorkerClient workers, IConfiguration config) : Contr
         if (x < 0 || x >= maxCoord || y < 0 || y >= maxCoord)
             return BadRequest(new { error = $"Tile coordinates out of range for zoom {z}." });
 
-        await workers.ProxyPublicAsync("Aggregate",
-            $"/internal/tiles/traffic/current/{z}/{x}/{y}", Response, ct);
-        return new EmptyResult();
+        var bytes = await trafficTiles.BuildTileAsync(z, x, y, ct);
+        Response.Headers["Content-Encoding"] = "gzip";
+        Response.Headers["Cache-Control"] = "public, max-age=60";
+        return File(bytes, "application/vnd.mapbox-vector-tile");
     }
 }

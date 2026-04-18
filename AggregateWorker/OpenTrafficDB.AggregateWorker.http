@@ -1,6 +1,0 @@
-@OpenTrafficDB.AggregateWorker_HostAddress = http://localhost:5240
-
-GET {{OpenTrafficDB.AggregateWorker_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

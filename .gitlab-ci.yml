@@ -17,7 +17,6 @@ build_tools:
         - tools/traffic-tar-builder/**/*
         - tools/predicted-traffic-patcher/**/*
         - App/**/*
-        - Shared/**/*
   before_script: []
   script:
     - apt-get update && apt-get install -y --no-install-recommends g++ make
@@ -38,7 +37,7 @@ build_tools:
       - downloads/
     expire_in: 1 week
 
-# ── App (gateway) ────────────────────────────────────────────────────────────
+# ── App ──────────────────────────────────────────────────────────────────────
 build_app:
   stage: build
   tags: [docker, build, linux, shell]
@@ -49,7 +48,6 @@ build_app:
   rules:
     - changes:
         - App/**/*
-        - Shared/**/*
         - tools/traffic-tar-builder/**/*
         - tools/predicted-traffic-patcher/**/*
   script:
@@ -64,78 +62,6 @@ build_app:
     - if [ "$IS_MAIN" = "true" ]; then docker image tag app-image $CI_REGISTRY_IMAGE/app:latest && docker image push $CI_REGISTRY_IMAGE/app:latest; fi
     - docker image prune -f
 
-# ── IngestWorker ─────────────────────────────────────────────────────────────
-build_ingest:
-  stage: build
-  tags: [docker, build, linux, shell]
-  rules:
-    - changes:
-        - IngestWorker/**/*
-        - Shared/**/*
-  script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build -f IngestWorker/Dockerfile -t ingest-image .
-    - docker image tag ingest-image $CI_REGISTRY_IMAGE/ingest:$CI_COMMIT_SHORT_SHA
-    - docker image tag ingest-image $CI_REGISTRY_IMAGE/ingest:$BRANCH_TAG
-    - docker image push $CI_REGISTRY_IMAGE/ingest:$CI_COMMIT_SHORT_SHA
-    - docker image push $CI_REGISTRY_IMAGE/ingest:$BRANCH_TAG
-    - if [ "$IS_MAIN" = "true" ]; then docker image tag ingest-image $CI_REGISTRY_IMAGE/ingest:latest && docker image push $CI_REGISTRY_IMAGE/ingest:latest; fi
-    - docker image prune -f
-
-# ── AggregateWorker ──────────────────────────────────────────────────────────
-build_aggregate:
-  stage: build
-  tags: [docker, build, linux, shell]
-  rules:
-    - changes:
-        - AggregateWorker/**/*
-        - Shared/**/*
-  script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build -f AggregateWorker/Dockerfile -t aggregate-image .
-    - docker image tag aggregate-image $CI_REGISTRY_IMAGE/aggregate:$CI_COMMIT_SHORT_SHA
-    - docker image tag aggregate-image $CI_REGISTRY_IMAGE/aggregate:$BRANCH_TAG
-    - docker image push $CI_REGISTRY_IMAGE/aggregate:$CI_COMMIT_SHORT_SHA
-    - docker image push $CI_REGISTRY_IMAGE/aggregate:$BRANCH_TAG
-    - if [ "$IS_MAIN" = "true" ]; then docker image tag aggregate-image $CI_REGISTRY_IMAGE/aggregate:latest && docker image push $CI_REGISTRY_IMAGE/aggregate:latest; fi
-    - docker image prune -f
-
-# ── OsmWayImporter ───────────────────────────────────────────────────────────
-build_osm_importer:
-  stage: build
-  tags: [docker, build, linux, shell]
-  rules:
-    - changes:
-        - OsmWayImporter/**/*
-        - Shared/**/*
-  script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build -f OsmWayImporter/Dockerfile -t osm-importer-image .
-    - docker image tag osm-importer-image $CI_REGISTRY_IMAGE/osm-importer:$CI_COMMIT_SHORT_SHA
-    - docker image tag osm-importer-image $CI_REGISTRY_IMAGE/osm-importer:$BRANCH_TAG
-    - docker image push $CI_REGISTRY_IMAGE/osm-importer:$CI_COMMIT_SHORT_SHA
-    - docker image push $CI_REGISTRY_IMAGE/osm-importer:$BRANCH_TAG
-    - if [ "$IS_MAIN" = "true" ]; then docker image tag osm-importer-image $CI_REGISTRY_IMAGE/osm-importer:latest && docker image push $CI_REGISTRY_IMAGE/osm-importer:latest; fi
-    - docker image prune -f
-
-# ── RoutingWorker ─────────────────────────────────────────────────────────────
-build_routing:
-  stage: build
-  tags: [docker, build, linux, shell]
-  rules:
-    - changes:
-        - RoutingWorker/**/*
-        - Shared/**/*
-  script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build -f RoutingWorker/Dockerfile -t routing-image .
-    - docker image tag routing-image $CI_REGISTRY_IMAGE/routing:$CI_COMMIT_SHORT_SHA
-    - docker image tag routing-image $CI_REGISTRY_IMAGE/routing:$BRANCH_TAG
-    - docker image push $CI_REGISTRY_IMAGE/routing:$CI_COMMIT_SHORT_SHA
-    - docker image push $CI_REGISTRY_IMAGE/routing:$BRANCH_TAG
-    - if [ "$IS_MAIN" = "true" ]; then docker image tag routing-image $CI_REGISTRY_IMAGE/routing:latest && docker image push $CI_REGISTRY_IMAGE/routing:latest; fi
-    - docker image prune -f
-
 # ── Production deployment ─────────────────────────────────────────────────────
 deploy_production:
   stage: deploy
@@ -144,24 +70,11 @@ deploy_production:
       optional: true
     - job: build_app
       optional: true
-    - job: build_ingest
-      optional: true
-    - job: build_aggregate
-      optional: true
-    - job: build_routing
-      optional: true
-    - job: build_osm_importer
-      optional: true
   allow_failure: false
   rules:
     - if: $CI_COMMIT_REF_NAME == "main"
       changes:
         - App/**/*
-        - IngestWorker/**/*
-        - AggregateWorker/**/*
-        - RoutingWorker/**/*
-        - OsmWayImporter/**/*
-        - Shared/**/*
         - tools/traffic-tar-builder/**/*
         - tools/predicted-traffic-patcher/**/*
         - docker-compose.yml
@@ -174,9 +87,5 @@ deploy_production:
     - mkdir -p /mnt/opentraffic/postgres /mnt/opentraffic/osm /mnt/opentraffic/redis
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - export APP_IMAGE=$CI_REGISTRY_IMAGE/app:latest
-    - export INGEST_IMAGE=$CI_REGISTRY_IMAGE/ingest:latest
-    - export AGGREGATE_IMAGE=$CI_REGISTRY_IMAGE/aggregate:latest
-    - export ROUTING_IMAGE=$CI_REGISTRY_IMAGE/routing:latest
-    - export OSM_IMPORTER_IMAGE=$CI_REGISTRY_IMAGE/osm-importer:latest
     - docker compose pull --ignore-pull-failures
     - docker compose up -d --remove-orphans

@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using OpenTrafficDB.Shared.Models.DTOs;
+using OpenTrafficDB.App.Services;
 using OpenTrafficDB.Shared.Services;
 
 namespace OpenTrafficDB.App.Controllers;
@@ -15,7 +15,7 @@ namespace OpenTrafficDB.App.Controllers;
 [Produces("application/json")]
 public class TrafficController(
     AbuseDetectionService abuseDetection,
-    WorkerClient workers) : ControllerBase
+    TrafficAggregationService aggregation) : ControllerBase
 {
     /// <summary>
     /// Exports traffic data in Valhalla predicted-traffic CSV format.
@@ -27,8 +27,10 @@ public class TrafficController(
     public async Task<IActionResult> GetValhallaExportCsv(CancellationToken ct)
     {
         if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
-        await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/valhalla/csv",
-            GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
+
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"valhalla_traffic.csv\"";
+        await aggregation.WriteValhallaExportCsvAsync(Response.Body, ct);
         return new EmptyResult();
     }
 
@@ -44,13 +46,14 @@ public class TrafficController(
     public async Task<IActionResult> GetLiveTrafficCsv(CancellationToken ct)
     {
         if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
-        await workers.ProxyAsync("Aggregate", HttpMethod.Get, "/internal/traffic/live/csv",
-            GetUserId(), GetKeyId(), string.Empty, null, Response, ct: ct);
+
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"live_traffic.csv\"";
+        await aggregation.WriteLiveTrafficCsvAsync(Response.Body, ct);
         return new EmptyResult();
     }
 
     private string GetIp()    => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     private string GetKeyId() => User.FindFirstValue("keyId") ?? string.Empty;
-    private int    GetUserId() => int.Parse(User.FindFirstValue("sub") ?? "0");
     private bool   CheckReadRate() => abuseDetection.CheckReadRate(GetIp(), GetKeyId());
 }

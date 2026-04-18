@@ -7,7 +7,7 @@ using OpenTrafficDB.Shared.Models;
 using OpenTrafficDB.Shared.Models.DTOs;
 using OpenTrafficDB.Shared.Services;
 
-namespace OpenTrafficDB.AggregateWorker.Services;
+namespace OpenTrafficDB.App.Services;
 
 public class TrafficAggregationService(
     AppDbContext db,

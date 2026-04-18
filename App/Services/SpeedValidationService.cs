@@ -1,18 +1,35 @@
-using System.Text.Json;
 using OpenTrafficDB.Shared.Models.DTOs;
 
-namespace OpenTrafficDB.IngestWorker.Services;
+namespace OpenTrafficDB.App.Services;
 
-public class HazardValidationService(IConfiguration config)
+public class ValidationResult
 {
+    public bool IsValid { get; init; }
+    public List<string> Errors { get; init; } = [];
+    public string? Warning { get; init; }
+
+    public static ValidationResult Ok(string? warning = null) =>
+        new() { IsValid = true, Warning = warning };
+
+    public static ValidationResult Fail(params string[] errors) =>
+        new() { IsValid = false, Errors = [.. errors] };
+}
+
+public class SpeedValidationService(IConfiguration config)
+{
+    private readonly double _maxSpeedMs = double.TryParse(config["Security:MaxSpeedMs"], out var s) ? s : 111.11;
     private readonly double _maxAccuracy = double.TryParse(config["Security:MaxGpsAccuracyMeters"], out var a) ? a : 100.0;
     private readonly double _warnAccuracy = double.TryParse(config["Security:WarnGpsAccuracyMeters"], out var w) ? w : 50.0;
     private readonly int _maxDriftSeconds = int.TryParse(config["Security:MaxTimestampDriftSeconds"], out var d) ? d : 300;
-    private readonly int _maxMetadataLength = int.TryParse(config["Security:MaxHazardMetadataLength"], out var m) ? m : 2048;
 
-    public ValidationResult Validate(HazardObservationRequest req)
+    public ValidationResult Validate(SpeedObservationRequest req)
     {
         var errors = new List<string>();
+
+        if (req.SpeedMs < 0)
+            errors.Add("Speed cannot be negative.");
+        else if (req.SpeedMs > _maxSpeedMs)
+            errors.Add($"Speed {req.SpeedMs:F1} m/s ({req.SpeedMs * 3.6:F0} km/h) exceeds maximum of {_maxSpeedMs * 3.6:F0} km/h.");
 
         if (req.Latitude == 0.0 && req.Longitude == 0.0)
             errors.Add("Coordinates (0, 0) rejected — likely a GPS initialization error.");
@@ -26,19 +43,8 @@ public class HazardValidationService(IConfiguration config)
         if (drift > _maxDriftSeconds)
             errors.Add($"Timestamp is {drift:F0}s from server time. Maximum drift is {_maxDriftSeconds}s.");
 
-        if (!Enum.IsDefined(req.HazardType))
-            errors.Add($"Unknown hazard type: {req.HazardType}.");
-
-        if (req.Metadata is { Length: > 0 } && req.Metadata.Length > _maxMetadataLength)
-            errors.Add($"Metadata exceeds maximum length of {_maxMetadataLength} characters.");
-        try
-        {
-            var data = JsonSerializer.Deserialize<dynamic>(req.Metadata ?? "{}");
-        }
-        catch
-        {
-            errors.Add($"Metadata must be valid JSON.");
-        }
+        if (req.TripId == string.Empty)
+            errors.Add("TripId must be a non-empty string.");
 
         if (errors.Count > 0)
             return ValidationResult.Fail([.. errors]);

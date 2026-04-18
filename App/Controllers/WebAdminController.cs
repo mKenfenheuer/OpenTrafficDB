@@ -18,7 +18,7 @@ namespace OpenTrafficDB.App.Controllers;
 [Authorize(AuthenticationSchemes = CookieAuthenticationDefaults.AuthenticationScheme, Policy = "WebAdminOnly")]
 [Produces("application/json")]
 [ApiExplorerSettings(IgnoreApi = true)]
-public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto, WorkerHealthService workerHealth, StatsHistoryService statsHistory) : ControllerBase
+public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto, StatsHistoryService statsHistory) : ControllerBase
 {
     private int CurrentUserId =>
         int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "0");
@@ -64,13 +64,6 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
         });
         return Ok(samples);
     }
-
-    // ── Workers ───────────────────────────────────────────────────────────────
-
-    /// <summary>Get health and metrics for all worker services.</summary>
-    [HttpGet("workers")]
-    [ProducesResponseType(typeof(WorkerServiceInfo[]), StatusCodes.Status200OK)]
-    public IActionResult GetWorkers() => Ok(workerHealth.GetAllStatuses());
 
     // ── Users ─────────────────────────────────────────────────────────────────
 

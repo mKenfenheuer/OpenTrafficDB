@@ -24,22 +24,52 @@ public class Program
             options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
                 o => o.UseNetTopologySuite()));
 
+        // Read-replica context — falls back to the primary connection when
+        // ConnectionStrings:ReadConnection is not configured.
+        builder.Services.AddDbContext<ReadOnlyAppDbContext>(options =>
+            options.UseNpgsql(
+                builder.Configuration.GetConnectionString("ReadConnection")
+                    ?? builder.Configuration.GetConnectionString("DefaultConnection"),
+                o => o.UseNetTopologySuite()));
+
+        // ── Redis distributed cache (tile cache) ────────────────────────────────
+        var redisConn = builder.Configuration.GetConnectionString("Redis");
+        if (!string.IsNullOrWhiteSpace(redisConn))
+        {
+            builder.Services.AddStackExchangeRedisCache(o =>
+            {
+                o.Configuration = redisConn;
+                o.InstanceName  = "otdb:";
+            });
+        }
+        else
+        {
+            builder.Services.AddDistributedMemoryCache();
+        }
+
         // ── Services ────────────────────────────────────────────────────────────
         builder.Services.AddSingleton<AbuseDetectionService>();
         builder.Services.AddSingleton<CryptoService>();
         builder.Services.AddSingleton<PasswordService>();
-        builder.Services.AddSingleton<InternalJwtService>();
-        builder.Services.AddSingleton<WorkerClient>();
         builder.Services.AddScoped<IEmailService, SmtpEmailService>();
         builder.Services.AddScoped<ApiKeyService>();
-        builder.Services.AddSingleton<WorkerHealthService>();
-        builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkerHealthService>());
+
+        // Map-matching, aggregation, tile build, routing — all in-process.
+        builder.Services.AddScoped<MapMatchingService>();
+        builder.Services.AddScoped<TrafficAggregationService>();
+        builder.Services.AddScoped<TrafficTileService>();
+        builder.Services.AddScoped<HazardTileService>();
+        builder.Services.AddScoped<RoutingService>();
+        builder.Services.AddSingleton<SpeedValidationService>();
+        builder.Services.AddSingleton<HazardValidationService>();
 
         builder.Services.AddSingleton<StatsHistoryService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<StatsHistoryService>());
 
-        builder.Services.AddHostedService<AggregationCoordinatorService>();
+        // Recurring in-process background jobs.
+        builder.Services.AddHostedService<AggregationService>();
         builder.Services.AddHostedService<PartitionMaintenanceService>();
+        builder.Services.AddHostedService<WayGeometryBackgroundService>();
 
         // ── OpenTelemetry ────────────────────────────────────────────────────
         builder.Services.AddOpenTelemetry()
@@ -52,15 +82,10 @@ public class Program
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation());
 
-        // HTTP client for inter-service communication with workers
-        builder.Services.AddHttpClient("workers", client =>
+        // HTTP client for OpenTrafficRouting (map-matching + routing).
+        builder.Services.AddHttpClient("otr", client =>
         {
-            client.Timeout = TimeSpan.FromSeconds(60);
-        });
-
-        builder.Services.AddHttpClient("workerJobs", client =>
-        {
-            client.Timeout = TimeSpan.FromMinutes(30);
+            client.Timeout = TimeSpan.FromMinutes(5);
         });
 
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -93,13 +118,7 @@ public class Program
         builder.Services.AddControllersWithViews().AddRazorRuntimeCompilation();
 
         builder.Services.AddHealthChecks()
-            .AddNpgSql(builder.Configuration.GetConnectionString("DefaultConnection")!)
-            .AddUrlGroup(
-                new Uri((builder.Configuration["Workers:Ingest:Urls:0"] ?? "http://ingest:8080") + "/health"),
-                name: "ingest-worker", timeout: TimeSpan.FromSeconds(5))
-            .AddUrlGroup(
-                new Uri((builder.Configuration["Workers:Aggregate:Urls:0"] ?? "http://aggregate:8080") + "/health"),
-                name: "aggregate-worker", timeout: TimeSpan.FromSeconds(5));
+            .AddNpgSql(builder.Configuration.GetConnectionString("DefaultConnection")!);
 
         builder.Services.AddSwaggerGen(c =>
         {

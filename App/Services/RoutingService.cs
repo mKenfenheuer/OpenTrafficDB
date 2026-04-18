@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 using OpenTrafficDB.Shared.Models.DTOs;
 using OpenTrafficDB.Shared.Services;
 
-namespace OpenTrafficDB.RoutingWorker.Services;
+namespace OpenTrafficDB.App.Services;
 
 /// <summary>
 /// Proxies route requests to OpenTrafficRouting, which natively provides
