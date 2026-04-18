@@ -86,20 +86,17 @@ public class SpeedObservationAggregationService(
         var db          = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var aggregation = scope.ServiceProvider.GetRequiredService<TrafficAggregationService>();
 
-        var wayChunk = await db.SpeedObservations
+        var ways = await db.SpeedObservations
             .Where(o => !o.IsAggregated && o.OsmWayId != null)
-            .Select(o => o.OsmWayId!.Value)
-            .Distinct()
-            .Take(AggregateWayIdChunkSize)
-            .ToArrayAsync(ct);
+            .CountAsync(ct);
 
         var aggregated = 0;
-        if (wayChunk.Length > 0)
+        if (ways > 0)
         {
-            var result = await aggregation.ReaggregateRangeAsync(wayChunk, ct);
+            var result = await aggregation.ReaggregateAsync(ct);
             stopwatch.Stop();
             aggregated = result.Processed;
-            logger.LogDebug("Aggregated {Count} observations across {WayCount} ways in {ElapsedMs}ms, {MsPerObs}ms per observation .", aggregated, wayChunk.Length, stopwatch.ElapsedMilliseconds, stopwatch.ElapsedMilliseconds / aggregated);
+            logger.LogDebug("Aggregated {Count} observations in {ElapsedMs}ms, {MsPerObs}ms per observation .", aggregated, stopwatch.ElapsedMilliseconds, stopwatch.ElapsedMilliseconds / aggregated);
         }
 
         return aggregated;

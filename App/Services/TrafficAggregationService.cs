@@ -7,6 +7,7 @@ using OpenTrafficDBData;
 using OpenTrafficDBModels;
 using OpenTrafficDBModels.DTOs;
 using OpenTrafficDBServices;
+using OsmSharp;
 
 namespace OpenTrafficDB.App.Services;
 
@@ -26,43 +27,20 @@ public class TrafficAggregationService(
         public double? SpeedLimit;
     }
 
-    public async Task<AggregateJobResult> ReaggregateRangeAsync(
-        long[] wayIds, CancellationToken ct = default)
+    public async Task<AggregateJobResult> ReaggregateAsync(CancellationToken ct = default)
     {
-        if (wayIds.Length == 0) return new AggregateJobResult(0);
 
-        logger.LogDebug("Aggregating {WayCount} ways", wayIds.Length);
+        logger.LogDebug("Aggregating ways");
 
         var observations = await db.SpeedObservations
-            .AsNoTracking()
             .Where(o => !o.IsAggregated &&
-                        o.OsmWayId != null &&
-                        wayIds.Contains(o.OsmWayId.Value))
-            .Select(o => new Obs
-            {
-                WayId = o.OsmWayId!.Value,
-                Timestamp = o.Timestamp,
-                SpeedKmh = o.SpeedMs * 3.6,
-                SpeedLimit = o.SpeedLimitKmh
-            })
+                        o.OsmWayId != null)
             .ToListAsync(ct);
 
         if (observations.Count == 0)
             return new AggregateJobResult(0);
 
-        // Partition by way (no GroupBy)
-        var perWay = new Dictionary<long, List<Obs>>(wayIds.Length);
-        foreach (var o in observations)
-        {
-            if (!perWay.TryGetValue(o.WayId, out var list))
-            {
-                list = new List<Obs>(32);
-                perWay[o.WayId] = list;
-            }
-            list.Add(o);
-        }
-
-        var wayEntries = perWay.ToArray();
+        var wayEntries = observations.GroupBy(o => o.OsmWayId).ToArray();
 
         var options = new ParallelOptions
         {
@@ -73,7 +51,8 @@ public class TrafficAggregationService(
 
         Parallel.For(0, wayEntries.Length, options, i =>
         {
-            var (wayId, list) = wayEntries[i];
+            var wayId = wayEntries[i].Key ?? 0;
+            var list = wayEntries[i].ToList();
 
             var local = threadLocal[Thread.GetCurrentProcessorId() % threadLocal.Length]
                         ??= new List<WaySpeedAggregate>(64);
@@ -90,7 +69,7 @@ public class TrafficAggregationService(
                 int idx = ((int)o.Timestamp.DayOfWeek + 6) % 7 * 288
                         + (o.Timestamp.Hour * 60 + o.Timestamp.Minute) / 5;
 
-                sums[idx] += o.SpeedKmh;
+                sums[idx] += o.SpeedMs * 3.6;
                 counts[idx]++;
 
                 if (!used[idx])
@@ -105,8 +84,8 @@ public class TrafficAggregationService(
                     if (o.Timestamp > last[idx]) last[idx] = o.Timestamp;
                 }
 
-                if (o.SpeedLimit != null)
-                    limits[idx] = o.SpeedLimit;
+                if (o.SpeedLimitKmh != null)
+                    limits[idx] = o.SpeedLimitKmh;
             }
 
             for (int idx = 0; idx < 2016; idx++)
@@ -134,13 +113,12 @@ public class TrafficAggregationService(
 
         await BulkUpsertAggregatesAsync(aggregates, ct);
 
-        await UpdateSummariesEmaAsync(wayIds, ct);
+        await UpdateSummariesEmaAsync(wayEntries, ct);
 
-        var processed = await db.SpeedObservations
-            .Where(o => !o.IsAggregated &&
-                        o.OsmWayId != null &&
-                        wayIds.Contains(o.OsmWayId.Value))
-            .ExecuteDeleteAsync(ct);
+        foreach(var obs in observations)
+        db.SpeedObservations.Remove(obs);
+
+        var processed = await db.SaveChangesAsync();
 
         if (processed > 0)
         {
@@ -148,12 +126,12 @@ public class TrafficAggregationService(
             {
                 ProcessedAt = DateTime.UtcNow,
                 ObservationCount = processed,
-                WayCount = wayIds.Length,
+                WayCount = wayEntries.Length,
             });
             await db.SaveChangesAsync(ct);
         }
 
-        logger.LogInformation("Aggregated {WayCount} ways, deleted {ObsCount} observations", wayIds.Length, processed);
+        logger.LogInformation("Aggregated {WayCount} ways, deleted {ObsCount} observations", wayEntries.Length, processed);
         return new AggregateJobResult(processed);
     }
 
@@ -251,76 +229,50 @@ public class TrafficAggregationService(
     /// with the same rolling pattern: new = old * 0.2 + batch_value * 0.8.
     /// Must be called before the observations are deleted.
     /// </summary>
-    private async Task UpdateSummariesEmaAsync(long[] wayIds, CancellationToken ct)
+    private async Task UpdateSummariesEmaAsync(IGrouping<long?, SpeedObservation>[] wayEntries, CancellationToken ct)
     {
-        if (wayIds.Length == 0) return;
+        if (wayEntries.Length == 0) return;
 
         var now = DateTime.UtcNow;
+
+        var wayIds = wayEntries.Select(e => e.Key).ToArray();
 
         var seeds = await db.WaySpeedSummaries
             .Where(s => wayIds.Contains(s.OsmWayId))
             .AsNoTracking()
             .ToDictionaryAsync(s => s.OsmWayId, ct);
 
-        var obs = await db.SpeedObservations
-            .AsNoTracking()
-            .Where(o => !o.IsAggregated &&
-                        o.OsmWayId != null &&
-                        wayIds.Contains(o.OsmWayId.Value))
-            .Select(o => new Obs
-            {
-                WayId = o.OsmWayId!.Value,
-                Timestamp = o.Timestamp,
-                SpeedKmh = o.SpeedMs * 3.6,
-                SpeedLimit = o.SpeedLimitKmh
-            })
-            .ToListAsync(ct);
+        logger.LogDebug("Updating EMA summaries for {WayCount} ways from {ObsCount} observations", wayEntries.Length, wayEntries.Sum(e => e.Count()));
 
-        if (obs.Count == 0) return;
+        var results = new (long WayId, double Constrained, double Freeflow, double? SpeedLimit, DateTime LastUpdated)[wayEntries.Length];
 
-        var perWay = new Dictionary<long, List<Obs>>(wayIds.Length);
-        foreach (var o in obs)
+        Parallel.For(0, wayEntries.Length, i =>
         {
-            if (!perWay.TryGetValue(o.WayId, out var list))
-            {
-                list = new List<Obs>(32);
-                perWay[o.WayId] = list;
-            }
-            list.Add(o);
-        }
-
-        var entries = perWay.ToArray();
-
-        logger.LogDebug("Updating EMA summaries for {WayCount} ways from {ObsCount} observations", entries.Length, obs.Count);
-
-        var results = new (long WayId, double Constrained, double Freeflow, double? SpeedLimit, DateTime LastUpdated)[entries.Length];
-
-        Parallel.For(0, entries.Length, i =>
-        {
-            var (wayId, list) = entries[i];
+            var wayId = wayEntries[i].Key ?? 0;
+            var list = wayEntries[i].ToList();
 
             seeds.TryGetValue(wayId, out var seed);
 
             double? speedLimit = null;
             foreach (var o in list)
             {
-                if (o.SpeedLimit != null)
+                if (o.SpeedMs != 0)
                 {
-                    speedLimit = o.SpeedLimit;
+                    speedLimit = o.SpeedMs * 3.6;
                     break;
                 }
             }
 
-            double emaC = seed?.ConstrainedSpeed ?? seed?.FreeflowSpeed ?? list[0].SpeedKmh;
+            double emaC = seed?.ConstrainedSpeed ?? seed?.FreeflowSpeed ?? list[0].SpeedMs * 3.6;
             foreach (var o in list)
-                emaC = emaC * (1 - EmaAlpha) + o.SpeedKmh * EmaAlpha;
+                emaC = emaC * (1 - EmaAlpha) + o.SpeedMs * 3.6 * EmaAlpha;
 
             double emaF = seed?.FreeflowSpeed ?? emaC;
 
             foreach (var o in list)
             {
-                if (speedLimit is > 0 && o.SpeedKmh < speedLimit * 0.8) continue;
-                emaF = emaF * (1 - EmaAlpha) + o.SpeedKmh * EmaAlpha;
+                if (speedLimit is > 0 && o.SpeedMs * 3.6 < speedLimit * 0.8) continue;
+                emaF = emaF * (1 - EmaAlpha) + o.SpeedMs * 3.6 * EmaAlpha;
             }
 
             if (speedLimit is > 0)
