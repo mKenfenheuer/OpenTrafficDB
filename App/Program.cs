@@ -68,7 +68,8 @@ public class Program
         builder.Services.AddHostedService(sp => sp.GetRequiredService<StatsHistoryService>());
 
         // Recurring in-process background jobs.
-        builder.Services.AddHostedService<AggregationService>();
+        builder.Services.AddHostedService<SpeedObservationAggregationService>();
+        builder.Services.AddHostedService<SpeedObservationMapMatchingService>();
         builder.Services.AddHostedService<HazardAggregationService>();
         builder.Services.AddHostedService<PartitionMaintenanceService>();
         builder.Services.AddHostedService<WayGeometryBackgroundService>();

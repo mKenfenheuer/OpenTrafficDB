@@ -15,10 +15,10 @@ namespace OpenTrafficDB.App.Services;
 ///   Aggregation:MapMatchingTripChunkSize  — trips per match pass (default: 200)
 ///   Aggregation:AggregateWayIdChunkSize   — ways per aggregate pass (default: 200)
 /// </summary>
-public class AggregationService(
+public class SpeedObservationAggregationService(
     IServiceScopeFactory scopeFactory,
     IConfiguration config,
-    ILogger<AggregationService> logger) : BackgroundService
+    ILogger<SpeedObservationAggregationService> logger) : BackgroundService
 {
     private TimeSpan Interval                  => TimeSpan.FromSeconds(double.Parse(config["Aggregation:IntervalSeconds"] ?? "15"));
     private int      MapMatchingTripChunkSize  => int.Parse(config["Aggregation:MapMatchingTripChunkSize"] ?? "200");
@@ -59,8 +59,8 @@ public class AggregationService(
 
         while (!ct.IsCancellationRequested)
         {
-            var (matchedCount, aggregatedCount) = await ProcessOncePassAsync(ct);
-            if (matchedCount == 0 && aggregatedCount == 0) break;
+            var aggregatedCount = await ProcessOncePassAsync(ct);
+            if (aggregatedCount == 0) break;
             didAnyWork = true;
         }
 
@@ -77,27 +77,11 @@ public class AggregationService(
     /// unmatched-but-now-matched ways. Returns the counts so DrainAsync can decide
     /// whether to continue.
     /// </summary>
-    private async Task<(int Matched, int Aggregated)> ProcessOncePassAsync(CancellationToken ct)
+    private async Task<int> ProcessOncePassAsync(CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db          = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var matching    = scope.ServiceProvider.GetRequiredService<MapMatchingService>();
         var aggregation = scope.ServiceProvider.GetRequiredService<TrafficAggregationService>();
-
-        var tripChunk = await db.SpeedObservations
-            .Where(o => o.OsmWayId == null && !o.IsAggregated)
-            .Select(o => o.TripId)
-            .Distinct()
-            .Take(MapMatchingTripChunkSize)
-            .ToArrayAsync(ct);
-
-        var matched = 0;
-        if (tripChunk.Length > 0)
-        {
-            var result = await matching.ProcessRangeAsync(tripChunk, db, ct);
-            matched = result.Matched;
-            logger.LogDebug("Matched {Count} observations across {TripCount} trips.", matched, tripChunk.Length);
-        }
 
         var wayChunk = await db.SpeedObservations
             .Where(o => !o.IsAggregated && o.OsmWayId != null)
@@ -114,6 +98,6 @@ public class AggregationService(
             logger.LogDebug("Aggregated {Count} observations across {WayCount} ways.", aggregated, wayChunk.Length);
         }
 
-        return (matched, aggregated);
+        return aggregated;
     }
 }
