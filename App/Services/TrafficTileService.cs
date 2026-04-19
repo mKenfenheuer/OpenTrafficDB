@@ -84,8 +84,8 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                     FROM "WayGeometries" wg
                     JOIN "WaySpeedSummaries" wss ON wss."OsmWayId" = wg."OsmWayId"
                                                 AND wss."LastUpdated" >= NOW() - INTERVAL '60 minutes'
-                                                AND delay > 0.2
                     WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
+                                                AND delay > 0.2
                 ) base
             ) q
             WHERE q.geom IS NOT NULL
