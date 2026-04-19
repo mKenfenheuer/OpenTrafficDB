@@ -168,15 +168,15 @@
                     12, 4,
                     16, 7
                 ],
-                // Colour by jam_estimate when available, grey otherwise
+                // Colour by delay_factor when available, grey otherwise
                 'line-color': [
                     'case',
-                    ['has', 'jam_estimate'],
+                    ['has', 'delay_factor'],
                     [
                         'interpolate', ['linear'],
-                        ['get', 'jam_estimate'],
+                        ['get', 'delay_factor'],
                         0.0,  '#3fb950',   // free flow — green
-                        0.35, '#d29922',   // slowing   — yellow
+                        0.25, '#d29922',   // slowing   — yellow
                         0.70, '#f85149'    // congested — red
                     ],
                     '#8b949e'  // no speed-limit data — muted grey
@@ -238,7 +238,6 @@
                 <div class="popup-row"><span class="popup-label">Limit</span><span class="popup-val">${p.speed_limit_kmh != null ? fmt(p.speed_limit_kmh, ' km/h') : (p.osm_max_speed != null ? fmt(p.osm_max_speed, ' km/h') : '—')}</span></div>
                 <div class="popup-row"><span class="popup-label">Freeflow</span><span class="popup-val">${fmt(p.freeflow_kmh, ' km/h')}</span></div>
                 <div class="popup-row"><span class="popup-label">Delay</span><span class="popup-val">${pct(p.delay_factor)}</span></div>
-                <div class="popup-row"><span class="popup-label">Congestion</span><span class="popup-val">${pct(p.jam_estimate)}</span></div>
                 <div class="popup-row"><span class="popup-label">Way ID</span><span class="popup-val">${p.osm_way_id}</span></div>
                 <div class="popup-source">Source: <strong>${p.source}</strong></div>
             </div>`;

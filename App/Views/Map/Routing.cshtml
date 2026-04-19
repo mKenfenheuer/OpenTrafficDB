@@ -679,15 +679,15 @@
                     12, 4,
                     16, 7
                 ],
-                // Colour by jam_estimate when available, grey otherwise
+                // Colour by delay_factor when available, grey otherwise
                 'line-color': [
                     'case',
-                    ['has', 'jam_estimate'],
+                    ['has', 'delay_factor'],
                     [
                         'interpolate', ['linear'],
-                        ['get', 'jam_estimate'],
+                        ['get', 'delay_factor'],
                         0.0,  '#3fb950',   // free flow — green
-                        0.35, '#d29922',   // slowing   — yellow
+                        0.25, '#d29922',   // slowing   — yellow
                         0.70, '#f85149'    // congested — red
                     ],
                     '#8b949e'  // no speed-limit data — muted grey

@@ -54,7 +54,6 @@ public class TileController(
                         ["p95_kmh"]       = "95th-percentile speed in km/h",
                         ["speed_limit_kmh"] = "Speed limit in km/h (when available)",
                         ["delay_factor"]  = "Delay ratio 0–1 (0 = free flow, 1 = standstill)",
-                        ["jam_estimate"]  = "Congestion estimate 0–1",
                         ["source"]        = "live | historic",
                         ["total_samples"] = "Number of observations used",
                     }
@@ -95,7 +94,7 @@ public class TileController(
                     "line-color": [
                       "interpolate",
                       ["linear"],
-                      ["coalesce", ["to-number", ["get", "jam_estimate"]], 0],
+                      ["coalesce", ["to-number", ["get", "delay"]], 0],
                       0.0, ["rgba", 0, 200, 0, 1],
                       0.5, ["rgba", 255, 165, 0, 1],
                       1.0, ["rgba", 255, 0, 0, 1]

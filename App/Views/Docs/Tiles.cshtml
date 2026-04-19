@@ -82,11 +82,6 @@
                 <td style="padding:8px 10px;color:var(--text-muted)">Fraction of speed limit lost to traffic: 0 = free flow, 1 = standing. Null when no speed limit is known.</td>
             </tr>
             <tr style="border-bottom:1px solid var(--border)">
-                <td style="padding:8px 10px"><code>jam_estimate</code></td>
-                <td style="padding:8px 10px;color:var(--text-muted)">Number?</td>
-                <td style="padding:8px 10px;color:var(--text-muted)">Congestion severity: 0 = free flow, ~0.7 = stop-and-go, 1 = standing traffic. Null when no speed limit is known.</td>
-            </tr>
-            <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:8px 10px"><code>source</code></td>
                 <td style="padding:8px 10px;color:var(--text-muted)">String</td>
                 <td style="padding:8px 10px;color:var(--text-muted)"><code>"live"</code> (last 60 min) or <code>"historic"</code> (matching day/time bucket baseline)</td>
@@ -145,10 +140,10 @@ map.addLayer({
     'line-width': ['interpolate', ['linear'], ['zoom'], 8, 2, 14, 5],
     'line-color': [
       'case',
-      ['has', 'jam_estimate'],
-      ['interpolate', ['linear'], ['get', 'jam_estimate'],
+      ['has', 'delay_factor'],
+      ['interpolate', ['linear'], ['get', 'delay_factor'],
         0.0, '#3fb950',   <span class="code-comment">// free flow — green</span>
-        0.4, '#d29922',   <span class="code-comment">// slowing   — yellow</span>
+        0.25, '#d29922',   <span class="code-comment">// slowing   — yellow</span>
         0.7, '#f85149'    <span class="code-comment">// congested — red</span>
       ],
       '#8b949e'           <span class="code-comment">// no speed-limit data</span>
@@ -168,10 +163,10 @@ map.addLayer({
   {
     vectorTileLayerStyles: {
       traffic: function(props) {
-        const jam = props.jam_estimate;
-        const color = jam == null  ? '#8b949e'
-                    : jam &lt; 0.35  ? '#3fb950'
-                    : jam &lt; 0.70  ? '#d29922'
+        const delay_factor = props.delay_factor;
+        const color = delay_factor == null  ? '#8b949e'
+                    : delay_factor &lt; 0.25  ? '#3fb950'
+                    : delay_factor &lt; 0.70  ? '#d29922'
                     :                '#f85149';
         return { color, weight: 3, opacity: 0.85 };
       }
@@ -189,7 +184,7 @@ map.addLayer({
 Min zoom: 8
 Max zoom: 16</div>
     <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
-        Style the <code>traffic</code> layer using the <code>jam_estimate</code> or <code>speed_kmh</code> attribute with a graduated colour ramp.
+        Style the <code>traffic</code> layer using the <code>delay_factor</code> or <code>speed_kmh</code> attribute with a graduated colour ramp.
     </p>
 </div>
 
