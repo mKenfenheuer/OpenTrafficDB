@@ -22,6 +22,7 @@ namespace OpenTrafficDB.App.Services;
 public class MapMatchingService(
     IHttpClientFactory httpClientFactory,
     IConfiguration config,
+    ReadOnlyAppDbContext readOnlyAppDb,
     ILogger<MapMatchingService> logger)
 {
     private readonly string _otrBaseUrl = config["OpenTrafficRouting:BaseUrl"] ?? "http://localhost:8002";
@@ -58,6 +59,11 @@ public class MapMatchingService(
         long OsmWayId,
         double? SpeedLimitKmh);
 
+    private readonly record struct SynthObs(
+        int ApiKeyId, string TripId, DateTime Timestamp,
+        double Lat, double Lon, double SpeedMs, float Accuracy,
+        long WayId, double? SpeedLimit);
+
     /// <summary>
     /// Match multiple GPS traces to OSM ways via the OpenTrafficRouting /api/v1/trace/bulk endpoint.
     /// Returns raw TraceResult objects (one per polyline) so callers can access both point matches
@@ -75,7 +81,9 @@ public class MapMatchingService(
             costing = "auto",
             gps_accuracy = 10.0,
             search_radius = 50.0,
-            interpolate = true
+            interpolate = true,
+            attributes = new[] { "osm_way_id" },
+            filters = new { road_types = _allowedRoadTypes.ToArray() }
         };
 
         var json = JsonSerializer.Serialize(request, _jsonOptions);
@@ -136,42 +144,42 @@ public class MapMatchingService(
     /// Returns the number of observations matched.
     /// </summary>
     public async Task<MatchJobResult> ProcessRangeAsync(
-        string[] tripIds, AppDbContext db, CancellationToken ct = default)
+        List<SpeedObservation> unmatched, AppDbContext db, CancellationToken ct = default)
     {
-        var unmatched = await db.SpeedObservations
-            .Where(o => o.OsmWayId == null && !o.IsAggregated && tripIds.Contains(o.TripId))
-            .AsNoTracking()
-            .OrderBy(o => o.Timestamp)
-            .ToListAsync(ct);
-
         if (unmatched.Count == 0) return new MatchJobResult(0, [], []);
 
         var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
         var trips = unmatched.GroupBy(o => o.TripId).ToList();
         _logProcessing(logger, unmatched.Count, trips.Count, null);
 
-        // Build all segments across all trips and collect their polylines
-        var allSegments = new List<(int TripIndex, int SegmentIndex, List<SpeedObservation> Segment)>();
-        var allPolylines = new List<string>();
-        var tripSegments = new List<List<SpeedObservation>>[trips.Count];
-
-        for (int i = 0; i < trips.Count; i++)
+        // Split each trip into segments in parallel, then flatten.
+        var perTripSegments = new List<List<SpeedObservation>>[trips.Count];
+        Parallel.For(0, trips.Count, i =>
         {
             var sorted = trips[i].OrderBy(o => o.Timestamp).ToList();
-            var segments = SplitTrace(sorted);
-            tripSegments[i] = segments;
+            perTripSegments[i] = SplitTrace(sorted);
+        });
 
+        var allSegments = new List<(int TripIndex, int SegmentIndex, List<SpeedObservation> Segment)>();
+        for (int i = 0; i < trips.Count; i++)
+        {
+            var segments = perTripSegments[i];
             for (int si = 0; si < segments.Count; si++)
-            {
-                var segment = segments[si];
-                var points = segment.Select(o => (o.Latitude, o.Longitude, o.Timestamp)).ToList();
-                if (points.Count == 1)
-                    points = [points[0], points[0]];
-
-                allSegments.Add((i, si, segment));
-                allPolylines.Add(EncodePolyline6(points));
-            }
+                allSegments.Add((i, si, segments[si]));
         }
+
+        // Encode polylines in parallel — this is pure CPU and trivially parallel.
+        var allPolylines = new string[allSegments.Count];
+        Parallel.For(0, allSegments.Count, i =>
+        {
+            var segment = allSegments[i].Segment;
+            var points = new List<(double, double, DateTime)>(segment.Count);
+            foreach (var o in segment)
+                points.Add((o.Latitude, o.Longitude, o.Timestamp));
+            if (points.Count == 1)
+                points.Add(points[0]);
+            allPolylines[i] = EncodePolyline6(points);
+        });
 
         // Sort segments by geographic proximity (first point) so each batch covers
         // a small area and the map-matching service doesn't thrash tiles.
@@ -196,7 +204,7 @@ public class MapMatchingService(
 
         // Build batches of polylines in proximity order.
         var batchSize = _batchSize;
-        _logBulkRequest(logger, allPolylines.Count, trips.Count, null);
+        _logBulkRequest(logger, allPolylines.Length, trips.Count, null);
 
         var batches = new List<List<(int OrigIndex, string Polyline)>>();
         for (int offset = 0; offset < sortedIndices.Length; offset += batchSize)
@@ -211,7 +219,7 @@ public class MapMatchingService(
             batches.Add(batch);
         }
 
-        var rawResults = new TraceResult?[allPolylines.Count];
+        var rawResults = new TraceResult?[allPolylines.Length];
         var sem = new SemaphoreSlim(_maxConcurrent, _maxConcurrent);
 
         var stopwatch1 = new Stopwatch();
@@ -235,32 +243,110 @@ public class MapMatchingService(
 
         logger.LogInformation($"Batch completed: {batches.Sum(b => b.Count)} polylines in {stopwatch1.ElapsedMilliseconds}ms => {stopwatch1.ElapsedMilliseconds / batches.Sum(b => b.Count)}ms per polyline");
 
-        // ── Point matches: UPDATE existing observations with their matched way ──
-        var matchedIds = new List<long>();
-        var matchedWayIds = new List<long>();
-        var matchedLimits = new List<double?>();
-        var staleIds = new List<long>();
-
+        // ── Parse all segments in parallel into per-segment buffers, then concat ──
+        var perSegmentMatched = new List<(long Id, long WayId, double? Limit)>[allSegments.Count];
+        var perSegmentSynth = new List<SynthObs>[allSegments.Count];
         var tripMatchedIds = new HashSet<long>[trips.Count];
         for (int i = 0; i < trips.Count; i++)
             tripMatchedIds[i] = [];
 
-        for (int bi = 0; bi < allSegments.Count; bi++)
+        Parallel.For(0, allSegments.Count, async bi =>
         {
             var (tripIdx, _, segment) = allSegments[bi];
-            var matchMap = ParsePointMatches(bi < rawResults.Length ? rawResults[bi] : null);
+            var result = bi < rawResults.Length ? rawResults[bi] : null;
+
+            // Point matches
+            var matchMap = ParsePointMatches(result);
+            var matched = new List<(long, long, double?)>(matchMap.Count);
+
+
 
             foreach (var (idx, match) in matchMap)
             {
                 if (idx >= segment.Count) continue;
                 var obs = segment[idx];
-                matchedIds.Add(obs.Id);
-                matchedWayIds.Add(match.OsmWayId);
-                matchedLimits.Add(match.SpeedLimitKmh);
-                tripMatchedIds[tripIdx].Add(obs.Id);
+                matched.Add((obs.Id, match.OsmWayId, match.SpeedLimitKmh));
+            }
+
+            perSegmentMatched[bi] = matched;
+
+            // Interpolated edges
+            var synth = new List<SynthObs>();
+            if (result?.Edges != null && result.MatchedPoints != null)
+            {
+                var matchedPoints = result.MatchedPoints;
+                var tripId = trips[tripIdx].Key;
+
+                foreach (var edge in result.Edges)
+                {
+                    if (!edge.IsInterpolated
+                        || edge.Edge == null
+                        || edge.InterpolationReferences == null
+                        || edge.Edge.OsmWayId == 0
+                        || IsExcludedRoadType(edge.Edge.RoadType)) continue;
+
+                    double speedMs = 0, lat = 0, lon = 0, accuracy = 0;
+                    long ticks = 0;
+                    int apiKeyId = 0;
+                    bool hasRef = false;
+
+                    foreach (var iref in edge.InterpolationReferences)
+                    {
+                        if (iref.PointIndex >= matchedPoints.Count) continue;
+                        var mp = matchedPoints[iref.PointIndex];
+                        if (mp.OriginalIndex >= segment.Count) continue;
+                        var obs = segment[mp.OriginalIndex];
+
+                        speedMs += iref.Percentage * obs.SpeedMs;
+                        lat += iref.Percentage * obs.Latitude;
+                        lon += iref.Percentage * obs.Longitude;
+                        ticks += (long)(iref.Percentage * obs.Timestamp.Ticks);
+                        accuracy += iref.Percentage * obs.GpsAccuracyMeters;
+                        if (!hasRef) { apiKeyId = obs.ApiKeyId; hasRef = true; }
+                    }
+
+                    if (!hasRef) continue;
+
+                    synth.Add(new SynthObs(
+                        apiKeyId, tripId, new DateTime(ticks, DateTimeKind.Utc),
+                        lat, lon, speedMs, (float)accuracy,
+                        edge.Edge.OsmWayId,
+                        edge.Edge.MaxSpeedKmh > 0 ? edge.Edge.MaxSpeedKmh : null));
+                }
+            }
+            perSegmentSynth[bi] = synth;
+        });
+
+        // Flatten point matches
+        var totalMatched = perSegmentMatched.Sum(m => m.Count);
+        var matchedIds = new List<long>(totalMatched);
+        var matchedWayIds = new List<long>(totalMatched);
+        var matchedLimits = new List<double?>(totalMatched);
+
+
+
+        var distinctOsmWayIds = perSegmentSynth.SelectMany(m => m).DistinctBy(s => s.WayId).Select(s => s.WayId);
+        var speed_limits = await readOnlyAppDb.WayGeometries.Where(g => distinctOsmWayIds.Contains(g.OsmWayId)).Select(g => new { g.OsmWayId, g.MaxSpeedKmh }).ToDictionaryAsync(g => g.OsmWayId, g => g.MaxSpeedKmh);
+
+        for (int bi = 0; bi < allSegments.Count; bi++)
+        {
+            var tripIdx = allSegments[bi].TripIndex;
+            foreach (var (id, wayId, limit) in perSegmentMatched[bi])
+            {
+                matchedIds.Add(id);
+                matchedWayIds.Add(wayId);
+                var speed_limit = limit;
+                if (speed_limit == null && speed_limits.ContainsKey(wayId))
+                    speed_limit = speed_limits[wayId];
+                matchedLimits.Add(speed_limit);
+                tripMatchedIds[tripIdx].Add(id);
             }
         }
 
+
+
+
+        var staleIds = new List<long>();
         for (int i = 0; i < trips.Count; i++)
         {
             foreach (var obs in trips[i])
@@ -300,69 +386,31 @@ public class MapMatchingService(
         }
 
         // ── Interpolated edges: INSERT synthetic observations ────────────────────
-        // Each interpolated edge represents a road segment traversed between two GPS
-        // points. Speed, timestamp, and position are weighted by interpolation_references.
-        var synthApiKeys = new List<int>();
-        var synthTripIds = new List<string>();
-        var synthTimestamp = new List<DateTime>();
-        var synthLats = new List<double>();
-        var synthLons = new List<double>();
-        var synthSpeeds = new List<double>();
-        var synthAccuracy = new List<float>();
-        var synthWayIds = new List<long>();
-        var synthLimits = new List<double?>();
+        // (Per-segment buffers were populated above in parallel; flatten here.)
+        var totalSynth = perSegmentSynth.Sum(s => s.Count);
+        var synthApiKeys = new List<int>(totalSynth);
+        var synthTripIds = new List<string>(totalSynth);
+        var synthTimestamp = new List<DateTime>(totalSynth);
+        var synthLats = new List<double>(totalSynth);
+        var synthLons = new List<double>(totalSynth);
+        var synthSpeeds = new List<double>(totalSynth);
+        var synthAccuracy = new List<float>(totalSynth);
+        var synthWayIds = new List<long>(totalSynth);
+        var synthLimits = new List<double?>(totalSynth);
 
-        for (int bi = 0; bi < allSegments.Count; bi++)
+        foreach (var bucket in perSegmentSynth)
         {
-            var (tripIdx, _, segment) = allSegments[bi];
-            var result = bi < rawResults.Length ? rawResults[bi] : null;
-            if (result?.Edges == null || result.MatchedPoints == null) continue;
-
-            var matchedPoints = result.MatchedPoints;
-            var tripId = trips[tripIdx].Key;
-
-            foreach (var edge in result.Edges)
+            foreach (var s in bucket)
             {
-                if (!edge.IsInterpolated
-                    || edge.Edge == null
-                    || edge.InterpolationReferences == null
-                    || edge.Edge.OsmWayId == 0
-                    || IsExcludedRoadType(edge.Edge.RoadType)) continue;
-
-                double speedMs = 0, maxSpeedMs = 0, lat = 0, lon = 0, accuracy = 0;
-                long ticks = 0;
-                int apiKeyId = 0;
-                bool hasRef = false;
-
-                foreach (var iref in edge.InterpolationReferences)
-                {
-                    if (iref.PointIndex >= matchedPoints.Count) continue;
-                    var mp = matchedPoints[iref.PointIndex];
-                    if (mp.OriginalIndex >= segment.Count) continue;
-                    var obs = segment[mp.OriginalIndex];
-
-                    speedMs += iref.Percentage * obs.SpeedMs;
-                    maxSpeedMs += iref.Percentage * edge.Edge.MaxSpeedKmh / 3.6;
-                    lat += iref.Percentage * obs.Latitude;
-                    lon += iref.Percentage * obs.Longitude;
-                    ticks += (long)(iref.Percentage * obs.Timestamp.Ticks);
-                    accuracy += iref.Percentage * obs.GpsAccuracyMeters;
-                    if (!hasRef) { apiKeyId = obs.ApiKeyId; hasRef = true; }
-                }
-
-                if (!hasRef) continue;
-
-                //if(speedMs > maxSpeedMs * 0.65) continue;
-
-                synthApiKeys.Add(apiKeyId);
-                synthTripIds.Add(tripId);
-                synthTimestamp.Add(new DateTime(ticks, DateTimeKind.Utc));
-                synthLats.Add(lat);
-                synthLons.Add(lon);
-                synthSpeeds.Add(speedMs);
-                synthAccuracy.Add((float)accuracy);
-                synthWayIds.Add(edge.Edge.OsmWayId);
-                synthLimits.Add(edge.Edge.MaxSpeedKmh > 0 ? edge.Edge.MaxSpeedKmh : null);
+                synthApiKeys.Add(s.ApiKeyId);
+                synthTripIds.Add(s.TripId);
+                synthTimestamp.Add(s.Timestamp);
+                synthLats.Add(s.Lat);
+                synthLons.Add(s.Lon);
+                synthSpeeds.Add(s.SpeedMs);
+                synthAccuracy.Add(s.Accuracy);
+                synthWayIds.Add(s.WayId);
+                synthLimits.Add(s.SpeedLimit);
             }
         }
 

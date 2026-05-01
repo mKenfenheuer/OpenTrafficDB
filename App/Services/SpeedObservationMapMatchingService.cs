@@ -83,19 +83,27 @@ public class SpeedObservationMapMatchingService(
         var db          = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var matching    = scope.ServiceProvider.GetRequiredService<MapMatchingService>();
 
-        var tripChunk = await db.SpeedObservations
+        // Single query: pick all unmatched observations belonging to the next N distinct trips.
+        var tripCap = MapMatchingTripChunkSize;
+        var unmatched = await db.SpeedObservations
             .Where(o => o.OsmWayId == null && !o.IsAggregated)
-            .Select(o => o.TripId)
-            .Distinct()
-            .Take(MapMatchingTripChunkSize)
-            .ToArrayAsync(ct);
+            .Where(o => db.SpeedObservations
+                .Where(x => x.OsmWayId == null && !x.IsAggregated)
+                .Select(x => x.TripId)
+                .Distinct()
+                .OrderBy(t => t)
+                .Take(tripCap)
+                .Contains(o.TripId))
+            .AsNoTracking()
+            .OrderBy(o => o.Timestamp)
+            .ToListAsync(ct);
 
         var matched = 0;
-        if (tripChunk.Length > 0)
+        if (unmatched.Count > 0)
         {
-            var result = await matching.ProcessRangeAsync(tripChunk, db, ct);
+            var result = await matching.ProcessRangeAsync(unmatched, db, ct);
             matched = result.Matched;
-            logger.LogDebug("Matched {Count} observations across {TripCount} trips.", matched, tripChunk.Length);
+            logger.LogDebug("Matched {Count} observations across {TripCount} trips.", matched, unmatched.Select(o => o.TripId).Distinct().Count());
         }
 
         return matched;

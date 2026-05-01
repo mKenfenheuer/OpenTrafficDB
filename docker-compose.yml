@@ -87,10 +87,12 @@ services:
       Security__IpHashPepper: ${IP_HASH_PEPPER}
       BaseUrl: ${BASE_URL}
       OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
+      OpenTrafficRouting__BatchSize: 200
+      OpenTrafficRouting__MaxConcurrent: 8
       Osm__PbfPath: /data/map.osm.pbf
       Osm__PbfUrl: ${VALHALLA_TILE_URL}
       Aggregation__IntervalSeconds: 15
-      Aggregation__MapMatchingTripChunkSize: 2500
+      Aggregation__MapMatchingTripChunkSize: 5000
       Aggregation__AggregateWayIdChunkSize: 5000
       Email__SmtpHost: ${SMTP_HOST:-}
       Email__SmtpPort: ${SMTP_PORT:-25}
