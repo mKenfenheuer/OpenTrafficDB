@@ -86,7 +86,11 @@ public class SpeedObservationAggregationService(
             var result = await aggregation.ReaggregateAsync(ct);
             stopwatch.Stop();
             aggregated = result.Processed;
-            logger.LogDebug("Aggregated {Count} observations in {ElapsedMs}ms, {MsPerObs}ms per observation .", aggregated, stopwatch.ElapsedMilliseconds, stopwatch.ElapsedMilliseconds / aggregated);
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                var msPerObs = aggregated > 0 ? stopwatch.ElapsedMilliseconds / (double)aggregated : 0;
+                logger.LogDebug("Aggregated {Count} observations in {ElapsedMs}ms, {MsPerObs}ms per observation .", aggregated, stopwatch.ElapsedMilliseconds, msPerObs);
+            }
         }
         
         await aggregation.FinalizeAsync(ct);

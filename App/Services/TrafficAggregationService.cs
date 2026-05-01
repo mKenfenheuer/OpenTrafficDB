@@ -115,10 +115,10 @@ public class TrafficAggregationService(
 
         await UpdateSummariesEmaAsync(wayEntries, ct);
 
-        foreach(var obs in observations)
-        db.SpeedObservations.Remove(obs);
-
-        var processed = await db.SaveChangesAsync();
+        var ids = observations.Select(o => o.Id).ToArray();
+        var processed = await db.SpeedObservations
+            .Where(o => ids.Contains(o.Id))
+            .ExecuteDeleteAsync(ct);
 
         if (processed > 0)
         {
