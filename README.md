@@ -381,7 +381,6 @@ docker-compose.dev.yml     Local PostgreSQL
 
 ## Related projects
 
-- [OpenTrafficDB.Importer](https://github.com/mKenfenheuer/OpenTrafficDB.Importer): imports TomTom flow data and Atudo speed camera data into OpenTrafficDB through its API.
 - [opentrafficdb_valhalla_importer](https://github.com/mKenfenheuer/opentrafficdb_valhalla_importer): C++ tool that pulls traffic from the OpenTrafficDB API and writes it into Valhalla traffic tiles.
 - OpenTrafficRouting: routing and map-matching service used by OpenTrafficDB, configured via `OpenTrafficRouting__BaseUrl`.
 
