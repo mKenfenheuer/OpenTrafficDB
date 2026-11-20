@@ -30,7 +30,11 @@ public enum HazardType
     TrafficJam,
 
     // Other
-    Other
+    Other,
+
+    // Road closed for motor vehicles (e.g. from TomTom flow road_closure). Appended at the end:
+    // the API accepts the numeric value (18), so existing numbers must not shift.
+    RoadClosure
 }
 
 public static class HazardTypeExtensions
@@ -60,6 +64,9 @@ public static class HazardTypeExtensions
 
         // Traffic jams are short-lived
         HazardType.TrafficJam => TimeSpan.FromHours(1),
+
+        // Closures are re-confirmed every importer cycle (~24 min); an ended closure clears within an hour
+        HazardType.RoadClosure => TimeSpan.FromHours(1),
 
         // Road hazards
         HazardType.Accident or

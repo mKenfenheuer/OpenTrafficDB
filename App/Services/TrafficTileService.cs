@@ -69,7 +69,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         // is not repeated multiple times across the CASE expressions.
         var liveCutoff = DateTime.UtcNow - _liveWindow;
         var result = await db.Database.SqlQuery<byte[]>($"""
-            SELECT ST_AsMVT(q, 'traffic', 4096, 'geom') AS "Value"
+            SELECT (SELECT ST_AsMVT(q, 'traffic', 4096, 'geom')
             FROM (
                 SELECT
                     ST_AsMVTGeom(
@@ -111,7 +111,21 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                 WHERE COALESCE(base.delay, 0) >= {_minDelay}
                   AND COALESCE(base."RoadClass", 5) <= {maxRoadClass}
             ) q
-            WHERE q.geom IS NOT NULL
+            WHERE q.geom IS NOT NULL)
+            -- Second layer: roads with an active closure, independent of live speed data.
+            || (SELECT ST_AsMVT(c, 'closures', 4096, 'geom')
+                FROM (
+                    SELECT ST_AsMVTGeom(wg."Geometry",
+                               ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326), 4096, 64, true) AS geom,
+                           wg."OsmWayId" AS osm_way_id
+                    FROM "WayGeometries" wg
+                    WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
+                      AND EXISTS (SELECT 1 FROM "HazardAggregates" h
+                                  WHERE h."OsmWayId" = wg."OsmWayId"
+                                    AND h."HazardType" = 'RoadClosure'
+                                    AND h."ExpiresAt" > NOW())
+                ) c
+                WHERE c.geom IS NOT NULL) AS "Value"
             """)
             .FirstOrDefaultAsync(ct);
 

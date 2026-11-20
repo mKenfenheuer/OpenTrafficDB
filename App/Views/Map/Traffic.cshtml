@@ -101,6 +101,7 @@
     <div class="legend-row"><div class="legend-swatch" style="background:#d29922"></div><span>Slow</span></div>
     <div class="legend-row"><div class="legend-swatch" style="background:#f85149"></div><span>Congested</span></div>
     <div class="legend-row"><div class="legend-swatch" style="background:#8b949e"></div><span>No limit data</span></div>
+    <div class="legend-row"><div class="legend-swatch" style="background:repeating-linear-gradient(90deg,#f85149 0 6px,#fff 6px 12px)"></div><span>Road closed</span></div>
     <div id="legend-status">
         <div id="status-dot"></div>
         <span id="status-text">Loading…</span>
@@ -189,6 +190,25 @@
                     '#8b949e'  // no speed-limit data — muted grey
                 ],
                 'line-opacity': 0.85
+            }
+        });
+
+        // Road closures: red/white hatched line (white base, red dashes on top), above traffic.
+        map.addLayer({
+            id: 'closures-base', type: 'line', source: 'traffic', 'source-layer': 'closures',
+            layout: { 'line-cap': 'butt', 'line-join': 'round' },
+            paint: {
+                'line-color': '#ffffff',
+                'line-width': ['interpolate', ['linear'], ['zoom'], 8, 3, 12, 6, 16, 10]
+            }
+        });
+        map.addLayer({
+            id: 'closures-stripes', type: 'line', source: 'traffic', 'source-layer': 'closures',
+            layout: { 'line-cap': 'butt', 'line-join': 'round' },
+            paint: {
+                'line-color': '#f85149',
+                'line-width': ['interpolate', ['linear'], ['zoom'], 8, 3, 12, 6, 16, 10],
+                'line-dasharray': [1, 1]
             }
         });
 

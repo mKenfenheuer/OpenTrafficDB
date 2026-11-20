@@ -88,9 +88,10 @@ public class RoutingService(
 
         // Determine target day
         var today = DateTime.UtcNow.Date;
+        // Without a selected day, predict for today's weekday (the profiles are weekly).
         int targetDow = request.DayOfWeek.HasValue
             ? Math.Clamp(request.DayOfWeek.Value, 0, 6)
-            : (int)System.DayOfWeek.Monday;
+            : (int)today.DayOfWeek;
         int daysUntil = (targetDow - (int)today.DayOfWeek + 7) % 7;
         if (daysUntil == 0) daysUntil = 7;
         var referenceDay = today.AddDays(daysUntil);

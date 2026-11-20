@@ -1005,6 +1005,16 @@
             });
         }
 
+        // Badges from the actual metrics (the first route is the recommended one by the full
+        // routing cost; it is not necessarily the fastest or the cleanest).
+        let fastestIdx = -1, fastestMins = Infinity, cleanestIdx = -1, cleanestCo2 = Infinity;
+        routes.forEach(function (trip, i) {
+            const ta = trip.trafficAnalysis || {}, sum = trip.summary || {};
+            const m = ta.liveDurationMinutes != null ? ta.liveDurationMinutes : (sum.time != null ? sum.time / 60 : null);
+            if (m != null && m < fastestMins) { fastestMins = m; fastestIdx = i; }
+            if (ta.co2GramsEstimate != null && ta.co2GramsEstimate < cleanestCo2) { cleanestCo2 = ta.co2GramsEstimate; cleanestIdx = i; }
+        });
+
         routes.forEach(function (trip, i) {
             const ta   = trip.trafficAnalysis || {};
             const sum  = trip.summary || {};
@@ -1064,7 +1074,9 @@
 
             card.innerHTML = `
                 <div class="route-card-header">
-                    <span class="route-title">${i === 0 ? (hasTraffic ? 'Eco best' : 'Best route') : 'Alternative ' + i}</span>
+                    <span class="route-title">${i === 0 ? 'Recommended' : 'Alternative ' + i}${
+                        routes.length > 1 && i === fastestIdx ? ' <span class="eco-badge">Fastest</span>' : ''}${
+                        routes.length > 1 && hasTraffic && i === cleanestIdx ? ' <span class="eco-badge">Lowest CO2</span>' : ''}</span>
                     <span class="route-time">${mins != null ? fmtMins(mins) : '—'}</span>
                 </div>
                 <div class="route-meta">
@@ -1279,7 +1291,7 @@
         xHtml += '</div>';
 
         var html = '<div class="time-chart">'
-            + '<div class="time-chart-label">Predicted travel time</div>'
+            + '<div class="time-chart-label">Typical travel time by departure hour (predicted, ' + (document.getElementById('depart-day').value !== '' ? 'selected day' : 'today') + ')</div>'
             + '<div class="time-chart-area">'
             + yHtml
             + '<div class="time-chart-body">' + barsHtml + xHtml + '</div>'
