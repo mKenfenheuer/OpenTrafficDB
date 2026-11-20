@@ -103,6 +103,13 @@ public class AppDbContext : DbContext
             e.HasIndex(g => g.BBox).HasMethod("GIST");
             e.Property(g => g.BBox).HasColumnType("geometry(Polygon,4326)");
             e.Property(g => g.Geometry).HasColumnType("geometry(LineString,4326)");
+            e.Property(g => g.RoadClass).HasDefaultValue((short)5);
+            // Low-zoom traffic tiles show only the higher road classes (TrafficTileService.MaxRoadClass):
+            // one partial spatial index per level so they never scan the residential streets.
+            foreach (var maxClass in new short[] { 1, 2, 3, 4 })
+                e.HasIndex(g => g.BBox, $"IX_WayGeometries_BBox_Class{maxClass}")
+                    .HasMethod("GIST")
+                    .HasFilter($"\"RoadClass\" <= {maxClass}");
         });
 
         modelBuilder.Entity<WaySpeedSummary>(e =>

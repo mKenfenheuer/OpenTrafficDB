@@ -29,15 +29,42 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
             double.TryParse(config["Traffic:TileCacheSeconds"], out var tc) ? tc : 15)
     };
 
+    // Low-zoom tiles cover whole regions: expensive to build, and one road changing barely shows.
+    private static readonly DistributedCacheEntryOptions LowZoomOptions = new()
+    {
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60)
+    };
+
+    // Requests for the same tile that arrive while it is being built share that one build.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<byte[]>> _inFlight = new();
+
     public async Task<byte[]> BuildTileAsync(int z, int x, int y, CancellationToken ct = default)
     {
         var key = $"tile:{z}:{x}:{y}";
         var cached = await cache.GetAsync(key, ct);
         if (cached != null) return cached;
 
-        var tile = await BuildTileInternalAsync(z, x, y, ct);
-        await cache.SetAsync(key, tile, TileOptions, ct);
-        return tile;
+        var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = _inFlight.GetOrAdd(key, tcs.Task);
+        if (running != tcs.Task) return await running.WaitAsync(ct);
+
+        try
+        {
+            // Not cancelled by this request: other requests may be waiting for the result.
+            var tile = await BuildTileInternalAsync(z, x, y, CancellationToken.None);
+            await cache.SetAsync(key, tile, z <= 10 ? LowZoomOptions : TileOptions, CancellationToken.None);
+            tcs.SetResult(tile);
+            return tile;
+        }
+        catch (Exception ex)
+        {
+            tcs.SetException(ex);
+            throw;
+        }
+        finally
+        {
+            _inFlight.TryRemove(new KeyValuePair<string, Task<byte[]>>(key, tcs.Task));
+        }
     }
 
     /// <summary>
@@ -68,15 +95,16 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         // Derived fields (delay, jam) are computed in a nested subquery so the delay value
         // is not repeated multiple times across the CASE expressions.
         var liveCutoff = DateTime.UtcNow - _liveWindow;
-        var result = await db.Database.SqlQuery<byte[]>($"""
+
+        // The road class filter on WayGeometries is written as a literal so the planner can use the
+        // partial spatial index for that level (IX_WayGeometries_BBox_ClassN): a z8 tile then scans
+        // ~8k motorway geometries instead of ~200k roads of all classes. Values are parameters.
+        var classFilter = maxRoadClass < 5 ? $"AND wg.\"RoadClass\" <= {maxRoadClass}" : "";
+        var sql = $$"""
             SELECT (SELECT ST_AsMVT(q, 'traffic', 4096, 'geom')
             FROM (
                 SELECT
-                    ST_AsMVTGeom(
-                        base."Geometry",
-                        ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326),
-                        4096, 64, true
-                    )                                                                   AS geom,
+                    ST_AsMVTGeom(base."Geometry", ST_MakeEnvelope({0}, {1}, {2}, {3}, 4326), 4096, 64, true) AS geom,
                     base."OsmWayId"                                                     AS osm_way_id,
                     ROUND(base.speed_kmh::numeric, 1)::float8                          AS speed_kmh,
                     base.freeflow_kmh,
@@ -91,7 +119,6 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                         wg."Geometry",
                         wss."FreeflowSpeed",
                         wss."ConstrainedSpeed",
-                        wss."RoadClass",
                         COALESCE(wss."ConstrainedSpeed", wss."FreeflowSpeed")           AS speed_kmh,
                         COALESCE(wss."SpeedLimitKmh", wg."MaxSpeedKmh")                AS speed_limit_kmh,
                         LEAST(wss."FreeflowSpeed",
@@ -105,28 +132,35 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                             0.0), 1.0)                                                  AS delay
                     FROM "WayGeometries" wg
                     JOIN "WaySpeedSummaries" wss ON wss."OsmWayId" = wg."OsmWayId"
-                                                AND wss."LastUpdated" >= {liveCutoff}
-                    WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
+                                                AND wss."LastUpdated" >= {4}
+                    WHERE wg."BBox" && ST_MakeEnvelope({0}, {1}, {2}, {3}, 4326)
+                      {{classFilter}}
+                      AND COALESCE(wss."RoadClass", wg."RoadClass") <= {6}
                 ) base
-                WHERE COALESCE(base.delay, 0) >= {_minDelay}
-                  AND COALESCE(base."RoadClass", 5) <= {maxRoadClass}
+                WHERE COALESCE(base.delay, 0) >= {5}
             ) q
             WHERE q.geom IS NOT NULL)
-            -- Second layer: roads with an active closure, independent of live speed data.
+            -- Second layer: roads with an active closure, independent of live speed data. Driven by
+            -- the (few) active closures near the tile instead of probing every road in the tile.
             || (SELECT ST_AsMVT(c, 'closures', 4096, 'geom')
                 FROM (
-                    SELECT ST_AsMVTGeom(wg."Geometry",
-                               ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326), 4096, 64, true) AS geom,
+                    SELECT ST_AsMVTGeom(wg."Geometry", ST_MakeEnvelope({0}, {1}, {2}, {3}, 4326), 4096, 64, true) AS geom,
                            wg."OsmWayId" AS osm_way_id
                     FROM "WayGeometries" wg
-                    WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
-                      AND EXISTS (SELECT 1 FROM "HazardAggregates" h
-                                  WHERE h."OsmWayId" = wg."OsmWayId"
-                                    AND h."HazardType" = 'RoadClosure'
-                                    AND h."ExpiresAt" > NOW())
+                    WHERE wg."OsmWayId" IN (
+                            SELECT h."OsmWayId" FROM "HazardAggregates" h
+                            WHERE h."HazardType" = 'RoadClosure'
+                              AND h."ExpiresAt" > NOW()
+                              AND h."OsmWayId" IS NOT NULL
+                              AND h."Latitude"  BETWEEN {1} - 0.05 AND {3} + 0.05
+                              AND h."Longitude" BETWEEN {0} - 0.08 AND {2} + 0.08)
+                      AND wg."BBox" && ST_MakeEnvelope({0}, {1}, {2}, {3}, 4326)
+                      {{classFilter}}
                 ) c
                 WHERE c.geom IS NOT NULL) AS "Value"
-            """)
+            """;
+        var result = await db.Database
+            .SqlQueryRaw<byte[]>(sql, minLon, minLat, maxLon, maxLat, liveCutoff, _minDelay, (short)maxRoadClass)
             .FirstOrDefaultAsync(ct);
 
         // ST_AsMVT returns empty bytea (zero bytes) when no features match — treat as empty tile.

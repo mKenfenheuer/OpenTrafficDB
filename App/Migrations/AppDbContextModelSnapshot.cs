@@ -470,6 +470,11 @@ namespace OpenTrafficDBMigrations
                     b.Property<long>("OsmWayId")
                         .HasColumnType("bigint");
 
+                    b.Property<short>("RoadClass")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)5);
+
                     b.HasKey("Id");
 
                     b.HasIndex("BBox");
@@ -478,6 +483,26 @@ namespace OpenTrafficDBMigrations
 
                     b.HasIndex("OsmWayId")
                         .IsUnique();
+
+                    b.HasIndex(new[] { "BBox" }, "IX_WayGeometries_BBox_Class1")
+                        .HasFilter("\"RoadClass\" <= 1");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "BBox" }, "IX_WayGeometries_BBox_Class1"), "GIST");
+
+                    b.HasIndex(new[] { "BBox" }, "IX_WayGeometries_BBox_Class2")
+                        .HasFilter("\"RoadClass\" <= 2");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "BBox" }, "IX_WayGeometries_BBox_Class2"), "GIST");
+
+                    b.HasIndex(new[] { "BBox" }, "IX_WayGeometries_BBox_Class3")
+                        .HasFilter("\"RoadClass\" <= 3");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "BBox" }, "IX_WayGeometries_BBox_Class3"), "GIST");
+
+                    b.HasIndex(new[] { "BBox" }, "IX_WayGeometries_BBox_Class4")
+                        .HasFilter("\"RoadClass\" <= 4");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "BBox" }, "IX_WayGeometries_BBox_Class4"), "GIST");
 
                     b.ToTable("WayGeometries");
                 });

@@ -294,6 +294,7 @@ public class WayGeometryBackgroundService(
                     MaxSpeedKmh = ParseMaxSpeed(maxspeedRaw),
                     Name        = nameRaw,
                     NodeCount   = coords.Count,
+                    RoadClass   = MapMatchingService.RoadClassOf(hwType),
                     FetchedAt   = DateTime.UtcNow
                 });
 
@@ -378,6 +379,7 @@ public class WayGeometryBackgroundService(
                 ex.MaxSpeedKmh = wg.MaxSpeedKmh;
                 ex.Name        = wg.Name;
                 ex.NodeCount   = wg.NodeCount;
+                ex.RoadClass   = wg.RoadClass;
                 ex.FetchedAt   = wg.FetchedAt;
             }
             else

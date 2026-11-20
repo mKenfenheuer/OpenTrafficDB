@@ -61,6 +61,10 @@ public class HazardTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
                   -- Road closures are stored as points every 300 m along the closed road; they are
                   -- drawn as hatched lines in the traffic tiles ("closures" layer), never as pins.
                   AND ha."HazardType" <> 'RoadClosure'
+                  -- Raw position prefilter (IX_HazardAggregates_Latitude_Longitude): the matched
+                  -- point is at most a few metres from it; the COALESCE filter alone is a full scan.
+                  AND ha."Latitude"  BETWEEN {{minLat - 0.002}} AND {{maxLat + 0.002}}
+                  AND ha."Longitude" BETWEEN {{minLon - 0.003}} AND {{maxLon + 0.003}}
                   AND COALESCE(ha."MatchedLatitude",  ha."Latitude")  BETWEEN {{minLat}} AND {{maxLat}}
                   AND COALESCE(ha."MatchedLongitude", ha."Longitude") BETWEEN {{minLon}} AND {{maxLon}}
             ) q

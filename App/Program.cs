@@ -199,7 +199,9 @@ public class Program
         using (var scope = app.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Database.SetCommandTimeout(TimeSpan.FromMinutes(30));   // data migrations on large tables
             await db.Database.MigrateAsync();
+            db.Database.SetCommandTimeout(null);
 
             // Seed in-memory blocked IP cache from DB
             var abuse = app.Services.GetRequiredService<AbuseDetectionService>();

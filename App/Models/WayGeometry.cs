@@ -16,6 +16,12 @@ public class WayGeometry
     /// <summary>Street name from the OSM "name" tag, if present.</summary>
     public string? Name { get; set; }
     public int NodeCount { get; set; }
+    /// <summary>
+    /// Road class from the OSM highway tag (1 motorway/trunk, 2 primary, 3 secondary, 4 tertiary,
+    /// 5 other), same codes as <c>WaySpeedSummaries.RoadClass</c>. Partial spatial indexes per class
+    /// let low-zoom traffic tiles scan only the roads they show.
+    /// </summary>
+    public short RoadClass { get; set; } = 5;
     public DateTime FetchedAt { get; set; }
 
     /// <summary>
