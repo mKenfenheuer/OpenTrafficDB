@@ -92,7 +92,7 @@ public class TrafficAggregationService(
     public async Task WriteLiveTrafficCsvAsync(Stream output, CancellationToken ct = default)
     {
         await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 65536, leaveOpen: true);
-        await writer.WriteLineAsync("way_id,speed_kmh,freeflow_kmh");
+        await writer.WriteLineAsync("way_id,speed_kmh,freeflow_kmh,updated_unix");
 
         var cutoff = DateTime.UtcNow - _liveWindow;
 
@@ -100,11 +100,13 @@ public class TrafficAggregationService(
             .Where(s => s.LastUpdated >= cutoff)
             .OrderBy(s => s.OsmWayId)
             .AsNoTracking()
-            .Select(s => new { s.OsmWayId, Speed = s.ConstrainedSpeed ?? s.FreeflowSpeed, s.FreeflowSpeed })
+            .Select(s => new { s.OsmWayId, Speed = s.ConstrainedSpeed ?? s.FreeflowSpeed, s.FreeflowSpeed, s.LastUpdated })
             .AsAsyncEnumerable()
             .WithCancellation(ct))
         {
-            await writer.WriteLineAsync($"{s.OsmWayId},{s.Speed:F1},{s.FreeflowSpeed:F1}");
+            // Measurement time, so the router can tell live from stale data (it used the sync time).
+            await writer.WriteLineAsync(FormattableString.Invariant(
+                $"{s.OsmWayId},{s.Speed:F1},{s.FreeflowSpeed:F1},{new DateTimeOffset(DateTime.SpecifyKind(s.LastUpdated, DateTimeKind.Utc)).ToUnixTimeSeconds()}"));
         }
     }
 

@@ -238,8 +238,11 @@ public sealed class SpeedAggregator(
             seeds.TryGetValue(wayId, out var seed);
 
             double? speedLimit = null;
+            // Speed limit of the matched road (from the routing graph), not an observed speed: taking
+            // the first sample's speed here capped free-flow at whatever speed was seen first
+            // (e.g. 40 km/h on a motorway in a construction zone or jam).
             foreach (var s in list)
-                if (s.SpeedMs != 0) { speedLimit = s.SpeedMs * 3.6; break; }
+                if (s.SpeedLimitKmh is > 0) { speedLimit = s.SpeedLimitKmh; break; }
 
             double emaC = seed?.ConstrainedSpeed ?? seed?.FreeflowSpeed ?? list[0].SpeedMs * 3.6;
             foreach (var s in list)
