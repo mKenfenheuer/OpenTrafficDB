@@ -128,13 +128,15 @@ public class HazardAggregationService(
                 db.HazardAggregates.Add(agg);
 
             // Decide whether this aggregate needs map-matching this cycle.
+            // Unmatched aggregates (e.g. outside the routing graph) are retried at most every
+            // 6 hours, so they don't crowd out new reports in every cycle.
             var needsMatch = agg.OsmWayId == null
-                || agg.LastMatchedCentroidLat == null
-                || agg.LastMatchedCentroidLon == null
-                || SquaredDegreeDistance(
-                    agg.Latitude, agg.Longitude,
-                    agg.LastMatchedCentroidLat.Value, agg.LastMatchedCentroidLon.Value)
-                   > rematchDriftDegSquared;
+                ? agg.LastMatchedAt == null || agg.LastMatchedAt < now.AddHours(-6)
+                : agg.LastMatchedCentroidLat == null || agg.LastMatchedCentroidLon == null
+                  || SquaredDegreeDistance(
+                         agg.Latitude, agg.Longitude,
+                         agg.LastMatchedCentroidLat.Value, agg.LastMatchedCentroidLon.Value)
+                     > rematchDriftDegSquared;
 
             if (needsMatch)
                 toMatch.Add((agg, agg.Latitude, agg.Longitude));
@@ -168,7 +170,11 @@ public class HazardAggregationService(
             var (agg, cLat, cLon) = toMatch[i];
             var res = results[i];
 
-            if (!res.Matched) continue;
+            if (!res.Matched)
+            {
+                agg.LastMatchedAt = now;   // remember the attempt; retried after 6 h
+                continue;
+            }
 
             agg.OsmWayId               = res.OsmWayId;
             agg.MatchedLatitude        = res.SnapLat;
