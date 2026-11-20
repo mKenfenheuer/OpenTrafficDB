@@ -37,7 +37,7 @@ public class TrafficController(
     /// <summary>
     /// Exports live traffic speeds as a simple way_id,speed_kmh CSV.
     /// Suitable for feeding into a tool that builds Valhalla traffic.tar files.
-    /// Only includes ways with data from the last 60 minutes.
+    /// Only includes ways with data from the live window (Traffic:LiveWindowMinutes, default 120).
     /// </summary>
     [HttpGet("live/csv")]
     [Produces("text/csv")]

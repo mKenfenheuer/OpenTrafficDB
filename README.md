@@ -8,7 +8,7 @@ OpenTrafficDB is a community traffic speed database. Contributors submit GPS spe
 - **Hazard ingestion.** Reports for speed cameras, accidents, police activity, road works, traffic jams and other hazards (up to 10,000 per batch). Reports are clustered by location, heading and type, and expire per type (for example 30 days for cameras, 1 hour for police activity).
 - **Server-side map matching.** Trips are split into segments, encoded as polylines and matched in bulk against the OpenTrafficRouting trace endpoint. Interpolated edges produce additional observations for ways between GPS points.
 - **Aggregation.** Each OSM way gets 2,016 five-minute buckets per week, plus exponential moving averages for constrained and free-flow speed. Weekly profiles are DCT-II compressed into Valhalla's predicted speed format during aggregation.
-- **Valhalla exports.** A predicted traffic CSV (`way_id,freeflow_speed,constrained_speed,historical_speeds`) and a live traffic CSV (`way_id,speed_kmh,freeflow_kmh`, last 60 minutes).
+- **Valhalla exports.** A predicted traffic CSV (`way_id,freeflow_speed,constrained_speed,historical_speeds`) and a live traffic CSV (`way_id,speed_kmh,freeflow_kmh`, last 2 hours by default).
 - **Vector tiles.** Traffic and hazard overlays as gzip-compressed MVT, built by PostGIS (`ST_AsMVT`) and cached in Redis for 60 seconds. TileJSON and MapLibre style documents are included.
 - **Routing.** Traffic-enriched routing and day-profile travel time buckets, proxied to OpenTrafficRouting.
 - **Accounts and API keys.** Email registration with verification, password reset, session login for the web UI and hashed API keys for machine access. Users are promoted to Contributor after a configurable number of accepted observations.
@@ -106,7 +106,7 @@ On first start, if no admin exists, the app creates `admin@example.com` with a r
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/traffic/valhalla/csv` | API key | Predicted traffic CSV in Valhalla format |
-| `GET` | `/api/v1/traffic/live/csv` | API key | Live speeds of ways updated in the last 60 minutes |
+| `GET` | `/api/v1/traffic/live/csv` | API key | Live speeds of ways updated in the live window (default 2 hours, `Traffic:LiveWindowMinutes`) |
 | `GET` | `/api/v1/hazards/live/csv` | public | Active (non-expired) hazards |
 
 **Vector tiles** (public, CORS enabled)
@@ -216,6 +216,7 @@ The app reads `App/appsettings.json`. Override any key with an environment varia
 | `Aggregation:MaxMatchAttempts` | `3` | Attempts before an unmatched observation is given up |
 | `Aggregation:MatchRetryWindowSeconds` | `300` | Unmatched observations are retried with new points of the same trip within this window |
 | `Aggregation:FinalizeIntervalSeconds` | `60` | Interval of the cleanup of given-up and stale observations |
+| `Traffic:LiveWindowMinutes` | `120` | Age limit of live speeds in tiles and the live CSV. Keep it longer than the refresh cycle of your data sources. |
 | `Aggregation:MapMatchingTripChunkSize` | `200` (compose: `5000`) | Trips per matching pass |
 | `Aggregation:AggregateWayIdChunkSize` | `200` (compose: `5000`) | Ways per aggregation pass |
 | `Hazards:AggregationIntervalSeconds` | `30` | Hazard clustering interval |

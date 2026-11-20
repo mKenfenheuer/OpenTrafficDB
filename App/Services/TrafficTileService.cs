@@ -12,8 +12,12 @@ namespace OpenTrafficDB.App.Services;
 /// (ST_AsMVTGeom + ST_AsMVT) to avoid per-coordinate mercator projection in C#.
 /// Tiles are cached in Redis (IDistributedCache) for 60 seconds.
 /// </summary>
-public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
+public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache, IConfiguration config)
 {
+    // Must be longer than the refresh cycle of the data sources (TomTom importer: ~90 min at zoom 11).
+    private readonly TimeSpan _liveWindow = TimeSpan.FromMinutes(
+        double.TryParse(config["Traffic:LiveWindowMinutes"], out var lw) ? lw : 120);
+
     private static readonly DistributedCacheEntryOptions TileOptions =
         new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60) };
 
@@ -40,6 +44,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         //
         // Derived fields (delay, jam) are computed in a nested subquery so the delay value
         // is not repeated multiple times across the CASE expressions.
+        var liveCutoff = DateTime.UtcNow - _liveWindow;
         var result = await db.Database.SqlQuery<byte[]>($"""
             SELECT ST_AsMVT(q, 'traffic', 4096, 'geom') AS "Value"
             FROM (
@@ -76,7 +81,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                             0.0), 1.0)                                                  AS delay
                     FROM "WayGeometries" wg
                     JOIN "WaySpeedSummaries" wss ON wss."OsmWayId" = wg."OsmWayId"
-                                                AND wss."LastUpdated" >= NOW() - INTERVAL '60 minutes'
+                                                AND wss."LastUpdated" >= {liveCutoff}
                     WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
                 ) base
                 WHERE base.delay > 0.25

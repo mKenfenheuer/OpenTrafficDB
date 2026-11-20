@@ -17,6 +17,8 @@ public class TrafficAggregationService(
     IConfiguration config,
     ILogger<TrafficAggregationService> logger)
 {
+    private readonly TimeSpan _liveWindow = TimeSpan.FromMinutes(
+        double.TryParse(config["Traffic:LiveWindowMinutes"], out var lw) ? lw : 120);
     private readonly TimeSpan _matchRetryWindow = TimeSpan.FromSeconds(
         double.TryParse(config["Aggregation:MatchRetryWindowSeconds"], out var rw) ? rw : 300);
 
@@ -385,14 +387,14 @@ public class TrafficAggregationService(
     /// <summary>
     /// Streams a simple way_id,speed_kmh CSV of current live speeds from WaySpeedSummaries.
     /// Intended for external tools that build Valhalla traffic.tar files.
-    /// Only includes ways updated within the last 60 minutes.
+    /// Only includes ways updated within the live window (Traffic:LiveWindowMinutes, default 120).
     /// </summary>
     public async Task WriteLiveTrafficCsvAsync(Stream output, CancellationToken ct = default)
     {
         await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 65536, leaveOpen: true);
         await writer.WriteLineAsync("way_id,speed_kmh,freeflow_kmh");
 
-        var cutoff = DateTime.UtcNow.AddMinutes(-60);
+        var cutoff = DateTime.UtcNow - _liveWindow;
 
         await foreach (var s in readDb.WaySpeedSummaries
             .Where(s => s.LastUpdated >= cutoff)
