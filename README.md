@@ -181,7 +181,7 @@ Copy `.env.example` to `.env` and adjust the values. `docker-compose.yml` reads 
 | `READ_DB_HOST` | `pgbouncer` | Host of an optional read replica |
 | `IP_HASH_PEPPER` | none | Passed to the app as `Security:IpHashPepper` |
 | `BASE_URL` | none | Public URL of the instance. Used in email links, TileJSON and style documents. |
-| `OTR_BASE_URL` | none | Base URL of the OpenTrafficRouting service. Required for map matching and routing. Not listed in `.env.example`; add it to `.env`. |
+| `OTR_BASE_URL` | none | Base URL of the OpenTrafficRouting service. Required for map matching and routing. |
 | `VALHALLA_TILE_URL` | none | URL of the OSM PBF extract to download, for example a Geofabrik extract. Used to import way geometries for tiles. |
 | `APP_PORT` | `8095` | Host port of the app |
 | `PGBOUNCER_PORT` | `26432` | Host port of PgBouncer. Only needed for external database access. |
@@ -251,7 +251,7 @@ sudo mkdir -p /mnt/opentraffic/postgres /mnt/opentraffic/redis /mnt/opentraffic/
 # 2. Configure
 cp .env.example .env
 # Edit .env: set passwords, BASE_URL, VALHALLA_TILE_URL, MAPTILER_API_KEY
-# and add OTR_BASE_URL=http://<your-opentrafficrouting-host>:<port>
+# and OTR_BASE_URL
 
 # 3. Build the app image
 docker build -f App/Dockerfile -t opentrafficdb-app:local .
