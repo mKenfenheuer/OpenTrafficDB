@@ -266,12 +266,22 @@ public sealed class SpeedMatchingWorker(
         Interlocked.Add(ref _cacheMisses, misses.Count);
 
         // One request per allowed-road-type set (OpenTrafficRouting filters per request).
+        var unreachable = new bool[allSegments.Count];
+        bool anyUnreachable = false;
         foreach (var group in misses.GroupBy(m => string.Join(',', allSegments[m].RoadTypes)))
         for (int i = 0; i < group.Count(); i += MaxPolylinesPerRequest)
         {
             var chunk = group.Skip(i).Take(MaxPolylinesPerRequest).ToList();
             var results = await matcher.MatchTracesBulkAsync(
                 chunk.Select(m => allSegments[m].Polyline).ToList(), allSegments[chunk[0]].RoadTypes, ct);
+            if (results.All(r => r == null))
+            {
+                // OpenTrafficRouting not reachable (restart, overload): keep these points without
+                // counting an attempt, so an outage neither drops data nor spins through retries.
+                foreach (var m in chunk) unreachable[m] = true;
+                anyUnreachable = true;
+                continue;
+            }
             for (int j = 0; j < chunk.Count && j < results.Count; j++)
             {
                 if (results[j] == null) continue;   // transport error: not cached, retried with the trip's next points
@@ -289,11 +299,13 @@ public sealed class SpeedMatchingWorker(
         foreach (var trip in batch)
         {
             var matchedSeqs = new HashSet<long>();
+            bool tripUnreachable = false;
             var pointWays = new Dictionary<long, (double SpeedSum, long TicksSum, int Count, double? Limit, short Class)>();
             var interpolatedWays = new Dictionary<long, (double SpeedMs, long Ticks, double? Limit, short Class)>();
 
             foreach (var segment in trip.Segments)
             {
+                if (unreachable[segmentIndex]) tripUnreachable = true;
                 var plan = plans[segmentIndex++];
                 if (plan == null) continue;
 
@@ -346,7 +358,9 @@ public sealed class SpeedMatchingWorker(
             foreach (var p in trip.Pending)
             {
                 if (matchedSeqs.Contains(p.Seq)) continue;
-                if (p.Attempts + 1 < pipeline.MaxMatchAttempts && now - p.ReceivedAt < pipeline.MatchRetryWindow)
+                if (now - p.ReceivedAt >= pipeline.MatchRetryWindow) continue;
+                if (tripUnreachable) retry.Add(p);
+                else if (p.Attempts + 1 < pipeline.MaxMatchAttempts)
                     retry.Add(p with { Attempts = (short)(p.Attempts + 1) });
             }
 
@@ -360,5 +374,9 @@ public sealed class SpeedMatchingWorker(
         }
 
         aggregator.Add(samples);
+
+        // Back off while OpenTrafficRouting is unreachable (this batch keeps its slot meanwhile).
+        if (anyUnreachable)
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
     }
 }

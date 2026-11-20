@@ -119,7 +119,12 @@ public class MapMatchingService(
 
             return results.Cast<TraceResult?>().ToList();
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
+        {
+            logger.LogWarning("OpenTrafficRouting bulk trace failed: {Message}", ex.Message);
+            return Enumerable.Repeat<TraceResult?>(null, encodedPolylines.Count).ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "OpenTrafficRouting bulk trace failed.");
             return Enumerable.Repeat<TraceResult?>(null, encodedPolylines.Count).ToList();
