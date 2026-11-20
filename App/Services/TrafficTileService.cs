@@ -14,9 +14,9 @@ namespace OpenTrafficDB.App.Services;
 /// </summary>
 public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache, IConfiguration config)
 {
-    // Must be longer than the refresh cycle of the data sources (TomTom importer: ~90 min at zoom 11).
+    // Must be longer than the refresh cycle of the data sources (TomTom importer: ~24 min at zoom 10).
     private readonly TimeSpan _liveWindow = TimeSpan.FromMinutes(
-        double.TryParse(config["Traffic:LiveWindowMinutes"], out var lw) ? lw : 120);
+        double.TryParse(config["Traffic:LiveWindowMinutes"], out var lw) ? lw : 60);
 
     // Minimum delay factor (0–1) a road needs to appear in the tiles. 0 = all roads with data.
     private readonly double _minDelay = double.TryParse(config["Traffic:TileMinDelay"],
