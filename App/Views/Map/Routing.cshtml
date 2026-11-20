@@ -1037,13 +1037,13 @@
                 let delayClass = 'none', delayTxt = 'No delay';
                 if (delay != null && delay > 0.5) {
                     delayClass = delay < 3 ? 'light' : 'heavy';
-                    delayTxt   = '+' + delay.toFixed(1) + ' min (' + (delayPct != null ? delayPct.toFixed(0) : '?') + '%)';
+                    delayTxt   = '+' + delay.toFixed(1) + ' min vs. free flow (+' + (delayPct != null ? delayPct.toFixed(0) : '?') + '%)';
                 }
                 const coverage = ta.trafficCoverageRatio != null
                     ? Math.round(ta.trafficCoverageRatio * 100) + '% coverage'
                     : '';
                 if (coverage) metaHtml += '<span>' + coverage + '</span>';
-                metaHtml += `<span class="delay-badge ${delayClass}">${delayTxt}</span>`;
+                metaHtml += `<span class="delay-badge ${delayClass}" title="Extra time compared with driving this route at free-flow speed (typical speed without traffic). The percentage is relative to the free-flow travel time.">${delayTxt}</span>`;
 
                 // Eco / CO2 row
                 const co2 = ta.co2GramsEstimate;
