@@ -88,7 +88,7 @@ services:
       BaseUrl: ${BASE_URL}
       OpenTrafficRouting__BaseUrl: ${OTR_BASE_URL}
       OpenTrafficRouting__BatchSize: 200
-      OpenTrafficRouting__MaxConcurrent: 8
+      OpenTrafficRouting__MaxConcurrent: 2
       Osm__PbfPath: /data/map.osm.pbf
       Osm__PbfUrl: ${VALHALLA_TILE_URL}
       Pipeline__MaxBufferedPoints: ${PIPELINE_MAX_BUFFERED_POINTS:-3000000}
