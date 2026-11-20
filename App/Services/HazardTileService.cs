@@ -58,6 +58,9 @@ public class HazardTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
                 FROM "HazardAggregates" ha
                 WHERE ha."ExpiresAt" > NOW()
                   AND ha."OsmWayId" IS NOT NULL
+                  -- Road closures are stored as points every 300 m along the closed road; they are
+                  -- drawn as hatched lines in the traffic tiles ("closures" layer), never as pins.
+                  AND ha."HazardType" <> 'RoadClosure'
                   AND COALESCE(ha."MatchedLatitude",  ha."Latitude")  BETWEEN {{minLat}} AND {{maxLat}}
                   AND COALESCE(ha."MatchedLongitude", ha."Longitude") BETWEEN {{minLon}} AND {{maxLon}}
             ) q
