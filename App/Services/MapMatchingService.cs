@@ -38,7 +38,17 @@ public class MapMatchingService(
     public record MatchResult(
         long OsmWayId,
         double? SpeedLimitKmh,
-        short RoadClass);
+        short RoadClass,
+        long[] WayIds);
+
+    /// <summary>
+    /// All OSM ways an edge covers: a compacted (shortcut) edge merges consecutive ways of the same
+    /// road and reports them in osm_way_ids; osm_way_id alone is only the first of them.
+    /// </summary>
+    public static long[] WayIdsOf(TraceEdgeInfo e) =>
+        e.OsmWayIds is { Length: > 0 } ids
+            ? (ids.Contains(e.OsmWayId) || e.OsmWayId == 0 ? ids : [e.OsmWayId, .. ids])
+            : [e.OsmWayId];
 
     /// <summary>
     /// Road class used to choose which roads the traffic tiles show per zoom level:
@@ -173,12 +183,12 @@ public class MapMatchingService(
         if (result?.MatchedPoints == null || result.Edges == null) return [];
 
         // Build fallback: point-index → edge info from non-interpolated edge coverage ranges.
-        var pointToEdge = new Dictionary<int, (long WayId, int SpeedKmh, string? RoadType)>();
+        var pointToEdge = new Dictionary<int, (long WayId, int SpeedKmh, string? RoadType, long[]? WayIds)>();
         foreach (var edge in result.Edges)
         {
             if (edge.IsInterpolated) continue;
             for (int i = edge.BeginPointIndex; i <= edge.EndPointIndex; i++)
-                pointToEdge[i] = (edge.Edge?.OsmWayId ?? 0, edge.Edge?.MaxSpeedKmh ?? 0, edge.Edge?.RoadType);
+                pointToEdge[i] = (edge.Edge?.OsmWayId ?? 0, edge.Edge?.MaxSpeedKmh ?? 0, edge.Edge?.RoadType, edge.Edge?.OsmWayIds);
         }
 
         var results = new Dictionary<int, MatchResult>();
@@ -195,7 +205,7 @@ public class MapMatchingService(
 
             var edgeInfo = mp.Edge;
             if ((edgeInfo?.OsmWayId ?? 0) == 0 && pointToEdge.TryGetValue(i, out var re) && re.WayId != 0)
-                edgeInfo = new TraceEdgeInfo { OsmWayId = re.WayId, MaxSpeedKmh = re.SpeedKmh, RoadType = re.RoadType };
+                edgeInfo = new TraceEdgeInfo { OsmWayId = re.WayId, MaxSpeedKmh = re.SpeedKmh, RoadType = re.RoadType, OsmWayIds = re.WayIds };
 
             if (edgeInfo == null || edgeInfo.OsmWayId == 0) { noEdge++; continue; }
 
@@ -204,7 +214,8 @@ public class MapMatchingService(
             results[mp.OriginalIndex] = new MatchResult(
                 OsmWayId: edgeInfo.OsmWayId,
                 SpeedLimitKmh: edgeInfo.MaxSpeedKmh > 0 ? edgeInfo.MaxSpeedKmh : null,
-                RoadClass: RoadClassOf(edgeInfo.RoadType));
+                RoadClass: RoadClassOf(edgeInfo.RoadType),
+                WayIds: WayIdsOf(edgeInfo));
         }
 
         if (badType + noEdge + excluded > 0)
@@ -279,6 +290,9 @@ public class MapMatchingService(
     {
         [JsonPropertyName("osm_way_id")]
         public long OsmWayId { get; set; }
+
+        [JsonPropertyName("osm_way_ids")]
+        public long[]? OsmWayIds { get; set; }
 
         [JsonPropertyName("max_speed_kmh")]
         public int MaxSpeedKmh { get; set; }

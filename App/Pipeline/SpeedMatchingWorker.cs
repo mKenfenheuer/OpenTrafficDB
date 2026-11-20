@@ -42,9 +42,10 @@ public sealed class SpeedMatchingWorker(
 
     /// <summary>Geometry-only match result of one polyline: which point lies on which road.</summary>
     private sealed record MatchPlan(
-        int[] PointIndex, long[] PointWay, double?[] PointLimit, short[] PointClass, InterpolatedWay[] Interpolated);
+        int[] PointIndex, long[][] PointWays, double?[] PointLimit, short[] PointClass, InterpolatedWay[] Interpolated);
 
-    private sealed record InterpolatedWay(long WayId, double? Limit, short RoadClass, int[] PointIndex, double[] Percentage);
+    /// <summary>An interpolated edge: all OSM ways it covers (a shortcut covers several).</summary>
+    private sealed record InterpolatedWay(long[] WayIds, double? Limit, short RoadClass, int[] PointIndex, double[] Percentage);
 
     private readonly MemoryCache _planCache = new(new MemoryCacheOptions
     {
@@ -206,10 +207,10 @@ public sealed class SpeedMatchingWorker(
     private MatchPlan BuildPlan(MapMatchingService.TraceResult result)
     {
         var points = matcher.ParsePointMatches(result);
-        var idx = new int[points.Count]; var ways = new long[points.Count]; var limits = new double?[points.Count];
+        var idx = new int[points.Count]; var ways = new long[points.Count][]; var limits = new double?[points.Count];
         var classes = new short[points.Count];
         var k = 0;
-        foreach (var (i, m) in points) { idx[k] = i; ways[k] = m.OsmWayId; limits[k] = m.SpeedLimitKmh; classes[k] = m.RoadClass; k++; }
+        foreach (var (i, m) in points) { idx[k] = i; ways[k] = m.WayIds; limits[k] = m.SpeedLimitKmh; classes[k] = m.RoadClass; k++; }
 
         var interpolated = new List<InterpolatedWay>();
         if (result.Edges != null && result.MatchedPoints != null)
@@ -226,7 +227,7 @@ public sealed class SpeedMatchingWorker(
                     .Select(r => (Orig: result.MatchedPoints[r.PointIndex].OriginalIndex, r.Percentage))
                     .ToArray();
                 if (refs.Length == 0) continue;
-                interpolated.Add(new InterpolatedWay(edge.Edge.OsmWayId,
+                interpolated.Add(new InterpolatedWay(MapMatchingService.WayIdsOf(edge.Edge),
                     edge.Edge.MaxSpeedKmh > 0 ? edge.Edge.MaxSpeedKmh : null,
                     MapMatchingService.RoadClassOf(edge.Edge.RoadType),
                     refs.Select(r => r.Orig).ToArray(), refs.Select(r => r.Percentage).ToArray()));
@@ -303,14 +304,18 @@ public sealed class SpeedMatchingWorker(
                     var (point, isContext) = segment.Points[idx];
                     if (isContext || !matchedSeqs.Add(point.Seq)) continue;
 
-                    pointWays.TryGetValue(plan.PointWay[k], out var acc);
-                    pointWays[plan.PointWay[k]] = (acc.SpeedSum + point.SpeedMs, acc.TicksSum + point.Timestamp.Ticks / 1000,
-                        acc.Count + 1, acc.Limit ?? plan.PointLimit[k], plan.PointClass[k]);
+                    // A point on a shortcut edge counts for every way the edge covers.
+                    foreach (var wayId in plan.PointWays[k])
+                    {
+                        pointWays.TryGetValue(wayId, out var acc);
+                        pointWays[wayId] = (acc.SpeedSum + point.SpeedMs, acc.TicksSum + point.Timestamp.Ticks / 1000,
+                            acc.Count + 1, acc.Limit ?? plan.PointLimit[k], plan.PointClass[k]);
+                    }
                 }
 
                 foreach (var way in plan.Interpolated)
                 {
-                    if (interpolatedWays.ContainsKey(way.WayId)) continue;
+                    if (way.WayIds.All(interpolatedWays.ContainsKey)) continue;
                     double speed = 0, ticks = 0, weight = 0;
                     var newData = false;
                     for (int r = 0; r < way.PointIndex.Length; r++)
@@ -324,7 +329,8 @@ public sealed class SpeedMatchingWorker(
                         weight += way.Percentage[r];
                     }
                     if (!newData || weight <= 0) continue;
-                    interpolatedWays[way.WayId] = (speed / weight, (long)(ticks / weight), way.Limit, way.RoadClass);
+                    foreach (var wayId in way.WayIds)
+                        interpolatedWays.TryAdd(wayId, (speed / weight, (long)(ticks / weight), way.Limit, way.RoadClass));
                 }
             }
 
