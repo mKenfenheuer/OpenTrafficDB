@@ -29,6 +29,14 @@ public class SpeedObservationRequest
     public string TripId { get; set; } = Guid.NewGuid().ToString();
 
     public bool RoadWorks { get; set; }
+
+    /// <summary>
+    /// Optional road class of the road the observation was made on, if the source knows it:
+    /// <c>motorway</c>, <c>trunk</c>, <c>primary</c>, <c>secondary</c>, <c>tertiary</c> or <c>local</c>.
+    /// Map matching then only considers compatible OSM roads. Without it, the class is inferred
+    /// from the observed speed.
+    /// </summary>
+    public string? RoadClass { get; set; }
 }
 
 public class SubmitSpeedResponse

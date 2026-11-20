@@ -12,7 +12,8 @@ public readonly record struct SpeedPoint(
     float GpsAccuracyMeters,
     DateTime ReceivedAt,
     long Seq,
-    short Attempts = 0);
+    short Attempts = 0,
+    byte RoadClassHint = 0);
 
 /// <summary>
 /// In-memory buffer between ingestion and map matching. Raw observations never touch the
@@ -83,7 +84,7 @@ public sealed class SpeedPipeline(IConfiguration config)
     /// <summary>
     /// Adds the points of one trip. Returns false (and accepts nothing) when the buffer is full.
     /// </summary>
-    public bool TryEnqueue(string tripKey, IReadOnlyList<(DateTime Timestamp, double Lat, double Lon, double SpeedMs, float Accuracy)> points)
+    public bool TryEnqueue(string tripKey, IReadOnlyList<(DateTime Timestamp, double Lat, double Lon, double SpeedMs, float Accuracy, byte RoadClassHint)> points)
     {
         if (points.Count == 0) return true;
 
@@ -101,7 +102,7 @@ public sealed class SpeedPipeline(IConfiguration config)
         {
             foreach (var p in points)
                 state.Pending.Add(new SpeedPoint(p.Timestamp, p.Lat, p.Lon, p.SpeedMs, p.Accuracy, now,
-                    Interlocked.Increment(ref _seq)));
+                    Interlocked.Increment(ref _seq), 0, p.RoadClassHint));
             state.LastActivity = now;
             if (!state.Queued)
             {

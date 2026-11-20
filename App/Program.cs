@@ -71,6 +71,8 @@ public class Program
         // Recurring in-process background jobs.
         // In-memory speed pipeline: ingest -> trip buffer -> map matching -> aggregation -> bulk upsert.
         builder.Services.AddSingleton<SpeedPipeline>();
+        builder.Services.AddSingleton<SpeedProfileWriter>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<SpeedProfileWriter>());
         builder.Services.AddSingleton<SpeedAggregator>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<SpeedAggregator>());
         builder.Services.AddHostedService<SpeedMatchingWorker>();

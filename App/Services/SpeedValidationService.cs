@@ -46,6 +46,9 @@ public class SpeedValidationService(IConfiguration config)
         if (req.TripId == string.Empty)
             errors.Add("TripId must be a non-empty string.");
 
+        if (req.RoadClass != null && OpenTrafficDB.App.Services.RoadClassFilter.Parse(req.RoadClass) == 0)
+            errors.Add("RoadClass must be one of motorway, trunk, primary, secondary, tertiary, local.");
+
         if (errors.Count > 0)
             return ValidationResult.Fail([.. errors]);
 

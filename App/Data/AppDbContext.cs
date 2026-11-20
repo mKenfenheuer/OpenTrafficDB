@@ -18,6 +18,7 @@ public class AppDbContext : DbContext
     public DbSet<SpeedObservation> SpeedObservations => Set<SpeedObservation>();
     public DbSet<BlockedIp> BlockedIps => Set<BlockedIp>();
     public DbSet<WaySpeedAggregate> WaySpeedAggregates => Set<WaySpeedAggregate>();
+    public DbSet<WayProfile> WayProfiles => Set<WayProfile>();
     public DbSet<WayGeometry> WayGeometries => Set<WayGeometry>();
     public DbSet<WaySpeedSummary> WaySpeedSummaries => Set<WaySpeedSummary>();
     public DbSet<AggregationMetric> AggregationMetrics => Set<AggregationMetric>();
@@ -85,6 +86,14 @@ public class AppDbContext : DbContext
         {
             e.HasIndex(a => new { a.OsmWayId, a.DayOfWeek, a.FiveMinuteBucket }).IsUnique();
             // fillfactor=80 leaves room for HOT updates (SumSpeedKmh, SampleCount updated every aggregation cycle).
+            e.HasStorageParameter("fillfactor", 80);
+        });
+
+        modelBuilder.Entity<WayProfile>(e =>
+        {
+            e.HasKey(p => p.OsmWayId);
+            e.Property(p => p.OsmWayId).ValueGeneratedNever();
+            // Rows are rewritten on every profile flush; leave room for HOT updates.
             e.HasStorageParameter("fillfactor", 80);
         });
 

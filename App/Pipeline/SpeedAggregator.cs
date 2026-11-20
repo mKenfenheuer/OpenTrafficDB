@@ -24,6 +24,7 @@ public readonly record struct WaySample(long WayId, DateTime Timestamp, double S
 /// </summary>
 public sealed class SpeedAggregator(
     IServiceScopeFactory scopeFactory,
+    SpeedProfileWriter profiles,
     IConfiguration config,
     ILogger<SpeedAggregator> logger) : BackgroundService
 {
@@ -56,6 +57,7 @@ public sealed class SpeedAggregator(
     {
         if (samples.Count == 0) return;
         lock (_lock) _pending.AddRange(samples);
+        profiles.Add(samples);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -210,7 +212,9 @@ public sealed class SpeedAggregator(
     }
 
     /// <summary>
-    /// Updates WaySpeedSummaries with an exponential moving average (α = 0.8), oldest sample first,
+    /// Updates WaySpeedSummaries (live and free-flow speed, road class) with an exponential moving
+    /// average (α = 0.8), oldest sample first. EncodedSpeeds (the prediction) is owned by
+    /// <see cref="SpeedProfileWriter"/>. Original description:
     /// so the most recent traversal has the highest weight. Same math as the former
     /// database-queue aggregation, applied to samples instead of raw points.
     /// </summary>
@@ -220,14 +224,13 @@ public sealed class SpeedAggregator(
         var ids = byWay.Select(w => w.WayId).ToArray();
         var seeds = await db.WaySpeedSummaries
             .Where(s => ids.Contains(s.OsmWayId))
-            .AsNoTracking()
+            .Select(s => new { s.OsmWayId, s.ConstrainedSpeed, s.FreeflowSpeed })
             .ToDictionaryAsync(s => s.OsmWayId, ct);
 
         var n = byWay.Count;
         var wayIds = new long[n]; var constrained = new double[n]; var freeflow = new double[n];
-        var speedLimits = new double?[n]; var lastUpdated = new DateTime[n]; var encoded = new string[n];
+        var speedLimits = new double?[n]; var lastUpdated = new DateTime[n];
         var roadClasses = new short[n];
-        var buffer = new float[2016];
 
         for (int i = 0; i < n; i++)
         {
@@ -261,20 +264,17 @@ public sealed class SpeedAggregator(
             speedLimits[i] = speedLimit;
             lastUpdated[i] = list[^1].Timestamp;
             roadClasses[i] = list.Min(s => s.RoadClass);
-            Array.Fill(buffer, (float)freeflow[i]);
-            encoded[i] = ValhallaSpeedEncoder.Encode(buffer);
         }
 
         await db.Database.ExecuteSqlRawAsync("""
             INSERT INTO "WaySpeedSummaries"
-            ("OsmWayId","ConstrainedSpeed","FreeflowSpeed","SpeedLimitKmh","LastUpdated","EncodedSpeeds","RoadClass")
-            SELECT * FROM unnest(@way_ids,@c,@f,@sl,@lu,@enc,@rc)
+            ("OsmWayId","ConstrainedSpeed","FreeflowSpeed","SpeedLimitKmh","LastUpdated","RoadClass")
+            SELECT * FROM unnest(@way_ids,@c,@f,@sl,@lu,@rc)
             ON CONFLICT ("OsmWayId") DO UPDATE SET
                 "ConstrainedSpeed" = EXCLUDED."ConstrainedSpeed",
                 "FreeflowSpeed"    = EXCLUDED."FreeflowSpeed",
                 "SpeedLimitKmh"    = COALESCE(EXCLUDED."SpeedLimitKmh","WaySpeedSummaries"."SpeedLimitKmh"),
                 "LastUpdated"      = EXCLUDED."LastUpdated",
-                "EncodedSpeeds"    = EXCLUDED."EncodedSpeeds",
                 "RoadClass"        = EXCLUDED."RoadClass"
             """,
             [
@@ -283,7 +283,6 @@ public sealed class SpeedAggregator(
                 new NpgsqlParameter("f", NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = freeflow },
                 new NpgsqlParameter("sl", NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = speedLimits },
                 new NpgsqlParameter("lu", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = lastUpdated },
-                new NpgsqlParameter("enc", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = encoded },
                 new NpgsqlParameter("rc", NpgsqlDbType.Array | NpgsqlDbType.Smallint) { Value = roadClasses },
             ],
             ct);

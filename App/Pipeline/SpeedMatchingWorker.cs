@@ -37,7 +37,8 @@ public sealed class SpeedMatchingWorker(
     private readonly TimeSpan _linger = TimeSpan.FromMilliseconds(
         double.TryParse(config["Pipeline:BatchLingerMs"], out var lm) ? lm : 100);
 
-    private sealed record Segment(List<(SpeedPoint Point, bool IsContext)> Points, string Polyline);
+    /// <summary>A trace segment and the OSM road types it may be matched onto (see <see cref="RoadClassFilter"/>).</summary>
+    private sealed record Segment(List<(SpeedPoint Point, bool IsContext)> Points, string Polyline, string[] RoadTypes, string CacheKey);
 
     /// <summary>Geometry-only match result of one polyline: which point lies on which road.</summary>
     private sealed record MatchPlan(
@@ -196,7 +197,9 @@ public sealed class SpeedMatchingWorker(
             if (current.Count == 0 || current.All(p => p.IsContext)) return;
             var coords = current.Select(p => (p.Point.Latitude, p.Point.Longitude, p.Point.Timestamp)).ToList();
             if (coords.Count == 1) coords.Add(coords[0]);
-            segments.Add(new Segment(current, MapMatchingService.EncodePolyline6(coords)));
+            var roadTypes = RoadTypesFor(current);
+            var polyline = MapMatchingService.EncodePolyline6(coords);
+            segments.Add(new Segment(current, polyline, roadTypes, string.Join(',', roadTypes) + "|" + polyline));
         }
     }
 
@@ -232,6 +235,21 @@ public sealed class SpeedMatchingWorker(
         return new MatchPlan(idx, ways, limits, classes, [.. interpolated]);
     }
 
+    /// <summary>
+    /// Allowed road types for a segment: the explicit class hint of its new points if they carry one,
+    /// otherwise inferred from their median speed.
+    /// </summary>
+    private static string[] RoadTypesFor(List<(SpeedPoint Point, bool IsContext)> segment)
+    {
+        var fresh = segment.Where(p => !p.IsContext).Select(p => p.Point).ToList();
+        var hint = fresh.Where(p => p.RoadClassHint != RoadClassFilter.None)
+            .GroupBy(p => p.RoadClassHint).OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault();
+        if (hint != RoadClassFilter.None) return RoadClassFilter.ForHint(hint);
+
+        var speeds = fresh.Select(p => p.SpeedMs * 3.6).OrderBy(v => v).ToList();
+        return speeds.Count == 0 ? RoadClassFilter.All : RoadClassFilter.ForSpeed(speeds[speeds.Count / 2]);
+    }
+
     private async Task RunBatchAsync(List<TripWork> batch, CancellationToken ct)
     {
         // Resolve match plans from the cache; only polylines with new geometry go to OpenTrafficRouting.
@@ -240,22 +258,25 @@ public sealed class SpeedMatchingWorker(
         var misses = new List<int>();
         for (int i = 0; i < allSegments.Count; i++)
         {
-            if (_planCache.TryGetValue(allSegments[i].Polyline, out MatchPlan? cached)) plans[i] = cached;
+            if (_planCache.TryGetValue(allSegments[i].CacheKey, out MatchPlan? cached)) plans[i] = cached;
             else misses.Add(i);
         }
         Interlocked.Add(ref _cacheHits, allSegments.Count - misses.Count);
         Interlocked.Add(ref _cacheMisses, misses.Count);
 
-        for (int i = 0; i < misses.Count; i += MaxPolylinesPerRequest)
+        // One request per allowed-road-type set (OpenTrafficRouting filters per request).
+        foreach (var group in misses.GroupBy(m => string.Join(',', allSegments[m].RoadTypes)))
+        for (int i = 0; i < group.Count(); i += MaxPolylinesPerRequest)
         {
-            var chunk = misses.Skip(i).Take(MaxPolylinesPerRequest).ToList();
-            var results = await matcher.MatchTracesBulkAsync(chunk.Select(m => allSegments[m].Polyline).ToList(), ct);
+            var chunk = group.Skip(i).Take(MaxPolylinesPerRequest).ToList();
+            var results = await matcher.MatchTracesBulkAsync(
+                chunk.Select(m => allSegments[m].Polyline).ToList(), allSegments[chunk[0]].RoadTypes, ct);
             for (int j = 0; j < chunk.Count && j < results.Count; j++)
             {
                 if (results[j] == null) continue;   // transport error: not cached, retried with the trip's next points
                 var plan = BuildPlan(results[j]!);
                 plans[chunk[j]] = plan;
-                _planCache.Set(allSegments[chunk[j]].Polyline, plan,
+                _planCache.Set(allSegments[chunk[j]].CacheKey, plan,
                     new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = _planTtl });
             }
         }

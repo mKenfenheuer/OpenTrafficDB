@@ -60,6 +60,14 @@ public class MapMatchingService(
     /// </summary>
     public async Task<List<TraceResult?>> MatchTracesBulkAsync(
         IReadOnlyList<string> encodedPolylines,
+        CancellationToken ct = default) => await MatchTracesBulkAsync(encodedPolylines, null, ct);
+
+    /// <summary>
+    /// Bulk match with an optional set of allowed OSM road types (see <see cref="RoadClassFilter"/>).
+    /// </summary>
+    public async Task<List<TraceResult?>> MatchTracesBulkAsync(
+        IReadOnlyList<string> encodedPolylines,
+        IReadOnlyCollection<string>? roadTypes,
         CancellationToken ct = default)
     {
         if (encodedPolylines.Count == 0) return [];
@@ -72,7 +80,7 @@ public class MapMatchingService(
             search_radius = 50.0,
             interpolate = true,
             attributes = new[] { "osm_way_id", "road_type", "max_speed_kmh" },
-            filters = new { road_types = _allowedRoadTypes.ToArray() }
+            filters = new { road_types = (roadTypes ?? _allowedRoadTypes).ToArray() }
         };
 
         var json = JsonSerializer.Serialize(request, _jsonOptions);

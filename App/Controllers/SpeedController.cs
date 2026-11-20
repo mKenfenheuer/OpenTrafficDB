@@ -128,7 +128,8 @@ public class SpeedController(
         foreach (var trip in observations.GroupBy(o => o.TripId))
         {
             var points = trip
-                .Select(o => (o.Timestamp.ToUniversalTime(), o.Latitude, o.Longitude, o.SpeedMs, o.GpsAccuracyMeters))
+                .Select(o => (o.Timestamp.ToUniversalTime(), o.Latitude, o.Longitude, o.SpeedMs, o.GpsAccuracyMeters,
+                    RoadClassFilter.Parse(o.RoadClass)))
                 .ToList();
             // Trip ids are namespaced per API key and hashed, as before.
             if (!pipeline.TryEnqueue(crypto.HashTripId(apiKeyId + trip.Key), points))

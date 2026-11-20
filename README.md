@@ -66,10 +66,11 @@ flowchart LR
 Raw observations never touch the database. Postgres only stores the results.
 
 1. **Ingestion.** Clients submit observations with an API key. The API validates each record, hashes the trip ID together with the key ID, adds the points to an in-memory trip buffer and counts the contribution. The buffer is bounded (`Pipeline:MaxBufferedPoints`); when it is full, the API answers `503` with `Retry-After`.
-2. **Map matching.** A trip is queued when it receives new points. The matching worker splits trips at gaps over 500 m or after 20 km and sends the polylines to OpenTrafficRouting, with up to `OpenTrafficRouting:MaxConcurrent` bulk requests in flight. Per trip and road, the matched points are averaged into one sample; roads crossed between two points (interpolated edges) get one sample each. Unmatched points are retried only together with new points of the same trip, and the last matched points stay as context, so a trip uploaded in parts is matched as one trace.
-3. **Aggregation.** Every 10 seconds the samples are written to the live summaries (EMA, alpha 0.8, plus the encoded Valhalla speed profile and road class) in one bulk upsert. Writing the five-minute weekly buckets (`WaySpeedAggregates`) is optional (`Pipeline:WriteWeeklyAggregates`).
-4. **Restarts.** Points still in the buffer are lost on a restart (seconds of data). Pending samples are flushed on graceful shutdown.
-5. **Output.** The CSV exports stream from the summaries. Tiles join the summaries and hazard aggregates with the imported way geometries. The C++ tools in `tools/` and the related Valhalla importer turn the CSVs into Valhalla data.
+2. **Map matching.** A trip is queued when it receives new points. Each trace segment is only matched onto OSM roads that fit it: if the observations carry `roadClass` (`motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `local`), that class and its neighbours; otherwise the class is inferred from the median speed (fast traces exclude small roads). This keeps traces from snapping onto parallel roads of another class. The matching worker splits trips at gaps over 500 m or after 20 km and sends the polylines to OpenTrafficRouting, with up to `OpenTrafficRouting:MaxConcurrent` bulk requests in flight. Per trip and road, the matched points are averaged into one sample; roads crossed between two points (interpolated edges) get one sample each. Unmatched points are retried only together with new points of the same trip, and the last matched points stay as context, so a trip uploaded in parts is matched as one trace.
+3. **Live aggregation.** Every 10 seconds the samples are written to the live summaries (EMA, alpha 0.8, and road class) in one bulk upsert. The traffic map and the live CSV read them.
+4. **Weekly profiles and predictions.** Every 5 minutes each touched road's weekly profile (`WayProfiles`: 2,016 five-minute slots, average speed and capped count, one compact row per road) is updated, and the predicted speeds are encoded into `EncodedSpeeds` (200 DCT-II coefficients). Each slot is blended with the free-flow speed for weeks without a sample; empty slots take the nearest slot with data within ±60 minutes. The Valhalla CSV export and OpenTrafficRouting's predicted traffic use this encoding.
+5. **Restarts.** Points still in the buffer are lost on a restart (seconds of data). Pending samples are flushed on graceful shutdown.
+6. **Output.** The CSV exports stream from the summaries. Tiles join the summaries and hazard aggregates with the imported way geometries. The C++ tools in `tools/` and the related Valhalla importer turn the CSVs into Valhalla data.
 
 ## API overview
 
@@ -218,7 +219,9 @@ The app reads `App/appsettings.json`. Override any key with an environment varia
 | `OpenTrafficRouting:MaxConcurrent` | `4` (compose: `8`) | Concurrent bulk trace requests |
 | `Pipeline:MaxBufferedPoints` | `3000000` | Maximum points in the in-memory buffer; beyond it the API answers 503 with Retry-After |
 | `Pipeline:FlushSeconds` | `10` | Interval of the bulk write of aggregated samples |
-| `Pipeline:WriteWeeklyAggregates` | `false` | Also write samples into `WaySpeedAggregates` (5-minute weekly buckets). Off by default: nothing reads the table yet, and random updates of its 200M+ rows cause heavy disk writes. |
+| `Pipeline:ProfileFlushMinutes` | `5` | Interval of the weekly-profile write (`WayProfiles`) and prediction encoding |
+| `Pipeline:ProfileCountCap` | `52` | Sample count cap per five-minute slot; beyond it the slot average acts as a moving average |
+| `Pipeline:WriteWeeklyAggregates` | `false` | Also write into the legacy `WaySpeedAggregates` table (one row per road and slot). Superseded by `WayProfiles`; random updates of its 200M+ rows cause heavy disk writes. |
 | `Pipeline:BatchLingerMs` | `100` | How long the matcher waits to fill a batch before sending a smaller one |
 | `Pipeline:TripIdleSeconds` | `180` | Trips without new points are forgotten after this time (with their context) |
 | `Pipeline:ContextPoints` | `3` | Last matched points kept per trip as context for the next upload |

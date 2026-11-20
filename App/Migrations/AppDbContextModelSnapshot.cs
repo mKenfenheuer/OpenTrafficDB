@@ -479,6 +479,28 @@ namespace OpenTrafficDBMigrations
                     b.ToTable("WayGeometries");
                 });
 
+            modelBuilder.Entity("OpenTrafficDBModels.WayProfile", b =>
+                {
+                    b.Property<long>("OsmWayId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastUpdated")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<byte[]>("Profile")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.HasKey("OsmWayId");
+
+                    b.ToTable("WayProfiles");
+
+                    b.HasAnnotation("Npgsql:StorageParameter:fillfactor", 80);
+                });
+
             modelBuilder.Entity("OpenTrafficDBModels.WaySpeedAggregate", b =>
                 {
                     b.Property<long>("Id")
