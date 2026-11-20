@@ -25,6 +25,8 @@ public class HazardMapMatchingService(
     private int DefaultSearchRadiusMeters =>
         int.TryParse(config["Hazards:MatchSearchRadiusMeters"], out var r) ? r : 100;
 
+    private static readonly string[] HazardAttributes = ["osm_way_id"];
+
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -58,9 +60,13 @@ public class HazardMapMatchingService(
                 lat            = p.Lat,
                 lon            = p.Lon,
                 heading        = p.Heading,
-                search_radius  = DefaultSearchRadiusMeters
+                search_radius  = DefaultSearchRadiusMeters,
+                // Only the way id is used. Without attributes OTR returns everything, including
+                // street names and geometry it must read from its tile files for every point.
+                attributes     = HazardAttributes
             }).ToArray(),
-            search_radius = DefaultSearchRadiusMeters
+            search_radius = DefaultSearchRadiusMeters,
+            attributes    = HazardAttributes
         };
 
         var json = JsonSerializer.Serialize(body, _jsonOptions);
