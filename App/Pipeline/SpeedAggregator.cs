@@ -10,7 +10,7 @@ using OpenTrafficDBServices;
 namespace OpenTrafficDB.App.Pipeline;
 
 /// <summary>One traversal of a road by a trip: average speed and time on that road.</summary>
-public readonly record struct WaySample(long WayId, DateTime Timestamp, double SpeedMs, double? SpeedLimitKmh);
+public readonly record struct WaySample(long WayId, DateTime Timestamp, double SpeedMs, double? SpeedLimitKmh, short RoadClass);
 
 /// <summary>
 /// Collects <see cref="WaySample"/>s in memory and writes them to Postgres every
@@ -34,6 +34,12 @@ public sealed class SpeedAggregator(
     private long _flushedTotal;
     private long _lastSummariesMs;
     private const int UpsertChunkRows = 20_000;
+
+    // WaySpeedAggregates (one row per road and 5-minute slot of the week, 200M+ rows) is not read by
+    // anything yet, and updating random rows of it costs ~16 KB of disk writes per sample (row,
+    // index entries and full-page WAL images). Off by default until historic profiles are built from it.
+    private readonly bool _writeWeeklyAggregates =
+        bool.TryParse(config["Pipeline:WriteWeeklyAggregates"], out var wa) && wa;
 
     private readonly TimeSpan _flushInterval = TimeSpan.FromSeconds(
         double.TryParse(config["Pipeline:FlushSeconds"], out var f) ? f : 10);
@@ -124,7 +130,8 @@ public sealed class SpeedAggregator(
             var summariesMs = stopwatch.ElapsedMilliseconds;
             await UpsertSummariesAsync(db, byWay, ct);
             summariesMs = stopwatch.ElapsedMilliseconds - summariesMs;
-            await UpsertAggregatesAsync(db, byWay, ct);
+            if (_writeWeeklyAggregates)
+                await UpsertAggregatesAsync(db, byWay, ct);
             _lastSummariesMs = summariesMs;
 
             db.AggregationMetrics.Add(new AggregationMetric
@@ -219,6 +226,7 @@ public sealed class SpeedAggregator(
         var n = byWay.Count;
         var wayIds = new long[n]; var constrained = new double[n]; var freeflow = new double[n];
         var speedLimits = new double?[n]; var lastUpdated = new DateTime[n]; var encoded = new string[n];
+        var roadClasses = new short[n];
         var buffer = new float[2016];
 
         for (int i = 0; i < n; i++)
@@ -252,20 +260,22 @@ public sealed class SpeedAggregator(
             freeflow[i] = Math.Round(emaF, 1);
             speedLimits[i] = speedLimit;
             lastUpdated[i] = list[^1].Timestamp;
+            roadClasses[i] = list.Min(s => s.RoadClass);
             Array.Fill(buffer, (float)freeflow[i]);
             encoded[i] = ValhallaSpeedEncoder.Encode(buffer);
         }
 
         await db.Database.ExecuteSqlRawAsync("""
             INSERT INTO "WaySpeedSummaries"
-            ("OsmWayId","ConstrainedSpeed","FreeflowSpeed","SpeedLimitKmh","LastUpdated","EncodedSpeeds")
-            SELECT * FROM unnest(@way_ids,@c,@f,@sl,@lu,@enc)
+            ("OsmWayId","ConstrainedSpeed","FreeflowSpeed","SpeedLimitKmh","LastUpdated","EncodedSpeeds","RoadClass")
+            SELECT * FROM unnest(@way_ids,@c,@f,@sl,@lu,@enc,@rc)
             ON CONFLICT ("OsmWayId") DO UPDATE SET
                 "ConstrainedSpeed" = EXCLUDED."ConstrainedSpeed",
                 "FreeflowSpeed"    = EXCLUDED."FreeflowSpeed",
                 "SpeedLimitKmh"    = COALESCE(EXCLUDED."SpeedLimitKmh","WaySpeedSummaries"."SpeedLimitKmh"),
                 "LastUpdated"      = EXCLUDED."LastUpdated",
-                "EncodedSpeeds"    = EXCLUDED."EncodedSpeeds"
+                "EncodedSpeeds"    = EXCLUDED."EncodedSpeeds",
+                "RoadClass"        = EXCLUDED."RoadClass"
             """,
             [
                 new NpgsqlParameter("way_ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = wayIds },
@@ -274,6 +284,7 @@ public sealed class SpeedAggregator(
                 new NpgsqlParameter("sl", NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = speedLimits },
                 new NpgsqlParameter("lu", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = lastUpdated },
                 new NpgsqlParameter("enc", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = encoded },
+                new NpgsqlParameter("rc", NpgsqlDbType.Array | NpgsqlDbType.Smallint) { Value = roadClasses },
             ],
             ct);
     }

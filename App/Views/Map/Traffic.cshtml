@@ -141,9 +141,15 @@
     function addTrafficLayer() {
         const url = tileUrl();
 
-        // Remove old layer/source if present
-        if (map.getLayer('traffic-lines'))  map.removeLayer('traffic-lines');
-        if (map.getSource('traffic'))       map.removeSource('traffic');
+        // Refresh: swap the tile URL on the existing source. The old tiles stay visible until
+        // the new ones arrive, instead of removing and re-adding the whole layer.
+        const existing = map.getSource('traffic');
+        if (existing) {
+            existing.setTiles([url]);
+            lastUpdated = new Date();
+            setStatus('Updated ' + lastUpdated.toLocaleTimeString());
+            return;
+        }
 
         map.addSource('traffic', {
             type:  'vector',

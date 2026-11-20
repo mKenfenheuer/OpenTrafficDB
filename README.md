@@ -67,7 +67,7 @@ Raw observations never touch the database. Postgres only stores the results.
 
 1. **Ingestion.** Clients submit observations with an API key. The API validates each record, hashes the trip ID together with the key ID, adds the points to an in-memory trip buffer and counts the contribution. The buffer is bounded (`Pipeline:MaxBufferedPoints`); when it is full, the API answers `503` with `Retry-After`.
 2. **Map matching.** A trip is queued when it receives new points. The matching worker splits trips at gaps over 500 m or after 20 km and sends the polylines to OpenTrafficRouting, with up to `OpenTrafficRouting:MaxConcurrent` bulk requests in flight. Per trip and road, the matched points are averaged into one sample; roads crossed between two points (interpolated edges) get one sample each. Unmatched points are retried only together with new points of the same trip, and the last matched points stay as context, so a trip uploaded in parts is matched as one trace.
-3. **Aggregation.** Every 10 seconds the samples are written in two bulk upserts: the five-minute weekly buckets, and the EMA summaries (alpha 0.8) with the 2,016-bucket profile encoded into 200 DCT-II coefficients.
+3. **Aggregation.** Every 10 seconds the samples are written to the live summaries (EMA, alpha 0.8, plus the encoded Valhalla speed profile and road class) in one bulk upsert. Writing the five-minute weekly buckets (`WaySpeedAggregates`) is optional (`Pipeline:WriteWeeklyAggregates`).
 4. **Restarts.** Points still in the buffer are lost on a restart (seconds of data). Pending samples are flushed on graceful shutdown.
 5. **Output.** The CSV exports stream from the summaries. Tiles join the summaries and hazard aggregates with the imported way geometries. The C++ tools in `tools/` and the related Valhalla importer turn the CSVs into Valhalla data.
 
@@ -218,6 +218,7 @@ The app reads `App/appsettings.json`. Override any key with an environment varia
 | `OpenTrafficRouting:MaxConcurrent` | `4` (compose: `8`) | Concurrent bulk trace requests |
 | `Pipeline:MaxBufferedPoints` | `3000000` | Maximum points in the in-memory buffer; beyond it the API answers 503 with Retry-After |
 | `Pipeline:FlushSeconds` | `10` | Interval of the bulk write of aggregated samples |
+| `Pipeline:WriteWeeklyAggregates` | `false` | Also write samples into `WaySpeedAggregates` (5-minute weekly buckets). Off by default: nothing reads the table yet, and random updates of its 200M+ rows cause heavy disk writes. |
 | `Pipeline:BatchLingerMs` | `100` | How long the matcher waits to fill a batch before sending a smaller one |
 | `Pipeline:TripIdleSeconds` | `180` | Trips without new points are forgotten after this time (with their context) |
 | `Pipeline:ContextPoints` | `3` | Last matched points kept per trip as context for the next upload |

@@ -41,9 +41,9 @@ public sealed class SpeedMatchingWorker(
 
     /// <summary>Geometry-only match result of one polyline: which point lies on which road.</summary>
     private sealed record MatchPlan(
-        int[] PointIndex, long[] PointWay, double?[] PointLimit, InterpolatedWay[] Interpolated);
+        int[] PointIndex, long[] PointWay, double?[] PointLimit, short[] PointClass, InterpolatedWay[] Interpolated);
 
-    private sealed record InterpolatedWay(long WayId, double? Limit, int[] PointIndex, double[] Percentage);
+    private sealed record InterpolatedWay(long WayId, double? Limit, short RoadClass, int[] PointIndex, double[] Percentage);
 
     private readonly MemoryCache _planCache = new(new MemoryCacheOptions
     {
@@ -204,8 +204,9 @@ public sealed class SpeedMatchingWorker(
     {
         var points = matcher.ParsePointMatches(result);
         var idx = new int[points.Count]; var ways = new long[points.Count]; var limits = new double?[points.Count];
+        var classes = new short[points.Count];
         var k = 0;
-        foreach (var (i, m) in points) { idx[k] = i; ways[k] = m.OsmWayId; limits[k] = m.SpeedLimitKmh; k++; }
+        foreach (var (i, m) in points) { idx[k] = i; ways[k] = m.OsmWayId; limits[k] = m.SpeedLimitKmh; classes[k] = m.RoadClass; k++; }
 
         var interpolated = new List<InterpolatedWay>();
         if (result.Edges != null && result.MatchedPoints != null)
@@ -224,10 +225,11 @@ public sealed class SpeedMatchingWorker(
                 if (refs.Length == 0) continue;
                 interpolated.Add(new InterpolatedWay(edge.Edge.OsmWayId,
                     edge.Edge.MaxSpeedKmh > 0 ? edge.Edge.MaxSpeedKmh : null,
+                    MapMatchingService.RoadClassOf(edge.Edge.RoadType),
                     refs.Select(r => r.Orig).ToArray(), refs.Select(r => r.Percentage).ToArray()));
             }
         }
-        return new MatchPlan(idx, ways, limits, [.. interpolated]);
+        return new MatchPlan(idx, ways, limits, classes, [.. interpolated]);
     }
 
     private async Task RunBatchAsync(List<TripWork> batch, CancellationToken ct)
@@ -265,8 +267,8 @@ public sealed class SpeedMatchingWorker(
         foreach (var trip in batch)
         {
             var matchedSeqs = new HashSet<long>();
-            var pointWays = new Dictionary<long, (double SpeedSum, long TicksSum, int Count, double? Limit)>();
-            var interpolatedWays = new Dictionary<long, (double SpeedMs, long Ticks, double? Limit)>();
+            var pointWays = new Dictionary<long, (double SpeedSum, long TicksSum, int Count, double? Limit, short Class)>();
+            var interpolatedWays = new Dictionary<long, (double SpeedMs, long Ticks, double? Limit, short Class)>();
 
             foreach (var segment in trip.Segments)
             {
@@ -282,7 +284,7 @@ public sealed class SpeedMatchingWorker(
 
                     pointWays.TryGetValue(plan.PointWay[k], out var acc);
                     pointWays[plan.PointWay[k]] = (acc.SpeedSum + point.SpeedMs, acc.TicksSum + point.Timestamp.Ticks / 1000,
-                        acc.Count + 1, acc.Limit ?? plan.PointLimit[k]);
+                        acc.Count + 1, acc.Limit ?? plan.PointLimit[k], plan.PointClass[k]);
                 }
 
                 foreach (var way in plan.Interpolated)
@@ -301,16 +303,16 @@ public sealed class SpeedMatchingWorker(
                         weight += way.Percentage[r];
                     }
                     if (!newData || weight <= 0) continue;
-                    interpolatedWays[way.WayId] = (speed / weight, (long)(ticks / weight), way.Limit);
+                    interpolatedWays[way.WayId] = (speed / weight, (long)(ticks / weight), way.Limit, way.RoadClass);
                 }
             }
 
             foreach (var (wayId, acc) in pointWays)
                 samples.Add(new WaySample(wayId, new DateTime(acc.TicksSum / acc.Count * 1000, DateTimeKind.Utc),
-                    acc.SpeedSum / acc.Count, acc.Limit));
+                    acc.SpeedSum / acc.Count, acc.Limit, acc.Class));
             foreach (var (wayId, s) in interpolatedWays)
                 if (!pointWays.ContainsKey(wayId))
-                    samples.Add(new WaySample(wayId, new DateTime(s.Ticks, DateTimeKind.Utc), s.SpeedMs, s.Limit));
+                    samples.Add(new WaySample(wayId, new DateTime(s.Ticks, DateTimeKind.Utc), s.SpeedMs, s.Limit, s.Class));
 
             // Unmatched points: retry with the trip's next points, within the attempt limit and retry window.
             var retry = new List<SpeedPoint>();

@@ -544,6 +544,9 @@ namespace OpenTrafficDBMigrations
                     b.Property<long>("OsmWayId")
                         .HasColumnType("bigint");
 
+                    b.Property<short?>("RoadClass")
+                        .HasColumnType("smallint");
+
                     b.Property<double?>("SpeedLimitKmh")
                         .HasColumnType("double precision");
 

@@ -40,8 +40,23 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         return tile;
     }
 
+    /// <summary>
+    /// Highest road class shown at a zoom level, like a road map: motorways and trunk roads at
+    /// country scale, smaller roads as you zoom in. Keeps low-zoom tiles small (they cover
+    /// hundreds of thousands of roads otherwise). Roads without a class count as class 5.
+    /// </summary>
+    private static short MaxRoadClass(int z) => z switch
+    {
+        <= 8 => 1,   // motorway, trunk
+        9 => 2,      // + primary
+        10 => 3,     // + secondary
+        11 => 4,     // + tertiary
+        _ => 5,      // all roads
+    };
+
     private async Task<byte[]> BuildTileInternalAsync(int z, int x, int y, CancellationToken ct)
     {
+        var maxRoadClass = MaxRoadClass(z);
         var (minLat, minLon, maxLat, maxLon) = TileMath.TileBounds(z, x, y);
 
         // PostGIS does all the heavy lifting:
@@ -76,6 +91,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                         wg."Geometry",
                         wss."FreeflowSpeed",
                         wss."ConstrainedSpeed",
+                        wss."RoadClass",
                         COALESCE(wss."ConstrainedSpeed", wss."FreeflowSpeed")           AS speed_kmh,
                         COALESCE(wss."SpeedLimitKmh", wg."MaxSpeedKmh")                AS speed_limit_kmh,
                         LEAST(wss."FreeflowSpeed",
@@ -93,6 +109,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                     WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
                 ) base
                 WHERE COALESCE(base.delay, 0) >= {_minDelay}
+                  AND COALESCE(base."RoadClass", 5) <= {maxRoadClass}
             ) q
             WHERE q.geom IS NOT NULL
             """)
