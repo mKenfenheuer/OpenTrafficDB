@@ -16,6 +16,8 @@ public class SpeedObservation
     public long? OsmWayId { get; set; }
     public double? SpeedLimitKmh { get; set; }
     public bool IsAggregated { get; set; }
+    /// <summary>Number of map-matching attempts that left this observation unmatched.</summary>
+    public short MatchAttempts { get; set; }
     public bool RoadWorks { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

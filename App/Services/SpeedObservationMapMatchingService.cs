@@ -4,108 +4,90 @@ using OpenTrafficDBData;
 namespace OpenTrafficDB.App.Services;
 
 /// <summary>
-/// Recurring in-process aggregation job.
+/// Continuous map-matching worker.
 ///
-/// Polls every 15 seconds and — when there is pending work — drains the queue by
-/// repeatedly matching unmatched trips and aggregating unmatched-but-now-matched ways,
-/// until no work remains. Then finalizes (stale cleanup) once per drain.
+/// The queue holds unmatched observations (<c>OsmWayId IS NULL AND NOT IsAggregated</c>).
+/// Each pass picks the oldest trips that have <b>new</b> observations
+/// (<c>MatchAttempts = 0</c>), FIFO by observation Id, and matches all of their
+/// unmatched observations. Leftovers from earlier attempts are therefore only retried
+/// together with new points of the same trip, never on their own. This keeps the
+/// pass window free of unmatchable leftovers and gives every trip a fair turn.
+///
+/// While a backlog exists, passes run back to back. When the queue is drained, the
+/// worker polls every <c>Aggregation:IdlePollSeconds</c> (default 2 s), so new data is
+/// processed within seconds instead of in large bursts.
 ///
 /// Config keys:
-///   Aggregation:IntervalSeconds           — poll interval when idle (default: 15)
-///   Aggregation:MapMatchingTripChunkSize  — trips per match pass (default: 200)
-///   Aggregation:AggregateWayIdChunkSize   — ways per aggregate pass (default: 200)
+///   Aggregation:IdlePollSeconds           — poll interval when the queue is empty (default: 2)
+///   Aggregation:MapMatchingTripChunkSize  — trips per pass (default: 200)
 /// </summary>
 public class SpeedObservationMapMatchingService(
     IServiceScopeFactory scopeFactory,
     IConfiguration config,
     ILogger<SpeedObservationMapMatchingService> logger) : BackgroundService
 {
-    private TimeSpan Interval                  => TimeSpan.FromSeconds(double.Parse(config["Aggregation:IntervalSeconds"] ?? "15"));
-    private int      MapMatchingTripChunkSize  => int.Parse(config["Aggregation:MapMatchingTripChunkSize"] ?? "200");
-    private int      AggregateWayIdChunkSize   => int.Parse(config["Aggregation:AggregateWayIdChunkSize"] ?? "200");
+    private TimeSpan IdlePoll                 => TimeSpan.FromSeconds(double.Parse(config["Aggregation:IdlePollSeconds"] ?? "2"));
+    private int      MapMatchingTripChunkSize => int.Parse(config["Aggregation:MapMatchingTripChunkSize"] ?? "200");
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation(
-            "MapMatching service started. Interval={Interval}, TripChunk={TripChunk}, WayChunk={WayChunk}.",
-            Interval, MapMatchingTripChunkSize, AggregateWayIdChunkSize);
+            "MapMatching service started. IdlePoll={IdlePoll}, TripChunk={TripChunk}.",
+            IdlePoll, MapMatchingTripChunkSize);
 
         await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            var tripCount = 0;
             try
             {
-                await DrainAsync(stoppingToken);
+                tripCount = await ProcessOncePassAsync(stoppingToken);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                logger.LogError(ex, "MapMatching cycle failed.");
+                logger.LogError(ex, "MapMatching pass failed.");
             }
 
-            await Task.Delay(Interval, stoppingToken);
+            // A full chunk means more work is waiting: continue immediately.
+            if (tripCount < MapMatchingTripChunkSize)
+                await Task.Delay(IdlePoll, stoppingToken);
         }
     }
 
     /// <summary>
-    /// Processes all pending work in a loop until both queues are empty, then finalizes.
-    /// Each iteration re-queries the queue so newly-ingested data is picked up within
-    /// the same drain cycle (no need to wait for the next tick).
-    /// </summary>
-    private async Task DrainAsync(CancellationToken ct)
-    {
-        var didAnyWork = false;
-
-        while (!ct.IsCancellationRequested)
-        {
-            var matchedCount = await ProcessOncePassAsync(ct);
-            if (matchedCount == 0) break;
-            didAnyWork = true;
-        }
-
-        if (didAnyWork)
-        {
-            using var scope = scopeFactory.CreateScope();
-            var aggregation = scope.ServiceProvider.GetRequiredService<TrafficAggregationService>();
-            await aggregation.FinalizeAsync(ct);
-        }
-    }
-
-    /// <summary>
-    /// One pass: match one chunk of unmatched trips, then aggregate one chunk of
-    /// unmatched-but-now-matched ways. Returns the counts so DrainAsync can decide
-    /// whether to continue.
+    /// Matches the next chunk of trips with new observations. Returns the number of trips processed.
     /// </summary>
     private async Task<int> ProcessOncePassAsync(CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
-        var db          = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var matching    = scope.ServiceProvider.GetRequiredService<MapMatchingService>();
+        var db       = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var matching = scope.ServiceProvider.GetRequiredService<MapMatchingService>();
 
-        // Single query: pick all unmatched observations belonging to the next N distinct trips.
         var tripCap = MapMatchingTripChunkSize;
+
+        // Trips with at least one observation that has never been attempted, oldest first.
+        var nextTrips = db.SpeedObservations
+            .Where(x => x.OsmWayId == null && !x.IsAggregated && x.MatchAttempts == 0)
+            .GroupBy(x => x.TripId)
+            .OrderBy(g => g.Min(x => x.Id))
+            .Select(g => g.Key)
+            .Take(tripCap);
+
+        // All unmatched observations of these trips, so earlier leftovers get context from new points.
         var unmatched = await db.SpeedObservations
-            .Where(o => o.OsmWayId == null && !o.IsAggregated)
-            .Where(o => db.SpeedObservations
-                .Where(x => x.OsmWayId == null && !x.IsAggregated)
-                .Select(x => x.TripId)
-                .Distinct()
-                .OrderBy(t => t)
-                .Take(tripCap)
-                .Contains(o.TripId))
+            .Where(o => o.OsmWayId == null && !o.IsAggregated && nextTrips.Contains(o.TripId))
             .AsNoTracking()
             .OrderBy(o => o.Timestamp)
+            .ThenBy(o => o.Id)
             .ToListAsync(ct);
 
-        var matched = 0;
-        if (unmatched.Count > 0)
-        {
-            var result = await matching.ProcessRangeAsync(unmatched, db, ct);
-            matched = result.Matched;
-            logger.LogDebug("Matched {Count} observations across {TripCount} trips.", matched, unmatched.Select(o => o.TripId).Distinct().Count());
-        }
+        if (unmatched.Count == 0) return 0;
 
-        return matched;
+        var tripCount = unmatched.Select(o => o.TripId).Distinct().Count();
+        var result = await matching.ProcessRangeAsync(unmatched, db, ct);
+        logger.LogDebug("Matched {Count} observations across {TripCount} trips.", result.Matched, tripCount);
+        return tripCount;
     }
 }

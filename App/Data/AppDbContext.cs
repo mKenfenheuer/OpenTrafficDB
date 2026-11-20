@@ -61,13 +61,13 @@ public class AppDbContext : DbContext
             e.HasIndex(o => new { o.Timestamp, o.OsmWayId }).HasFilter("\"OsmWayId\" IS NOT NULL");
             e.HasIndex(o => new { o.Latitude, o.Longitude });
             e.HasIndex(o => o.OsmWayId).HasFilter("\"OsmWayId\" IS NOT NULL");
-            e.HasIndex(o => o.TripId);
             e.HasIndex(o => o.ApiKeyId);
             e.HasIndex(o => new { o.IsAggregated, o.CreatedAt });
-            // Partial indexes for coordinator trip-discovery queries — avoids full table scans every cycle.
-            e.HasIndex(o => o.TripId)
-             .HasDatabaseName("IX_SpeedObservations_TripId_Unmatched")
+            e.Property(o => o.MatchAttempts).HasDefaultValue((short)0);
+            // Map-matching queue: unmatched observations grouped by trip, FIFO by Id.
+            e.HasIndex(o => new { o.TripId, o.Id }, "IX_SpeedObservations_MatchQueue")
              .HasFilter("\"OsmWayId\" IS NULL AND \"IsAggregated\" = FALSE");
+            // Aggregation queue: matched but not yet aggregated observations.
             e.HasIndex(o => o.TripId)
              .HasDatabaseName("IX_SpeedObservations_TripId_Unaggregated")
              .HasFilter("\"OsmWayId\" IS NOT NULL AND \"IsAggregated\" = FALSE");

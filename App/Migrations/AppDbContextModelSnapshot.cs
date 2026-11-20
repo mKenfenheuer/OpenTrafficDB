@@ -310,6 +310,11 @@ namespace OpenTrafficDBMigrations
                     b.Property<double>("Longitude")
                         .HasColumnType("double precision");
 
+                    b.Property<short>("MatchAttempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)0);
+
                     b.Property<long?>("OsmWayId")
                         .HasColumnType("bigint");
 
@@ -347,6 +352,9 @@ namespace OpenTrafficDBMigrations
                         .HasFilter("\"OsmWayId\" IS NOT NULL");
 
                     b.HasIndex("Timestamp", "Latitude", "Longitude");
+
+                    b.HasIndex(new[] { "TripId", "Id" }, "IX_SpeedObservations_MatchQueue")
+                        .HasFilter("\"OsmWayId\" IS NULL AND \"IsAggregated\" = FALSE");
 
                     b.ToTable("SpeedObservations");
                 });

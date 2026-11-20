@@ -14,8 +14,12 @@ namespace OpenTrafficDB.App.Services;
 public class TrafficAggregationService(
     AppDbContext db,
     ReadOnlyAppDbContext readDb,
+    IConfiguration config,
     ILogger<TrafficAggregationService> logger)
 {
+    private readonly TimeSpan _matchRetryWindow = TimeSpan.FromSeconds(
+        double.TryParse(config["Aggregation:MatchRetryWindowSeconds"], out var rw) ? rw : 300);
+
     private const double EmaAlpha = 0.8;
     private static readonly TimeSpan UnmatchedRetention = TimeSpan.FromHours(24);
 
@@ -194,12 +198,18 @@ public class TrafficAggregationService(
     {
         // Delete stale unmatched observations:
         // - IsAggregated=true && OsmWayId==null: explicitly given up on by the matching pipeline — delete immediately.
+        // - attempted but unmatched, older than the retry window: the trip got no new points to retry with.
         // - OsmWayId==null && old: never processed (shouldn't happen in normal operation) — delete after retention window.
-        // Aggregated observations with OsmWayId set are deleted eagerly in ReaggregateRangeAsync.
-        var unmatchedCutoff = DateTime.UtcNow - UnmatchedRetention;
+        // Aggregated observations with OsmWayId set are deleted eagerly in ReaggregateAsync.
+        var now = DateTime.UtcNow;
+        var unmatchedCutoff = now - UnmatchedRetention;
+        var retryCutoff = now - _matchRetryWindow;
 
         var deleted = await db.SpeedObservations
-            .Where(o => o.OsmWayId == null && (o.IsAggregated || o.CreatedAt < unmatchedCutoff))
+            .Where(o => o.OsmWayId == null &&
+                        (o.IsAggregated ||
+                         (o.MatchAttempts > 0 && o.CreatedAt < retryCutoff) ||
+                         o.CreatedAt < unmatchedCutoff))
             .ExecuteDeleteAsync(ct);
 
         if (deleted > 0)

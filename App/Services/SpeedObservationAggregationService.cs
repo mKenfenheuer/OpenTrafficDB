@@ -5,96 +5,86 @@ using OpenTrafficDBData;
 namespace OpenTrafficDB.App.Services;
 
 /// <summary>
-/// Recurring in-process aggregation job.
+/// Continuous aggregation worker.
 ///
-/// Polls every 15 seconds and — when there is pending work — drains the queue by
-/// repeatedly matching unmatched trips and aggregating unmatched-but-now-matched ways,
-/// until no work remains. Then finalizes (stale cleanup) once per drain.
+/// Aggregates matched observations (<c>OsmWayId IS NOT NULL AND NOT IsAggregated</c>) into
+/// the weekly speed profiles and live summaries. A pass runs as soon as matched
+/// observations are waiting; otherwise the worker polls every
+/// <c>Aggregation:IdlePollSeconds</c> (default 2 s). Small, frequent passes keep the
+/// processing rate steady instead of one large batch every interval.
 ///
-/// Config keys:
-///   Aggregation:IntervalSeconds           — poll interval when idle (default: 15)
-///   Aggregation:MapMatchingTripChunkSize  — trips per match pass (default: 200)
-///   Aggregation:AggregateWayIdChunkSize   — ways per aggregate pass (default: 200)
+/// Stale-row cleanup (<see cref="TrafficAggregationService.FinalizeAsync"/>) runs on its own
+/// timer every <c>Aggregation:FinalizeIntervalSeconds</c> (default 60 s).
 /// </summary>
 public class SpeedObservationAggregationService(
     IServiceScopeFactory scopeFactory,
     IConfiguration config,
     ILogger<SpeedObservationAggregationService> logger) : BackgroundService
 {
-    private TimeSpan Interval                  => TimeSpan.FromSeconds(double.Parse(config["Aggregation:IntervalSeconds"] ?? "15"));
-    private int      MapMatchingTripChunkSize  => int.Parse(config["Aggregation:MapMatchingTripChunkSize"] ?? "200");
-    private int      AggregateWayIdChunkSize   => int.Parse(config["Aggregation:AggregateWayIdChunkSize"] ?? "200");
+    private TimeSpan IdlePoll         => TimeSpan.FromSeconds(double.Parse(config["Aggregation:IdlePollSeconds"] ?? "2"));
+    private TimeSpan FinalizeInterval => TimeSpan.FromSeconds(double.Parse(config["Aggregation:FinalizeIntervalSeconds"] ?? "60"));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation(
-            "Aggregation service started. Interval={Interval}, TripChunk={TripChunk}, WayChunk={WayChunk}.",
-            Interval, MapMatchingTripChunkSize, AggregateWayIdChunkSize);
+            "Aggregation service started. IdlePoll={IdlePoll}, FinalizeInterval={FinalizeInterval}.",
+            IdlePoll, FinalizeInterval);
 
         await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
+        var lastFinalize = DateTime.MinValue;
+
         while (!stoppingToken.IsCancellationRequested)
         {
+            var aggregated = 0;
             try
             {
-                await DrainAsync(stoppingToken);
+                aggregated = await ProcessOncePassAsync(stoppingToken);
+
+                if (DateTime.UtcNow - lastFinalize >= FinalizeInterval)
+                {
+                    await FinalizeAsync(stoppingToken);
+                    lastFinalize = DateTime.UtcNow;
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Aggregation cycle failed.");
+                logger.LogError(ex, "Aggregation pass failed.");
             }
 
-            await Task.Delay(Interval, stoppingToken);
+            if (aggregated == 0)
+                await Task.Delay(IdlePoll, stoppingToken);
         }
     }
 
-    /// <summary>
-    /// Processes all pending work in a loop until both queues are empty, then finalizes.
-    /// Each iteration re-queries the queue so newly-ingested data is picked up within
-    /// the same drain cycle (no need to wait for the next tick).
-    /// </summary>
-    private async Task DrainAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            var aggregatedCount = await ProcessOncePassAsync(ct);
-            if (aggregatedCount == 0) break;
-        }
-    }
-
-    /// <summary>
-    /// One pass: match one chunk of unmatched trips, then aggregate one chunk of
-    /// unmatched-but-now-matched ways. Returns the counts so DrainAsync can decide
-    /// whether to continue.
-    /// </summary>
+    /// <summary>Aggregates all currently matched observations. Returns the number processed.</summary>
     private async Task<int> ProcessOncePassAsync(CancellationToken ct)
     {
-        var stopwatch = new Stopwatch();
-        stopwatch.Start();
+        var stopwatch = Stopwatch.StartNew();
         using var scope = scopeFactory.CreateScope();
         var db          = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var aggregation = scope.ServiceProvider.GetRequiredService<TrafficAggregationService>();
 
-        var ways = await db.SpeedObservations
-            .Where(o => !o.IsAggregated && o.OsmWayId != null)
-            .CountAsync(ct);
+        var pending = await db.SpeedObservations
+            .AnyAsync(o => !o.IsAggregated && o.OsmWayId != null, ct);
+        if (!pending) return 0;
 
-        var aggregated = 0;
-        if (ways > 0)
+        var result = await aggregation.ReaggregateAsync(ct);
+        var aggregated = result.Processed;
+        if (logger.IsEnabled(LogLevel.Debug))
         {
-            var result = await aggregation.ReaggregateAsync(ct);
-            stopwatch.Stop();
-            aggregated = result.Processed;
-            if (logger.IsEnabled(LogLevel.Debug))
-            {
-                var msPerObs = aggregated > 0 ? stopwatch.ElapsedMilliseconds / (double)aggregated : 0;
-                logger.LogDebug("Aggregated {Count} observations in {ElapsedMs}ms, {MsPerObs}ms per observation .", aggregated, stopwatch.ElapsedMilliseconds, msPerObs);
-            }
+            var msPerObs = aggregated > 0 ? stopwatch.ElapsedMilliseconds / (double)aggregated : 0;
+            logger.LogDebug("Aggregated {Count} observations in {ElapsedMs}ms, {MsPerObs}ms per observation.",
+                aggregated, stopwatch.ElapsedMilliseconds, msPerObs);
         }
-        
-        await aggregation.FinalizeAsync(ct);
-
         return aggregated;
+    }
+
+    private async Task FinalizeAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var aggregation = scope.ServiceProvider.GetRequiredService<TrafficAggregationService>();
+        await aggregation.FinalizeAsync(ct);
     }
 }

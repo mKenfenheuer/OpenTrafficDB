@@ -29,6 +29,12 @@ public class MapMatchingService(
     private readonly int _maxConcurrent = int.TryParse(config["OpenTrafficRouting:MaxConcurrent"], out var mc) ? mc : 4;
     private readonly int _batchSize = int.TryParse(config["OpenTrafficRouting:BatchSize"], out var bs) ? bs : 25;
 
+    // Unmatched observations are retried only together with new points of the same trip.
+    // They are given up after MaxMatchAttempts attempts or once they are older than the retry window.
+    private readonly int _maxMatchAttempts = int.TryParse(config["Aggregation:MaxMatchAttempts"], out var ma) ? ma : 3;
+    private readonly TimeSpan _matchRetryWindow = TimeSpan.FromSeconds(
+        double.TryParse(config["Aggregation:MatchRetryWindowSeconds"], out var rw) ? rw : 300);
+
     private static readonly Action<ILogger, int, Exception?> _logMapMatched =
         LoggerMessage.Define<int>(LogLevel.Information, default, "Map-matched {Count} observations to OSM ways");
 
@@ -148,7 +154,7 @@ public class MapMatchingService(
     {
         if (unmatched.Count == 0) return new MatchJobResult(0, [], []);
 
-        var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
+        var staleCutoff = DateTime.UtcNow - _matchRetryWindow;
         var trips = unmatched.GroupBy(o => o.TripId).ToList();
         _logProcessing(logger, unmatched.Count, trips.Count, null);
 
@@ -156,7 +162,8 @@ public class MapMatchingService(
         var perTripSegments = new List<List<SpeedObservation>>[trips.Count];
         Parallel.For(0, trips.Count, i =>
         {
-            var sorted = trips[i].OrderBy(o => o.Timestamp).ToList();
+            // Id breaks timestamp ties so points keep their submission order.
+            var sorted = trips[i].OrderBy(o => o.Timestamp).ThenBy(o => o.Id).ToList();
             perTripSegments[i] = SplitTrace(sorted);
         });
 
@@ -250,7 +257,7 @@ public class MapMatchingService(
         for (int i = 0; i < trips.Count; i++)
             tripMatchedIds[i] = [];
 
-        Parallel.For(0, allSegments.Count, async bi =>
+        Parallel.For(0, allSegments.Count, bi =>
         {
             var (tripIdx, _, segment) = allSegments[bi];
             var result = bi < rawResults.Length ? rawResults[bi] : null;
@@ -346,13 +353,14 @@ public class MapMatchingService(
 
 
 
-        var staleIds = new List<long>();
+        // Every observation that stayed unmatched in this attempt.
+        var unmatchedIds = new List<long>();
         for (int i = 0; i < trips.Count; i++)
         {
             foreach (var obs in trips[i])
             {
-                if (!tripMatchedIds[i].Contains(obs.Id) && obs.CreatedAt < staleCutoff)
-                    staleIds.Add(obs.Id);
+                if (!tripMatchedIds[i].Contains(obs.Id))
+                    unmatchedIds.Add(obs.Id);
             }
         }
 
@@ -374,14 +382,23 @@ public class MapMatchingService(
                 ct);
         }
 
-        if (staleIds.Count > 0)
+        if (unmatchedIds.Count > 0)
         {
+            // Record the attempt. The trip is picked up again only when it receives new points
+            // (MatchAttempts = 0). Give up when the attempt limit or the retry window is exceeded;
+            // given-up rows (OsmWayId NULL, IsAggregated TRUE) are deleted by FinalizeAsync.
             await db.Database.ExecuteSqlRawAsync("""
                 UPDATE "SpeedObservations"
-                SET    "IsAggregated" = TRUE
+                SET    "MatchAttempts" = "MatchAttempts" + 1,
+                       "IsAggregated"  = ("MatchAttempts" + 1 >= @max_attempts OR "CreatedAt" < @stale_cutoff)
                 WHERE  "Id" = ANY(@ids)
                 """,
-                new object[] { new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = staleIds.ToArray() } },
+                new object[]
+                {
+                    new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = unmatchedIds.ToArray() },
+                    new NpgsqlParameter("max_attempts", NpgsqlDbType.Integer) { Value = _maxMatchAttempts },
+                    new NpgsqlParameter("stale_cutoff", NpgsqlDbType.TimestampTz) { Value = staleCutoff },
+                },
                 ct);
         }
 

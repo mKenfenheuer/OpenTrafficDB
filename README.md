@@ -212,7 +212,10 @@ The app reads `App/appsettings.json`. Override any key with an environment varia
 | `OpenTrafficRouting:BaseUrl` | `http://localhost:8002` | OpenTrafficRouting service |
 | `OpenTrafficRouting:BatchSize` | `25` (compose: `200`) | Polylines per bulk trace request |
 | `OpenTrafficRouting:MaxConcurrent` | `4` (compose: `8`) | Concurrent bulk trace requests |
-| `Aggregation:IntervalSeconds` | `15` | Poll interval of the matching and aggregation jobs |
+| `Aggregation:IdlePollSeconds` | `2` | Poll interval of the matching and aggregation jobs when their queue is empty; with a backlog they run back to back |
+| `Aggregation:MaxMatchAttempts` | `3` | Attempts before an unmatched observation is given up |
+| `Aggregation:MatchRetryWindowSeconds` | `300` | Unmatched observations are retried with new points of the same trip within this window |
+| `Aggregation:FinalizeIntervalSeconds` | `60` | Interval of the cleanup of given-up and stale observations |
 | `Aggregation:MapMatchingTripChunkSize` | `200` (compose: `5000`) | Trips per matching pass |
 | `Aggregation:AggregateWayIdChunkSize` | `200` (compose: `5000`) | Ways per aggregation pass |
 | `Hazards:AggregationIntervalSeconds` | `30` | Hazard clustering interval |
