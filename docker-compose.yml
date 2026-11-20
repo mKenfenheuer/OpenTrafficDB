@@ -102,6 +102,7 @@ services:
       Email__FromAddress: ${SMTP_FROM:-opentrafficdb@localhost}
       Email__FromName: ${SMTP_FROM_NAME:-OpenTrafficDB}
       MapTiler__ApiKey: ${MAPTILER_API_KEY:-}
+      TomTom__ApiKey: ${TOMTOM_API_KEY:-}
       Logging__LogLevel__OpenTrafficDB: Information
     depends_on:
       pgbouncer:

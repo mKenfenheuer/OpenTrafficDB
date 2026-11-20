@@ -1,0 +1,223 @@
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
+@{
+    Layout = "_MapLayout";
+    ViewData["Title"] = "TomTom Comparison";
+    var tomTomConfigured = ViewData["TomTomConfigured"] as bool? == true;
+}
+
+@section Head {
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+    <style>
+        #maps {
+            position: absolute;
+            top: 56px; left: 0; right: 0; bottom: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2px;
+            background: var(--border);
+        }
+        #maps.single { grid-template-columns: 1fr; }
+        #maps.single #map-otdb-wrap { display: none; }
+        .map-wrap { position: relative; }
+        .map-wrap > div.map { position: absolute; inset: 0; }
+        .map-label {
+            position: absolute; top: 12px; left: 12px; z-index: 5;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 4px 10px;
+            font-size: .8rem; font-weight: 600; color: var(--text);
+        }
+
+        #toolbar {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 20; display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius-lg); padding: 10px 14px;
+            box-shadow: 0 4px 20px rgba(0,0,0,.5);
+            font-size: .8rem; color: var(--text-muted);
+            max-width: calc(100vw - 32px);
+        }
+        #toolbar label { display: flex; align-items: center; gap: 6px; }
+        #toolbar select, #toolbar input[type=range] { accent-color: var(--accent); }
+        #toolbar select {
+            background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 3px 6px; font-size: .8rem;
+        }
+        #tile-count { font-variant-numeric: tabular-nums; }
+        .warn {
+            position: absolute; top: 72px; left: 50%; transform: translateX(-50%); z-index: 30;
+            background: var(--surface); border: 1px solid #f85149; color: var(--text);
+            border-radius: var(--radius); padding: 8px 14px; font-size: .85rem;
+        }
+
+        .traffic-popup .maplibregl-popup-content {
+            background: var(--surface); color: var(--text); border: 1px solid var(--border);
+            border-radius: var(--radius); font-size: .8rem; padding: 10px 12px;
+        }
+        .popup-row { display: flex; justify-content: space-between; gap: 16px; }
+        .popup-label { color: var(--text-muted); }
+
+        @@media (max-width: 760px) {
+            #maps { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+            #maps.single { grid-template-rows: 1fr; }
+        }
+    </style>
+}
+
+@if (!tomTomConfigured)
+{
+    <div class="warn">TomTom:ApiKey is not configured on the server, so the TomTom map stays empty.</div>
+}
+
+<div id="maps">
+    <div class="map-wrap" id="map-tomtom-wrap">
+        <div class="map" id="map-tomtom"></div>
+        <div class="map-label" id="label-tomtom">TomTom flow</div>
+    </div>
+    <div class="map-wrap" id="map-otdb-wrap">
+        <div class="map" id="map-otdb"></div>
+        <div class="map-label">OpenTrafficDB</div>
+    </div>
+</div>
+
+<div id="toolbar">
+    <label>TomTom style
+        <select id="tt-style">
+            <option value="relative0-dark" selected>relative0-dark (green = free flow)</option>
+            <option value="relative0">relative0</option>
+            <option value="relative-delay">relative-delay (delays only)</option>
+            <option value="absolute">absolute (km/h)</option>
+            <option value="reduced-sensitivity">reduced-sensitivity</option>
+        </select>
+    </label>
+    <label><input type="checkbox" id="overlay"> Overlay OpenTrafficDB on TomTom</label>
+    <label>OpenTrafficDB opacity <input type="range" id="otdb-opacity" min="0" max="1" step="0.05" value="0.85"></label>
+    <span>TomTom tiles this session: <span id="tile-count">0</span></span>
+</div>
+
+@section Scripts {
+<script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+<script>
+(function () {
+    const STYLE_URL = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=@(Configuration["MapTiler:ApiKey"])';
+    const OTDB_TILES = window.location.origin + '/tiles/traffic/current/{z}/{x}/{y}';
+    const TT_TILES = style => window.location.origin + '/map/debug/tomtom/flow/' + style + '/{z}/{x}/{y}.png';
+
+    // Restore the last view from the URL hash (#zoom/lat/lon) so a position can be shared.
+    const hash = location.hash.slice(1).split('/').map(Number);
+    const start = hash.length === 3 && hash.every(Number.isFinite)
+        ? { zoom: hash[0], center: [hash[2], hash[1]] }
+        : { zoom: 11, center: [6.953101, 50.935173] };
+
+    const opts = { style: STYLE_URL, ...start, attributionControl: { compact: true } };
+    const ttMap   = new maplibregl.Map({ container: 'map-tomtom', ...opts });
+    const otdbMap = new maplibregl.Map({ container: 'map-otdb', ...opts });
+    ttMap.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    otdbMap.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+
+    // ── Keep both maps in sync ───────────────────────────────
+    let syncing = false;
+    function sync(from, to) {
+        from.on('move', () => {
+            if (syncing) return;
+            syncing = true;
+            to.jumpTo({ center: from.getCenter(), zoom: from.getZoom(), bearing: from.getBearing(), pitch: from.getPitch() });
+            syncing = false;
+        });
+    }
+    sync(ttMap, otdbMap);
+    sync(otdbMap, ttMap);
+    ttMap.on('moveend', () => {
+        const c = ttMap.getCenter();
+        history.replaceState(null, '', '#' + ttMap.getZoom().toFixed(2) + '/' + c.lat.toFixed(5) + '/' + c.lng.toFixed(5));
+    });
+
+    // ── Layers ───────────────────────────────────────────────
+    const otdbPaint = () => ({
+        'line-width': ['interpolate', ['linear'], ['zoom'], 8, 2, 12, 4, 16, 7],
+        'line-color': ['case', ['has', 'delay_factor'],
+            ['interpolate', ['linear'], ['get', 'delay_factor'],
+                0.0, '#3fb950', 0.25, '#d29922', 0.70, '#f85149'],
+            '#8b949e'],
+        'line-opacity': +document.getElementById('otdb-opacity').value
+    });
+
+    function addOtdbLayer(map) {
+        if (map.getLayer('otdb-lines')) return;
+        if (!map.getSource('otdb')) {
+            map.addSource('otdb', { type: 'vector', tiles: [OTDB_TILES + '?t=' + Date.now()], minzoom: 6, maxzoom: 16 });
+        }
+        map.addLayer({
+            id: 'otdb-lines', type: 'line', source: 'otdb', 'source-layer': 'traffic',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: otdbPaint()
+        });
+    }
+
+    function removeOtdbLayer(map) {
+        if (map.getLayer('otdb-lines')) map.removeLayer('otdb-lines');
+        if (map.getSource('otdb')) map.removeSource('otdb');
+    }
+
+    function setTomTomStyle(style) {
+        if (ttMap.getLayer('tomtom-flow')) ttMap.removeLayer('tomtom-flow');
+        if (ttMap.getSource('tomtom')) ttMap.removeSource('tomtom');
+        ttMap.addSource('tomtom', { type: 'raster', tiles: [TT_TILES(style)], tileSize: 256, minzoom: 0, maxzoom: 22 });
+        // Insert below the OTDB overlay (if present) so the overlay stays on top.
+        ttMap.addLayer({ id: 'tomtom-flow', type: 'raster', source: 'tomtom' },
+            ttMap.getLayer('otdb-lines') ? 'otdb-lines' : undefined);
+    }
+
+    // Count TomTom tile requests (each one uses quota unless it is served from the 5-minute cache).
+    let tileCount = 0;
+    ttMap.on('dataloading', e => {
+        if (e.sourceId === 'tomtom' && e.tile) {
+            tileCount++;
+            document.getElementById('tile-count').textContent = tileCount;
+        }
+    });
+
+    ttMap.on('load', () => setTomTomStyle(document.getElementById('tt-style').value));
+    otdbMap.on('load', () => addOtdbLayer(otdbMap));
+
+    // ── Controls ─────────────────────────────────────────────
+    document.getElementById('tt-style').addEventListener('change', e => setTomTomStyle(e.target.value));
+
+    document.getElementById('overlay').addEventListener('change', e => {
+        const maps = document.getElementById('maps');
+        if (e.target.checked) {
+            addOtdbLayer(ttMap);
+            maps.classList.add('single');
+            document.getElementById('label-tomtom').textContent = 'TomTom flow + OpenTrafficDB';
+        } else {
+            removeOtdbLayer(ttMap);
+            maps.classList.remove('single');
+            document.getElementById('label-tomtom').textContent = 'TomTom flow';
+        }
+        ttMap.resize(); otdbMap.resize();
+    });
+
+    document.getElementById('otdb-opacity').addEventListener('input', e => {
+        for (const m of [ttMap, otdbMap])
+            if (m.getLayer('otdb-lines')) m.setPaintProperty('otdb-lines', 'line-opacity', +e.target.value);
+    });
+
+    // ── Popup with OpenTrafficDB values ──────────────────────
+    const popup = new maplibregl.Popup({ className: 'traffic-popup', closeButton: true, maxWidth: '260px' });
+    for (const m of [ttMap, otdbMap]) {
+        m.on('click', e => {
+            if (!m.getLayer('otdb-lines')) return;
+            const f = m.queryRenderedFeatures(e.point, { layers: ['otdb-lines'] })[0];
+            if (!f) return;
+            const p = f.properties;
+            const fmt = (v, u) => v != null ? (+v).toFixed(1) + u : '—';
+            popup.setLngLat(e.lngLat).setHTML(`
+                <div class="popup-row"><span class="popup-label">OSM way</span><span>${p.osm_way_id}</span></div>
+                <div class="popup-row"><span class="popup-label">Speed</span><span>${fmt(p.speed_kmh, ' km/h')}</span></div>
+                <div class="popup-row"><span class="popup-label">Freeflow</span><span>${fmt(p.freeflow_kmh, ' km/h')}</span></div>
+                <div class="popup-row"><span class="popup-label">Delay</span><span>${p.delay_factor != null ? Math.round(p.delay_factor * 100) + '%' : '—'}</span></div>
+                <div class="popup-row"><span class="popup-label">Source</span><span>${p.source}</span></div>`).addTo(m);
+        });
+    }
+})();
+</script>
+}

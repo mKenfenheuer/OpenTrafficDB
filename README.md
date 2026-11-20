@@ -13,7 +13,7 @@ OpenTrafficDB is a community traffic speed database. Contributors submit GPS spe
 - **Routing.** Traffic-enriched routing and day-profile travel time buckets, proxied to OpenTrafficRouting.
 - **Accounts and API keys.** Email registration with verification, password reset, session login for the web UI and hashed API keys for machine access. Users are promoted to Contributor after a configurable number of accepted observations.
 - **Abuse protection.** Per-IP and per-key rate limits for submissions, reads and registrations, plus an admin-managed IP block list.
-- **Web UI.** Dashboard, profile and API key management, admin panel, live traffic map, routing map and built-in documentation pages.
+- **Web UI.** Dashboard, profile and API key management, admin panel, live traffic map, routing map, an admin-only map that compares the traffic layer with TomTom flow side by side, and built-in documentation pages.
 - **Operations.** Swagger UI, `/health` (PostgreSQL check) and a Prometheus `/metrics` endpoint via OpenTelemetry. Monthly partitions for raw observations are created automatically.
 
 ## Architecture
@@ -196,6 +196,7 @@ Copy `.env.example` to `.env` and adjust the values. `docker-compose.yml` reads 
 | `SMTP_SSL` | `false` | Enable TLS for SMTP |
 | `SMTP_FROM`, `SMTP_FROM_NAME` | `opentrafficdb@localhost`, `OpenTrafficDB` | Sender address and name |
 | `MAPTILER_API_KEY` | empty | MapTiler key for the base map style of the traffic, routing and debug maps |
+| `TOMTOM_API_KEY` | empty | Optional. Enables the admin-only TomTom comparison map at `/map/debug/tomtom`. TomTom tiles are proxied by the server (key stays private), cached for 5 minutes, and count against the TomTom tile quota. |
 | `APP_IMAGE` | `registry.gitlab.com/opentrafficdb/app:latest` | App image to run |
 
 The PostgreSQL memory defaults fit a host with about 8 GB RAM shared with other services. Raise them on dedicated hosts.

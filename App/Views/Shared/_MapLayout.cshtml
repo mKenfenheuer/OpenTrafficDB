@@ -27,6 +27,7 @@
                 }
                 @if (User.Claims.Any(c => c.Type == "role" && c.Value == "Admin")) {
                     <li><a href="/Home/Admin">Admin</a></li>
+                    <li><a href="/map/debug/tomtom">TomTom Debug</a></li>
                 }
                 @if (User.Identity?.IsAuthenticated == true) {
                     <li><button class="btn btn-secondary btn-sm" onclick="logout()">Sign Out</button></li>
