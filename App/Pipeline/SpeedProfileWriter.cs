@@ -112,51 +112,99 @@ public sealed class SpeedProfileWriter(
             wayIds.Length - failed, (long)(DateTime.UtcNow - started).TotalMilliseconds, failed);
     }
 
-    private async Task FlushChunkAsync(long[] chunk, Dictionary<long, List<WaySample>> pending, CancellationToken ct)
+    private Task FlushChunkAsync(long[] chunk, Dictionary<long, List<WaySample>> pending, CancellationToken ct) =>
+        ProcessChunkAsync(chunk, (wayId, profile, firstSeen) =>
+        {
+            var samples = pending[wayId];
+            foreach (var s in samples.OrderBy(s => s.Timestamp))
+                Apply(profile, Slot(s.Timestamp), s.SpeedMs * 3.6);
+            var first = samples.Min(s => s.Timestamp);
+            return (firstSeen is { } f && f < first ? f : first, samples.Max(s => s.Timestamp));
+        }, ct);
+
+    /// <summary>A road's history from the legacy WaySpeedAggregates table.</summary>
+    public sealed record HistoryWay(long WayId, List<(int Slot, double AvgKmh, int Count)> Slots, DateTime FirstSeen, DateTime LastUpdated);
+
+    /// <summary>
+    /// Merges legacy history into the profiles (count-weighted average per slot, count capped) and
+    /// re-encodes the predictions. Used once by <see cref="ProfileBackfillService"/>.
+    /// </summary>
+    public Task MergeHistoryAsync(List<HistoryWay> ways, CancellationToken ct)
+    {
+        var byId = ways.ToDictionary(w => w.WayId);
+        return ProcessChunkAsync([.. byId.Keys.Order()], (wayId, profile, firstSeen) =>
+        {
+            var h = byId[wayId];
+            foreach (var (slot, avgKmh, count) in h.Slots)
+            {
+                int curAvg = profile[slot * 2], curCount = profile[slot * 2 + 1];
+                var total = curCount + count;
+                if (total <= 0) continue;
+                var avg = (curAvg * (double)curCount + avgKmh * count) / total;
+                profile[slot * 2] = (byte)Math.Clamp(Math.Round(avg), 0, 255);
+                profile[slot * 2 + 1] = (byte)Math.Min(total, _countCap);
+            }
+            var first = firstSeen is { } f && f < h.FirstSeen ? f : h.FirstSeen;
+            return (first, h.LastUpdated);
+        }, ct, keepNewerLastUpdated: true);
+    }
+
+    /// <summary>
+    /// Locked read-modify-write of the profiles of one chunk of roads: reads the profiles with
+    /// FOR UPDATE (so the live flush and the backfill never overwrite each other), applies
+    /// <paramref name="mutate"/>, re-encodes the predictions and writes both back in one transaction.
+    /// </summary>
+    private async Task ProcessChunkAsync(long[] chunk,
+        Func<long, byte[], DateTime?, (DateTime FirstSeen, DateTime LastUpdated)> mutate,
+        CancellationToken ct, bool keepNewerLastUpdated = false)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Database.SetCommandTimeout(TimeSpan.FromMinutes(5));
         var conn = (NpgsqlConnection)db.Database.GetDbConnection();
         await db.Database.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
 
-        // Current profiles and free-flow speeds of the chunk's roads.
-        var existing = new Dictionary<long, (byte[]? Profile, DateTime? FirstSeen, double? Freeflow)>(chunk.Length);
+        var existing = new Dictionary<long, (byte[] Profile, DateTime FirstSeen)>(chunk.Length);
         await using (var cmd = new NpgsqlCommand("""
-            SELECT i.id, p."Profile", p."FirstSeenAt", s."FreeflowSpeed"
-            FROM unnest(@ids) AS i(id)
-            LEFT JOIN "WayProfiles" p ON p."OsmWayId" = i.id
-            LEFT JOIN "WaySpeedSummaries" s ON s."OsmWayId" = i.id
-            """, conn))
+            SELECT "OsmWayId", "Profile", "FirstSeenAt" FROM "WayProfiles"
+            WHERE "OsmWayId" = ANY(@ids)
+            ORDER BY "OsmWayId"
+            FOR UPDATE
+            """, conn, tx))
         {
             cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = chunk });
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
-                existing[reader.GetInt64(0)] = (
-                    reader.IsDBNull(1) ? null : (byte[])reader[1],
-                    reader.IsDBNull(2) ? null : reader.GetDateTime(2),
-                    reader.IsDBNull(3) ? null : reader.GetDouble(3));
+                existing[reader.GetInt64(0)] = ((byte[])reader[1], reader.GetDateTime(2));
+        }
+
+        var freeflowById = new Dictionary<long, double>(chunk.Length);
+        await using (var cmd = new NpgsqlCommand("""
+            SELECT "OsmWayId", "FreeflowSpeed" FROM "WaySpeedSummaries" WHERE "OsmWayId" = ANY(@ids)
+            """, conn, tx))
+        {
+            cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = chunk });
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                freeflowById[reader.GetInt64(0)] = reader.GetDouble(1);
         }
 
         var now = DateTime.UtcNow;
         var n = chunk.Length;
-        var profiles = new byte[n][]; var firsts = new DateTime[n]; var lasts = new DateTime[n]; var encoded = new string[n];
-        var freeflows = new double[n];
+        var profiles = new byte[n][]; var firsts = new DateTime[n]; var lasts = new DateTime[n];
+        var encoded = new string[n]; var freeflows = new double[n];
 
         for (int i = 0; i < n; i++)
         {
             var wayId = chunk[i];
-            var samples = pending[wayId];
             existing.TryGetValue(wayId, out var cur);
-
             var profile = cur.Profile is { Length: WayProfile.Slots * 2 } p ? p : new byte[WayProfile.Slots * 2];
-            foreach (var s in samples.OrderBy(s => s.Timestamp))
-                Apply(profile, Slot(s.Timestamp), s.SpeedMs * 3.6);
-
+            var (first, last) = mutate(wayId, profile, cur.Profile != null ? cur.FirstSeen : null);
             profiles[i] = profile;
-            firsts[i] = cur.FirstSeen ?? samples.Min(s => s.Timestamp);
-            lasts[i] = samples.Max(s => s.Timestamp);
-            freeflows[i] = cur.Freeflow ?? MeanSpeed(profile);
+            firsts[i] = first;
+            lasts[i] = last;
+            freeflows[i] = freeflowById.TryGetValue(wayId, out var ff) ? ff : MeanSpeed(profile);
         }
 
         // The DCT encoding is CPU-bound (~0.3 ms per road): run it on all cores.
@@ -167,13 +215,15 @@ public sealed class SpeedProfileWriter(
             return buffer;
         }, _ => { });
 
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        await using (var upsert = new NpgsqlCommand("""
+        await using (var upsert = new NpgsqlCommand($"""
             INSERT INTO "WayProfiles" ("OsmWayId","Profile","FirstSeenAt","LastUpdated")
             SELECT * FROM unnest(@ids, @profiles, @firsts, @lasts)
             ON CONFLICT ("OsmWayId") DO UPDATE SET
                 "Profile"     = EXCLUDED."Profile",
-                "LastUpdated" = EXCLUDED."LastUpdated"
+                "FirstSeenAt" = EXCLUDED."FirstSeenAt",
+                "LastUpdated" = {(keepNewerLastUpdated
+                    ? "GREATEST(\"WayProfiles\".\"LastUpdated\", EXCLUDED.\"LastUpdated\")"
+                    : "EXCLUDED.\"LastUpdated\"")}
             """, conn, tx))
         {
             upsert.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = chunk });
