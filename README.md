@@ -217,6 +217,7 @@ The app reads `App/appsettings.json`. Override any key with an environment varia
 | `Aggregation:MatchRetryWindowSeconds` | `300` | Unmatched observations are retried with new points of the same trip within this window |
 | `Aggregation:FinalizeIntervalSeconds` | `60` | Interval of the cleanup of given-up and stale observations |
 | `Traffic:LiveWindowMinutes` | `120` | Age limit of live speeds in tiles and the live CSV. Keep it longer than the refresh cycle of your data sources. |
+| `Traffic:TileMinDelay` | `0` | Minimum delay factor (0–1) for a road to appear in the traffic tiles. `0` shows all roads with data; `0.25` shows only slow traffic and jams. |
 | `Aggregation:MapMatchingTripChunkSize` | `200` (compose: `5000`) | Trips per matching pass |
 | `Aggregation:AggregateWayIdChunkSize` | `200` (compose: `5000`) | Ways per aggregation pass |
 | `Hazards:AggregationIntervalSeconds` | `30` | Hazard clustering interval |

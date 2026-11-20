@@ -18,6 +18,10 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
     private readonly TimeSpan _liveWindow = TimeSpan.FromMinutes(
         double.TryParse(config["Traffic:LiveWindowMinutes"], out var lw) ? lw : 120);
 
+    // Minimum delay factor (0–1) a road needs to appear in the tiles. 0 = all roads with data.
+    private readonly double _minDelay = double.TryParse(config["Traffic:TileMinDelay"],
+        System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var md) ? md : 0.0;
+
     private static readonly DistributedCacheEntryOptions TileOptions =
         new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60) };
 
@@ -84,7 +88,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                                                 AND wss."LastUpdated" >= {liveCutoff}
                     WHERE wg."BBox" && ST_MakeEnvelope({minLon}, {minLat}, {maxLon}, {maxLat}, 4326)
                 ) base
-                WHERE base.delay > 0.25
+                WHERE COALESCE(base.delay, 0) >= {_minDelay}
             ) q
             WHERE q.geom IS NOT NULL
             """)
