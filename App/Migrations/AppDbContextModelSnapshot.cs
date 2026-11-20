@@ -272,6 +272,9 @@ namespace OpenTrafficDBMigrations
 
                     b.HasIndex("Latitude", "Longitude");
 
+                    b.HasIndex(new[] { "Id" }, "IX_HazardObservations_Unprocessed")
+                        .HasFilter("\"IsProcessed\" = FALSE");
+
                     b.ToTable("HazardObservations");
                 });
 

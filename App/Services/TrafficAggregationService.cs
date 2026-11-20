@@ -34,6 +34,14 @@ public class TrafficAggregationService(
         if (deleted > 0)
             logger.LogInformation("Finalize: deleted {Count} legacy speed observations", deleted);
 
+        // Processed hazard observations are only raw input; the state lives in HazardAggregates.
+        var hazardCutoff = DateTime.UtcNow.AddDays(-1);
+        var hazardsDeleted = await db.HazardObservations
+            .Where(o => o.IsProcessed && o.CreatedAt < hazardCutoff)
+            .ExecuteDeleteAsync(ct);
+        if (hazardsDeleted > 0)
+            logger.LogInformation("Finalize: deleted {Count} processed hazard observations older than 1 day", hazardsDeleted);
+
         // Prune metric rows older than 24 h — they're only needed for the rolling rate window.
         var metricCutoff = DateTime.UtcNow.AddHours(-24);
         await db.AggregationMetrics

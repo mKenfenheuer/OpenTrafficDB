@@ -121,6 +121,9 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<HazardObservation>(e =>
         {
+            // Aggregation reads "WHERE NOT IsProcessed ORDER BY Id LIMIT n": this partial index serves
+            // it directly instead of sorting every unprocessed row.
+            e.HasIndex(o => o.Id, "IX_HazardObservations_Unprocessed").HasFilter("\"IsProcessed\" = FALSE");
             e.Property(h => h.HazardType).HasConversion<string>();
             e.HasIndex(h => new { h.IsProcessed, h.CreatedAt });
             e.HasIndex(h => new { h.Latitude, h.Longitude });
