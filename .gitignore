@@ -212,3 +212,8 @@ FakesAssemblies/
 .local.txt
 tools/traffic-tar-builder/traffic_tar_builder
 tools/predicted-traffic-patcher/predicted_traffic_patcher
+
+# Local / tooling
+.DS_Store
+CLAUDE.md
+.claude/

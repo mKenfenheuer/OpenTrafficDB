@@ -1,3 +1,4 @@
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
 @{
     Layout = "_MapLayout";
     ViewData["Title"] = "Polyline Debug";
@@ -90,7 +91,7 @@
 <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
 <script>
 (function () {
-    const STYLE_URL = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=YOUR_MAPTILER_API_KEY';
+    const STYLE_URL = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=@(Configuration["MapTiler:ApiKey"])';
 
     const map = new maplibregl.Map({
         container: 'map',

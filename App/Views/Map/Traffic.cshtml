@@ -1,3 +1,4 @@
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
 @{
     Layout = "_MapLayout";
     ViewData["Title"] = "Traffic Map";
@@ -110,7 +111,7 @@
 <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
 <script>
 (function () {
-    const STYLE_URL  = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=YOUR_MAPTILER_API_KEY';
+    const STYLE_URL  = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=@(Configuration["MapTiler:ApiKey"])';
     const TILE_BASE  = window.location.origin + '/tiles/traffic/current/{z}/{x}/{y}';
     const REFRESH_MS = 60_000;
 

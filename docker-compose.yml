@@ -101,6 +101,7 @@ services:
       Email__EnableSsl: ${SMTP_SSL:-false}
       Email__FromAddress: ${SMTP_FROM:-opentrafficdb@localhost}
       Email__FromName: ${SMTP_FROM_NAME:-OpenTrafficDB}
+      MapTiler__ApiKey: ${MAPTILER_API_KEY:-}
       Logging__LogLevel__OpenTrafficDB: Information
     depends_on:
       pgbouncer:
