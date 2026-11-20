@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using NpgsqlTypes;
+using OpenTrafficDB.App.Pipeline;
 using OpenTrafficDB.App.Services;
 using OpenTrafficDBData;
 using OpenTrafficDBModels;
@@ -22,6 +23,7 @@ public class SpeedController(
     CryptoService crypto,
     AppDbContext db,
     SpeedValidationService validator,
+    SpeedPipeline pipeline,
     IConfiguration config) : ControllerBase
 {
     private int ContributorThreshold =>
@@ -32,6 +34,7 @@ public class SpeedController(
     [ProducesResponseType(typeof(SubmitSpeedResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Submit([FromBody] SpeedObservationRequest request, CancellationToken ct)
     {
         var ip = GetIp();
@@ -44,8 +47,8 @@ public class SpeedController(
         if (!validation.IsValid)
             return BadRequest(new { errors = validation.Errors });
 
-        var obs = MapToObservation(request, keyId);
-        db.SpeedObservations.Add(obs);
+        if (!Enqueue([request], keyId))
+            return PipelineFull();
 
         var user = await db.Users.FindAsync([userId], ct);
         if (user != null)
@@ -59,7 +62,6 @@ public class SpeedController(
         return Ok(new SubmitSpeedResponse
         {
             Success = true,
-            ObservationId = obs.Id,
             Warning = validation.Warning
         });
     }
@@ -72,6 +74,7 @@ public class SpeedController(
     [ProducesResponseType(typeof(BatchSubmitResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> SubmitBatch([FromBody] BatchSpeedRequest request, CancellationToken ct)
     {
         var ip = GetIp();
@@ -99,7 +102,8 @@ public class SpeedController(
 
         if (response.Accepted > 0)
         {
-            await InsertObservationsBulkAsync(valid, keyId, ct);
+            if (!Enqueue(valid, keyId))
+                return PipelineFull();
 
             var user = await db.Users.FindAsync([userId], ct);
             if (user != null)
@@ -114,69 +118,30 @@ public class SpeedController(
     }
 
     /// <summary>
-    /// Single-round-trip batch insert via unnest. Deduplicates on (TripId, Timestamp).
-    /// ~10-50x faster than individual EF SaveChanges calls for large batches.
+    /// Hands the observations to the in-memory speed pipeline, grouped by trip. Returns false
+    /// (and accepts nothing) when the pipeline buffer is full.
     /// </summary>
-    private async Task InsertObservationsBulkAsync(
-        List<SpeedObservationRequest> observations, int apiKeyId, CancellationToken ct)
+    private bool Enqueue(List<SpeedObservationRequest> observations, int apiKeyId)
     {
-        var now   = DateTime.UtcNow;
-        var count = observations.Count;
+        if (!pipeline.HasCapacity(observations.Count)) return false;
 
-        var apiKeyIds  = new int     [count];
-        var timestamps = new DateTime[count];
-        var latitudes  = new double  [count];
-        var longitudes = new double  [count];
-        var speedMs    = new double  [count];
-        var headings   = new float?  [count];
-        var altitudes  = new float?  [count];
-        var accuracies = new float   [count];
-        var tripIds    = new string  [count];
-        var roadWorks  = new bool    [count];
-        var createdAts = new DateTime[count];
-
-        for (var i = 0; i < count; i++)
+        foreach (var trip in observations.GroupBy(o => o.TripId))
         {
-            var r          = observations[i];
-            apiKeyIds [i]  = apiKeyId;
-            timestamps[i]  = r.Timestamp.ToUniversalTime();
-            latitudes [i]  = r.Latitude;
-            longitudes[i]  = r.Longitude;
-            speedMs   [i]  = r.SpeedMs;
-            headings  [i]  = r.Heading;
-            altitudes [i]  = r.AltitudeMeters;
-            accuracies[i]  = r.GpsAccuracyMeters;
-            tripIds   [i]  = crypto.HashTripId(apiKeyId + r.TripId);
-            roadWorks [i]  = r.RoadWorks;
-            createdAts[i]  = now;
+            var points = trip
+                .Select(o => (o.Timestamp.ToUniversalTime(), o.Latitude, o.Longitude, o.SpeedMs, o.GpsAccuracyMeters))
+                .ToList();
+            // Trip ids are namespaced per API key and hashed, as before.
+            if (!pipeline.TryEnqueue(crypto.HashTripId(apiKeyId + trip.Key), points))
+                return false;
         }
+        return true;
+    }
 
-        object[] sqlParams =
-        [
-            new NpgsqlParameter("api_key_ids",     NpgsqlDbType.Array | NpgsqlDbType.Integer)     { Value = apiKeyIds   },
-            new NpgsqlParameter("timestamps",      NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = timestamps  },
-            new NpgsqlParameter("latitudes",       NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = latitudes   },
-            new NpgsqlParameter("longitudes",      NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = longitudes  },
-            new NpgsqlParameter("speed_ms_vals",   NpgsqlDbType.Array | NpgsqlDbType.Double)      { Value = speedMs     },
-            new NpgsqlParameter("headings",        NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = headings    },
-            new NpgsqlParameter("altitudes",       NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = altitudes   },
-            new NpgsqlParameter("accuracies",      NpgsqlDbType.Array | NpgsqlDbType.Real)        { Value = accuracies  },
-            new NpgsqlParameter("trip_ids",        NpgsqlDbType.Array | NpgsqlDbType.Text)        { Value = tripIds     },
-            new NpgsqlParameter("road_works_vals", NpgsqlDbType.Array | NpgsqlDbType.Boolean)     { Value = roadWorks   },
-            new NpgsqlParameter("created_ats",     NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = createdAts  },
-        ];
-        await db.Database.ExecuteSqlRawAsync("""
-            INSERT INTO "SpeedObservations"
-                ("ApiKeyId","Timestamp","Latitude","Longitude","SpeedMs",
-                 "Heading","AltitudeMeters","GpsAccuracyMeters","TripId",
-                 "RoadWorks","OsmWayId","SpeedLimitKmh","IsAggregated","CreatedAt")
-            SELECT v.api_key_id, v.ts, v.lat, v.lon, v.speed_ms,
-                   v.heading, v.altitude, v.accuracy, v.trip_id,
-                   v.road_works, NULL::bigint, NULL::double precision, FALSE, v.created_at
-            FROM unnest(@api_key_ids,@timestamps,@latitudes,@longitudes,@speed_ms_vals,
-                        @headings,@altitudes,@accuracies,@trip_ids,@road_works_vals,@created_ats)
-                 AS v(api_key_id,ts,lat,lon,speed_ms,heading,altitude,accuracy,trip_id,road_works,created_at)
-            """, sqlParams, ct);
+    private ObjectResult PipelineFull()
+    {
+        Response.Headers.RetryAfter = "10";
+        return StatusCode(StatusCodes.Status503ServiceUnavailable,
+            new { error = "Processing queue is full. Retry after 10 seconds." });
     }
 
     private void TryPromoteToContributor(User user)
@@ -184,22 +149,6 @@ public class SpeedController(
         if (user.Role == UserRole.User && user.TotalContributions >= ContributorThreshold)
             user.Role = UserRole.Contributor;
     }
-
-    private SpeedObservation MapToObservation(SpeedObservationRequest req, int apiKeyId) =>
-        new()
-        {
-            ApiKeyId          = apiKeyId,
-            Timestamp         = req.Timestamp.ToUniversalTime(),
-            Latitude          = req.Latitude,
-            Longitude         = req.Longitude,
-            SpeedMs           = req.SpeedMs,
-            Heading           = req.Heading,
-            AltitudeMeters    = req.AltitudeMeters,
-            GpsAccuracyMeters = req.GpsAccuracyMeters,
-            TripId            = crypto.HashTripId(apiKeyId + req.TripId),
-            RoadWorks         = req.RoadWorks,
-            CreatedAt         = DateTime.UtcNow
-        };
 
     private string GetIp() => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 

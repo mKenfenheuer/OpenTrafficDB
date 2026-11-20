@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using OpenTrafficDBData;
 using OpenTrafficDBModels;
 using OpenTrafficDBModels.DTOs;
+using OpenTrafficDB.App.Pipeline;
 using OpenTrafficDB.App.Services;
 using OpenTrafficDBServices;
 
@@ -18,7 +19,7 @@ namespace OpenTrafficDB.App.Controllers;
 [Authorize(AuthenticationSchemes = CookieAuthenticationDefaults.AuthenticationScheme, Policy = "WebAdminOnly")]
 [Produces("application/json")]
 [ApiExplorerSettings(IgnoreApi = true)]
-public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto, StatsHistoryService statsHistory) : ControllerBase
+public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto, StatsHistoryService statsHistory, SpeedPipeline pipeline, SpeedAggregator aggregator) : ControllerBase
 {
     private int CurrentUserId =>
         int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "0");
@@ -30,9 +31,9 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStats(CancellationToken ct)
     {
-        // Queue depths are always read fresh from the DB.
-        var matchingQueue  = await db.SpeedObservations.CountAsync(o => o.OsmWayId == null && !o.IsAggregated, ct);
-        var aggregateQueue = await db.SpeedObservations.CountAsync(o => o.OsmWayId != null && !o.IsAggregated, ct);
+        // Queue depths come from the in-memory speed pipeline.
+        var matchingQueue  = pipeline.BufferedPoints;
+        var aggregateQueue = (long)aggregator.PendingSamples;
         var totalQueue     = matchingQueue + aggregateQueue;
 
         // Rates come from StatsHistoryService which uses per-sample deltas — no rolling-window artefact.

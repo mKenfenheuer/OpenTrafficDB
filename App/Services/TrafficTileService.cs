@@ -10,7 +10,7 @@ namespace OpenTrafficDB.App.Services;
 /// Builds gzip-compressed Mapbox Vector Tile (MVT) bytes for the "traffic" layer.
 /// Geometry clipping, simplification, and MVT encoding are performed by PostGIS
 /// (ST_AsMVTGeom + ST_AsMVT) to avoid per-coordinate mercator projection in C#.
-/// Tiles are cached in Redis (IDistributedCache) for 60 seconds.
+/// Tiles are cached in Redis (IDistributedCache) for Traffic:TileCacheSeconds (default 15 s).
 /// </summary>
 public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache, IConfiguration config)
 {
@@ -22,8 +22,12 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
     private readonly double _minDelay = double.TryParse(config["Traffic:TileMinDelay"],
         System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var md) ? md : 0.0;
 
-    private static readonly DistributedCacheEntryOptions TileOptions =
-        new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60) };
+    // Short cache so the map stays near-live: the speed pipeline updates live speeds every ~10 s.
+    private readonly DistributedCacheEntryOptions TileOptions = new()
+    {
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(
+            double.TryParse(config["Traffic:TileCacheSeconds"], out var tc) ? tc : 15)
+    };
 
     public async Task<byte[]> BuildTileAsync(int z, int x, int y, CancellationToken ct = default)
     {

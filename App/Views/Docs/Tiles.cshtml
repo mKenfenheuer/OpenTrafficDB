@@ -191,7 +191,7 @@ Max zoom: 16</div>
 <div class="card section">
     <div class="card-title">Caching</div>
     <p class="text-muted text-sm" style="line-height:1.8">
-        Tiles are served with <code>Cache-Control: public, max-age=60</code>. For live traffic dashboards, refresh the tile source every 60 seconds by appending a cache-busting query parameter:
+        Traffic tiles are served with <code>Cache-Control: public, max-age=15</code> (hazard tiles: 60). For live traffic dashboards, refresh the tile source every 15 seconds by appending a cache-busting query parameter:
     </p>
     <div class="code-block"><span class="code-comment">// Refresh source every 60 s</span>
 setInterval(() => {

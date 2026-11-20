@@ -266,7 +266,7 @@ public class TileController(
 
         var bytes = await trafficTiles.BuildTileAsync(z, x, y, ct);
         Response.Headers["Content-Encoding"] = "gzip";
-        Response.Headers["Cache-Control"] = "public, max-age=60";
+        Response.Headers["Cache-Control"] = "public, max-age=15";
         return File(bytes, "application/vnd.mapbox-vector-tile");
     }
 }

@@ -9,7 +9,7 @@ OpenTrafficDB is a community traffic speed database. Contributors submit GPS spe
 - **Server-side map matching.** Trips are split into segments, encoded as polylines and matched in bulk against the OpenTrafficRouting trace endpoint. Interpolated edges produce additional observations for ways between GPS points.
 - **Aggregation.** Each OSM way gets 2,016 five-minute buckets per week, plus exponential moving averages for constrained and free-flow speed. Weekly profiles are DCT-II compressed into Valhalla's predicted speed format during aggregation.
 - **Valhalla exports.** A predicted traffic CSV (`way_id,freeflow_speed,constrained_speed,historical_speeds`) and a live traffic CSV (`way_id,speed_kmh,freeflow_kmh`, last 60 minutes by default).
-- **Vector tiles.** Traffic and hazard overlays as gzip-compressed MVT, built by PostGIS (`ST_AsMVT`) and cached in Redis for 60 seconds. TileJSON and MapLibre style documents are included.
+- **Vector tiles.** Traffic and hazard overlays as gzip-compressed MVT, built by PostGIS (`ST_AsMVT`) and cached in Redis for 15 seconds, so the traffic map stays near-live. TileJSON and MapLibre style documents are included.
 - **Routing.** Traffic-enriched routing and day-profile travel time buckets, proxied to OpenTrafficRouting.
 - **Accounts and API keys.** Email registration with verification, password reset, session login for the web UI and hashed API keys for machine access. Users are promoted to Contributor after a configurable number of accepted observations.
 - **Abuse protection.** Per-IP and per-key rate limits for submissions, reads and registrations, plus an admin-managed IP block list.
@@ -36,22 +36,22 @@ All jobs run in-process inside the `api` container:
 
 | Service | Interval | Task |
 | --- | --- | --- |
-| `SpeedObservationMapMatchingService` | 15 s (configurable) | Matches unmatched trips to OSM ways in chunks |
-| `SpeedObservationAggregationService` | 15 s (configurable) | Aggregates matched observations, then deletes them |
+| `SpeedMatchingWorker` | continuous | Streams buffered trips to OpenTrafficRouting (up to 8 bulk requests in flight) and turns the results into one sample per trip and road |
+| `SpeedAggregator` | every 10 s | Writes the samples to the weekly buckets and live summaries in two bulk upserts |
 | `HazardAggregationService` | 30 s (configurable) | Clusters hazard reports and map-matches cluster centroids |
 | `WayGeometryBackgroundService` | at startup, then every 30 days | Downloads the configured OSM PBF and imports road geometries for tiles |
-| `PartitionMaintenanceService` | at startup, then daily | Creates monthly `SpeedObservations` partitions three months ahead |
+| `PartitionMaintenanceService` | at startup, then daily | Creates monthly `SpeedObservations` partitions three months ahead (legacy table, no longer written) |
 | `StatsHistoryService` | 15 s | Samples pipeline stats and keeps the last hour for the admin dashboard |
 
 ### Data flow
 
 ```mermaid
 flowchart LR
-    C[Clients / importers] -->|POST /api/v1/speed| DB[(SpeedObservations)]
+    C[Clients / importers] -->|POST /api/v1/speed| BUF[In-memory trip buffer]
     C -->|POST /api/v1/hazards| HZ[(HazardObservations)]
-    DB --> MM[Map matching]
+    BUF --> MM[Map matching]
     MM <-->|trace/bulk| OTR[OpenTrafficRouting]
-    MM --> AG[Aggregation]
+    MM -->|one sample per trip and road| AG[In-memory aggregation]
     AG --> WA[(WaySpeedAggregates<br/>2016 buckets/week)]
     AG --> WS[(WaySpeedSummaries<br/>EMA + encoded speeds)]
     HZ --> HA[Hazard clustering] --> HAG[(HazardAggregates)]
@@ -63,10 +63,13 @@ flowchart LR
     CSV2 --> TTB[traffic_tar_builder] --> VT[Valhalla traffic.tar]
 ```
 
-1. **Ingestion.** Clients submit observations with an API key. The API validates each record, hashes the trip ID together with the key ID, stores the raw row and counts the contribution.
-2. **Map matching.** The matching job selects unmatched observations for the next batch of trips, splits trips at gaps over 500 m or after 20 km, and sends the polylines to OpenTrafficRouting in proximity-sorted batches. Matched points receive an OSM way ID and speed limit. Interpolated edges are inserted as synthetic observations. Observations that cannot be matched are dropped; unmatched rows older than 24 hours are removed.
-3. **Aggregation.** The aggregation job groups matched observations by way, upserts the five-minute weekly buckets, updates the EMA summaries (alpha 0.8), encodes the 2,016-bucket profile into 200 DCT-II coefficients and deletes the processed raw rows.
-4. **Output.** The CSV exports stream from the summaries. Tiles join the summaries and hazard aggregates with the imported way geometries. The C++ tools in `tools/` and the related Valhalla importer turn the CSVs into Valhalla data.
+Raw observations never touch the database. Postgres only stores the results.
+
+1. **Ingestion.** Clients submit observations with an API key. The API validates each record, hashes the trip ID together with the key ID, adds the points to an in-memory trip buffer and counts the contribution. The buffer is bounded (`Pipeline:MaxBufferedPoints`); when it is full, the API answers `503` with `Retry-After`.
+2. **Map matching.** A trip is queued when it receives new points. The matching worker splits trips at gaps over 500 m or after 20 km and sends the polylines to OpenTrafficRouting, with up to `OpenTrafficRouting:MaxConcurrent` bulk requests in flight. Per trip and road, the matched points are averaged into one sample; roads crossed between two points (interpolated edges) get one sample each. Unmatched points are retried only together with new points of the same trip, and the last matched points stay as context, so a trip uploaded in parts is matched as one trace.
+3. **Aggregation.** Every 10 seconds the samples are written in two bulk upserts: the five-minute weekly buckets, and the EMA summaries (alpha 0.8) with the 2,016-bucket profile encoded into 200 DCT-II coefficients.
+4. **Restarts.** Points still in the buffer are lost on a restart (seconds of data). Pending samples are flushed on graceful shutdown.
+5. **Output.** The CSV exports stream from the summaries. Tiles join the summaries and hazard aggregates with the imported way geometries. The C++ tools in `tools/` and the related Valhalla importer turn the CSVs into Valhalla data.
 
 ## API overview
 
@@ -213,14 +216,19 @@ The app reads `App/appsettings.json`. Override any key with an environment varia
 | `OpenTrafficRouting:BaseUrl` | `http://localhost:8002` | OpenTrafficRouting service |
 | `OpenTrafficRouting:BatchSize` | `25` (compose: `200`) | Polylines per bulk trace request |
 | `OpenTrafficRouting:MaxConcurrent` | `4` (compose: `8`) | Concurrent bulk trace requests |
-| `Aggregation:IdlePollSeconds` | `2` | Poll interval of the matching and aggregation jobs when their queue is empty; with a backlog they run back to back |
+| `Pipeline:MaxBufferedPoints` | `3000000` | Maximum points in the in-memory buffer; beyond it the API answers 503 with Retry-After |
+| `Pipeline:FlushSeconds` | `10` | Interval of the bulk write of aggregated samples |
+| `Pipeline:BatchLingerMs` | `100` | How long the matcher waits to fill a batch before sending a smaller one |
+| `Pipeline:TripIdleSeconds` | `180` | Trips without new points are forgotten after this time (with their context) |
+| `Pipeline:ContextPoints` | `3` | Last matched points kept per trip as context for the next upload |
+| `OpenTrafficRouting:BatchSize` | `200` | Polylines per bulk trace request |
+| `OpenTrafficRouting:MaxConcurrent` | `8` | Bulk trace requests in flight |
+| `Traffic:TileCacheSeconds` | `15` | Redis cache time of traffic tiles |
 | `Aggregation:MaxMatchAttempts` | `3` | Attempts before an unmatched observation is given up |
 | `Aggregation:MatchRetryWindowSeconds` | `300` | Unmatched observations are retried with new points of the same trip within this window |
-| `Aggregation:FinalizeIntervalSeconds` | `60` | Interval of the cleanup of given-up and stale observations |
+| `Aggregation:FinalizeIntervalSeconds` | `60` | Interval of the cleanup of old metrics and legacy rows |
 | `Traffic:LiveWindowMinutes` | `60` | Age limit of live speeds in tiles and the live CSV. Keep it longer than the refresh cycle of your data sources. |
 | `Traffic:TileMinDelay` | `0` | Minimum delay factor (0–1) for a road to appear in the traffic tiles. `0` shows all roads with data; `0.25` shows only slow traffic and jams. |
-| `Aggregation:MapMatchingTripChunkSize` | `200` (compose: `5000`) | Trips per matching pass |
-| `Aggregation:AggregateWayIdChunkSize` | `200` (compose: `5000`) | Ways per aggregation pass |
 | `Hazards:AggregationIntervalSeconds` | `30` | Hazard clustering interval |
 | `Hazards:ClusterGridMeters` | `30` | Cluster grid size |
 | `Hazards:RematchDriftMeters` | `10` | Centroid drift that triggers re-matching |

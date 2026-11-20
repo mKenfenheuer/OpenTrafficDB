@@ -91,9 +91,7 @@ services:
       OpenTrafficRouting__MaxConcurrent: 8
       Osm__PbfPath: /data/map.osm.pbf
       Osm__PbfUrl: ${VALHALLA_TILE_URL}
-      Aggregation__IdlePollSeconds: 2
-      Aggregation__MapMatchingTripChunkSize: 5000
-      Aggregation__AggregateWayIdChunkSize: 5000
+      Pipeline__MaxBufferedPoints: ${PIPELINE_MAX_BUFFERED_POINTS:-3000000}
       Email__SmtpHost: ${SMTP_HOST:-}
       Email__SmtpPort: ${SMTP_PORT:-25}
       Email__SmtpUser: ${SMTP_USER:-}

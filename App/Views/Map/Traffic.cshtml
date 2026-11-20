@@ -113,7 +113,7 @@
 (function () {
     const STYLE_URL  = 'https://api.maptiler.com/maps/streets-v2-dark/style.json?key=@(Configuration["MapTiler:ApiKey"])';
     const TILE_BASE  = window.location.origin + '/tiles/traffic/current/{z}/{x}/{y}';
-    const REFRESH_MS = 60_000;
+    const REFRESH_MS = 15_000;   // near-live: tiles are cached for 15 s, live speeds update every ~10 s
 
     let map, popup, refreshTimer, lastUpdated;
 

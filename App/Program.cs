@@ -1,3 +1,4 @@
+using OpenTrafficDB.App.Pipeline;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -55,7 +56,7 @@ public class Program
         builder.Services.AddScoped<ApiKeyService>();
 
         // Map-matching, aggregation, tile build, routing — all in-process.
-        builder.Services.AddScoped<MapMatchingService>();
+        builder.Services.AddSingleton<MapMatchingService>();
         builder.Services.AddScoped<TrafficAggregationService>();
         builder.Services.AddScoped<TrafficTileService>();
         builder.Services.AddScoped<HazardTileService>();
@@ -68,8 +69,11 @@ public class Program
         builder.Services.AddHostedService(sp => sp.GetRequiredService<StatsHistoryService>());
 
         // Recurring in-process background jobs.
-        builder.Services.AddHostedService<SpeedObservationAggregationService>();
-        builder.Services.AddHostedService<SpeedObservationMapMatchingService>();
+        // In-memory speed pipeline: ingest -> trip buffer -> map matching -> aggregation -> bulk upsert.
+        builder.Services.AddSingleton<SpeedPipeline>();
+        builder.Services.AddSingleton<SpeedAggregator>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<SpeedAggregator>());
+        builder.Services.AddHostedService<SpeedMatchingWorker>();
         builder.Services.AddHostedService<HazardAggregationService>();
         builder.Services.AddHostedService<PartitionMaintenanceService>();
         builder.Services.AddHostedService<WayGeometryBackgroundService>();
