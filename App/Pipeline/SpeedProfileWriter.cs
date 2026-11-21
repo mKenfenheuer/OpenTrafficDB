@@ -150,6 +150,15 @@ public sealed class SpeedProfileWriter(
     }
 
     /// <summary>
+    /// Recomputes the predictions of the given roads from their unchanged profiles and the current
+    /// free-flow speed (empty slots are filled with free flow, so a corrected free flow must be
+    /// re-encoded). Profiles and their timestamps stay as they are.
+    /// </summary>
+    public Task ReencodeAsync(long[] chunk, CancellationToken ct) =>
+        ProcessChunkAsync(chunk, (_, _, firstSeen) => (firstSeen ?? DateTime.UtcNow, DateTime.MinValue), ct,
+            keepNewerLastUpdated: true);
+
+    /// <summary>
     /// Locked read-modify-write of the profiles of one chunk of roads: reads the profiles with
     /// FOR UPDATE (so the live flush and the backfill never overwrite each other), applies
     /// <paramref name="mutate"/>, re-encodes the predictions and writes both back in one transaction.

@@ -32,11 +32,28 @@ public sealed class ProfileBackfillService(
     public DateTime? FinishedAt { get; private set; }
     public string? Error { get; private set; }
 
+    private DateTime? _reencodeSince;
+
     /// <summary>Starts the import unless it is already running. Returns false if it is.</summary>
     public bool TryStart()
     {
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return false;
+        _reencodeSince = null;
         State = "starting";
+        _trigger.Release();
+        return true;
+    }
+
+    /// <summary>
+    /// Starts re-encoding the predictions of all roads whose summary changed since
+    /// <paramref name="since"/> (e.g. after free-flow speeds were corrected). Shares the progress
+    /// fields and the single-run guard with the import.
+    /// </summary>
+    public bool TryStartReencode(DateTime since)
+    {
+        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return false;
+        _reencodeSince = since;
+        State = "starting re-encode";
         _trigger.Release();
         return true;
     }
@@ -51,7 +68,8 @@ public sealed class ProfileBackfillService(
             StartedAt = DateTime.UtcNow; FinishedAt = null; Error = null; RowsRead = 0; WaysMerged = 0;
             try
             {
-                await RunAsync(stoppingToken);
+                if (_reencodeSince is { } since) await ReencodeAsync(since, stoppingToken);
+                else await RunAsync(stoppingToken);
                 State = "done";
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { State = "cancelled"; }
@@ -131,6 +149,36 @@ public sealed class ProfileBackfillService(
         await reader.CloseAsync();
         await tx.CommitAsync(ct);
         logger.LogInformation("Profile backfill done: {Rows} rows, {Ways} ways in {Elapsed}.", RowsRead, WaysMerged, stopwatch.Elapsed);
+    }
+
+    private async Task ReencodeAsync(DateTime since, CancellationToken ct)
+    {
+        State = "reading";
+        var stopwatch = Stopwatch.StartNew();
+        List<long> ids;
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Database.SetCommandTimeout(TimeSpan.FromMinutes(10));
+            ids = await db.WaySpeedSummaries
+                .Where(s => s.LastUpdated >= since && db.WayProfiles.Any(p => p.OsmWayId == s.OsmWayId))
+                .OrderBy(s => s.OsmWayId)
+                .Select(s => s.OsmWayId)
+                .ToListAsync(ct);
+        }
+        RowsRead = ids.Count;
+        State = "re-encoding";
+        logger.LogInformation("Profile re-encode: {Count} roads changed since {Since:u}.", ids.Count, since);
+
+        for (int i = 0; i < ids.Count; i += BatchWays)
+        {
+            var chunk = ids.GetRange(i, Math.Min(BatchWays, ids.Count - i)).ToArray();
+            await profiles.ReencodeAsync(chunk, ct);
+            WaysMerged += chunk.Length;
+            if (WaysMerged % 100_000 < BatchWays)
+                logger.LogInformation("Profile re-encode: {Done}/{Total} roads.", WaysMerged, ids.Count);
+        }
+        logger.LogInformation("Profile re-encode done: {Count} roads in {Elapsed}.", ids.Count, stopwatch.Elapsed);
     }
 
     private async Task FlushAsync(List<SpeedProfileWriter.HistoryWay> batch, CancellationToken ct)
