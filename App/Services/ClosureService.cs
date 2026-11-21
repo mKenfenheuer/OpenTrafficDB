@@ -18,6 +18,12 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
 {
     private const int MaxPolylinesPerRequest = 1000;
 
+    private sealed record MatchedEdge(long[] WayIds, string? RoadType, bool Interpolated, int From, int To);
+
+    private const double MaxMergeTailMeters = 1000;
+    private const double MinCoverageMeters = 500;   // parallel connectors run within the 25 m buffer for a few hundred metres
+    private const double MinCoverageShare = 0.5;
+
     public async Task<ClosureBatchResponse> SubmitAsync(ClosureBatchRequest request, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
@@ -26,12 +32,8 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
                 && p[0] is >= -90 and <= 90 && p[1] is >= -180 and <= 180))
             .ToList();
 
-        // wayId → (expires, source); the longest TTL wins when lines overlap.
-        var closed = new Dictionary<long, (DateTime Expires, string Source)>();
-        // Point-matched carriageway ways and the line's driving direction there, checked below.
-        var directional = new List<(long WayId, double LineBearing, DateTime Expires, string Source)>();
-        int matchedLines = 0;
-
+        // 1. Match every line as one trace.
+        var matched = new List<(ClosureLine Line, List<MatchedEdge> Edges)>();
         foreach (var group in lines.GroupBy(l => RoadClassFilter.Parse(l.RoadClass)))
         {
             var roadTypes = RoadClassFilter.ForHint(group.Key);
@@ -42,62 +44,152 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
                 var polylines = chunk.Select(l => MapMatchingService.EncodePolyline6(
                     l.Points.Select((p, k) => (p[0], p[1], now.AddSeconds(k))))).ToList();
                 var results = await matcher.MatchTracesBulkAsync(polylines, roadTypes, ct);
-
                 for (int j = 0; j < chunk.Count && j < results.Count; j++)
                 {
-                    var edges = results[j]?.Edges;
-                    if (edges == null) continue;
-                    var expires = now.AddMinutes(Math.Clamp(chunk[j].TtlMinutes, 5, 1440));
-                    var source = chunk[j].Source ?? "unknown";
-                    bool any = false;
-                    var pts = chunk[j].Points;
-                    foreach (var e in edges)
-                    {
-                        if (e.Edge == null || e.Edge.OsmWayId == 0
-                            || MapMatchingService.IsExcludedRoadType(e.Edge.RoadType)) continue;
-                        // Carriageways (one-way motorway/trunk roads) matched by a point: verify the
-                        // direction below; at an interchange the end of a line can snap onto the
-                        // opposite carriageway. Interpolated edges follow the routed path.
-                        bool checkDirection = !e.IsInterpolated && IsCarriageway(e.Edge.RoadType);
-                        double lineBearing = checkDirection ? LineBearing(pts, e.BeginPointIndex, e.EndPointIndex) : 0;
-                        foreach (var wayId in MapMatchingService.WayIdsOf(e.Edge))
-                        {
-                            if (wayId == 0) continue;
-                            any = true;
-                            if (checkDirection) { directional.Add((wayId, lineBearing, expires, source)); continue; }
-                            if (!closed.TryGetValue(wayId, out var cur) || cur.Expires < expires)
-                                closed[wayId] = (expires, source);
-                        }
-                    }
-                    if (any) matchedLines++;
+                    var edges = (results[j]?.Edges ?? [])
+                        .Where(e => e.Edge is { OsmWayId: not 0 } && !MapMatchingService.IsExcludedRoadType(e.Edge.RoadType))
+                        .Select(e => new MatchedEdge(MapMatchingService.WayIdsOf(e.Edge!).Where(w => w != 0).ToArray(),
+                            e.Edge!.RoadType, e.IsInterpolated, e.BeginPointIndex, e.EndPointIndex))
+                        .Where(e => e.WayIds.Length > 0)
+                        .ToList();
+                    if (edges.Count > 0) matched.Add((chunk[j], edges));
                 }
             }
         }
 
-        int rejected = 0;
-        if (directional.Count > 0)
+        // 2. Per line: trim merge tails, drop opposite-carriageway matches.
+        var info = await WayInfoAsync(matched.SelectMany(m => m.Edges.SelectMany(e => e.WayIds)).Distinct().ToArray(), ct);
+        var candidates = new List<(int Line, long WayId)>();
+        int trimmed = 0, opposite = 0;
+        for (int li = 0; li < matched.Count; li++)
         {
-            var bearings = await WayBearingsAsync(directional.Select(d => d.WayId).Distinct().ToArray(), ct);
-            foreach (var (wayId, lineBearing, expires, source) in directional)
+            var (line, edges) = matched[li];
+            var (first, last) = TrimMergeTails(edges, info);
+            trimmed += edges.Count - (last - first + 1);
+            for (int k = first; k <= last; k++)
             {
-                // Unknown geometry or very short ways (bearing meaningless): keep.
-                if (bearings.TryGetValue(wayId, out var wb) && wb.LengthM >= 30
-                    && AngleDiff(wb.Bearing, lineBearing) > 100)
+                var e = edges[k];
+                // A point-matched one-way carriageway must run in the line's direction: at an
+                // interchange the end of a line can snap onto the opposite carriageway.
+                bool checkDirection = !e.Interpolated && IsCarriageway(e.RoadType);
+                double lineBearing = checkDirection ? LineBearing(line.Points, e.From, e.To) : 0;
+                foreach (var wayId in e.WayIds)
                 {
-                    rejected++;
-                    continue;
+                    if (checkDirection && info.TryGetValue(wayId, out var wi) && wi.LengthM >= 30
+                        && AngleDiff(wi.Bearing, lineBearing) > 100)
+                    {
+                        opposite++;
+                        continue;
+                    }
+                    candidates.Add((li, wayId));
                 }
-                if (!closed.TryGetValue(wayId, out var cur) || cur.Expires < expires)
-                    closed[wayId] = (expires, source);
             }
+        }
+
+        // 3. Close only roads the line actually runs along (not long ways it touches at one end).
+        var coverage = await CoverageAsync(matched.Select(m => m.Line).ToList(), candidates, ct);
+        var closed = new Dictionary<long, (DateTime Expires, string Source)>();
+        int uncovered = 0;
+        foreach (var (li, wayId) in candidates.Distinct())
+        {
+            if (coverage.TryGetValue((li, wayId), out var c) && c.LengthM >= 1
+                && c.CoveredM < MinCoverageMeters && c.CoveredM / c.LengthM < MinCoverageShare)
+            {
+                uncovered++;
+                continue;
+            }
+            var line = matched[li].Line;
+            var expires = now.AddMinutes(Math.Clamp(line.TtlMinutes, 5, 1440));
+            if (!closed.TryGetValue(wayId, out var cur) || cur.Expires < expires)
+                closed[wayId] = (expires, line.Source ?? "unknown");
         }
 
         if (closed.Count > 0)
             await UpsertAsync(closed, now, ct);
 
-        logger.LogInformation("Closures: {Lines} lines, {Matched} matched, {Ways} roads closed, {Rejected} opposite-direction matches dropped.",
-            lines.Count, matchedLines, closed.Count, rejected);
-        return new ClosureBatchResponse { Lines = lines.Count, MatchedLines = matchedLines, ClosedWays = closed.Count };
+        logger.LogInformation(
+            "Closures: {Lines} lines, {Matched} matched, {Ways} roads closed ({Trimmed} merge-tail edges, {Opposite} opposite-direction and {Uncovered} barely covered roads dropped).",
+            lines.Count, matched.Count, closed.Count, trimmed, opposite, uncovered);
+        return new ClosureBatchResponse { Lines = lines.Count, MatchedLines = matched.Count, ClosedWays = closed.Count };
+    }
+
+    /// <summary>
+    /// Index range of the edges that belong to the closure. A closed ramp is reported up to the next
+    /// node of the source network, which lies on the main carriageway after the merge (or before the
+    /// diverge): a short motorway/trunk section at the start or end of the line, right after a ramp
+    /// or at a sharp change of direction, is the acceleration/deceleration lane, not a closed
+    /// carriageway.
+    /// </summary>
+    private static (int First, int Last) TrimMergeTails(List<MatchedEdge> edges, Dictionary<long, (double Bearing, double LengthM)> info)
+    {
+        double Bearing(MatchedEdge e, bool atStart) =>
+            info.TryGetValue(atStart ? e.WayIds[0] : e.WayIds[^1], out var w) ? w.Bearing : double.NaN;
+        double Length(MatchedEdge e) => e.WayIds.Sum(w => info.TryGetValue(w, out var i) ? i.LengthM : 0);
+        bool IsMain(MatchedEdge e) => e.RoadType is "motorway" or "trunk";
+        bool IsLink(MatchedEdge e) => e.RoadType?.EndsWith("_link") == true;
+
+        int first = 0, last = edges.Count - 1;
+
+        // End: maximal run of main-carriageway edges continuing in one direction.
+        int t = last;
+        while (t - 1 >= 0 && IsMain(edges[t - 1]) && IsMain(edges[t])
+               && AngleDiff(Bearing(edges[t - 1], false), Bearing(edges[t], true)) <= 45) t--;
+        if (IsMain(edges[last]) && t > 0)
+        {
+            var body = edges[t - 1];
+            double tailLen = 0; for (int k = t; k <= last; k++) tailLen += Length(edges[k]);
+            if (tailLen < MaxMergeTailMeters
+                && (IsLink(body) || AngleDiff(Bearing(body, false), Bearing(edges[t], true)) > 60))
+                last = t - 1;
+        }
+
+        // Start: mirror image (diverge onto a closed exit ramp).
+        int h = 0;
+        while (h + 1 <= last && IsMain(edges[h + 1]) && IsMain(edges[h])
+               && AngleDiff(Bearing(edges[h], false), Bearing(edges[h + 1], true)) <= 45) h++;
+        if (IsMain(edges[0]) && h < last)
+        {
+            var body = edges[h + 1];
+            double headLen = 0; for (int k = 0; k <= h; k++) headLen += Length(edges[k]);
+            if (headLen < MaxMergeTailMeters
+                && (IsLink(body) || AngleDiff(Bearing(edges[h], false), Bearing(body, true)) > 60))
+                first = h + 1;
+        }
+        return (first, last);
+    }
+
+    /// <summary>Length of each candidate road and how much of it lies within 25 m of its line.</summary>
+    private async Task<Dictionary<(int Line, long WayId), (double CoveredM, double LengthM)>> CoverageAsync(
+        List<ClosureLine> lines, List<(int Line, long WayId)> candidates, CancellationToken ct)
+    {
+        var result = new Dictionary<(int, long), (double, double)>();
+        if (candidates.Count == 0) return result;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var usedLines = candidates.Select(c => c.Line).Distinct().ToArray();
+        var wkts = usedLines.Select(i => "LINESTRING(" + string.Join(",",
+            lines[i].Points.Select(p => p[1].ToString("R", inv) + " " + p[0].ToString("R", inv))) + ")").ToArray();
+
+        var conn = (NpgsqlConnection)db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            WITH l AS (SELECT idx, ST_SetSRID(ST_GeomFromText(wkt), 4326) AS g FROM unnest(@lidx, @lwkt) AS t(idx, wkt)),
+                 c AS (SELECT DISTINCT line, way FROM unnest(@cl, @cw) AS t(line, way))
+            SELECT c.line, c.way,
+                   ST_Length(ST_Intersection(wg."Geometry", ST_Buffer(l.g::geography, 25)::geometry)::geography),
+                   ST_Length(wg."Geometry"::geography)
+            FROM c JOIN l ON l.idx = c.line
+                   JOIN "WayGeometries" wg ON wg."OsmWayId" = c.way
+            WHERE wg."Geometry" IS NOT NULL
+            """, conn);
+        cmd.Parameters.Add(new NpgsqlParameter("lidx", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = usedLines });
+        cmd.Parameters.Add(new NpgsqlParameter("lwkt", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = wkts });
+        cmd.Parameters.Add(new NpgsqlParameter("cl", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = candidates.Select(c => c.Line).ToArray() });
+        cmd.Parameters.Add(new NpgsqlParameter("cw", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = candidates.Select(c => c.WayId).ToArray() });
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            result[(reader.GetInt32(0), reader.GetInt64(1))] =
+                (reader.IsDBNull(2) ? 0 : reader.GetDouble(2), reader.IsDBNull(3) ? 0 : reader.GetDouble(3));
+        return result;
     }
 
     private static bool IsCarriageway(string? roadType) =>
@@ -126,7 +218,7 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
     }
 
     /// <summary>Overall direction (start to end) and length of each way, from the OSM geometry.</summary>
-    private async Task<Dictionary<long, (double Bearing, double LengthM)>> WayBearingsAsync(long[] ids, CancellationToken ct)
+    private async Task<Dictionary<long, (double Bearing, double LengthM)>> WayInfoAsync(long[] ids, CancellationToken ct)
     {
         var result = new Dictionary<long, (double, double)>(ids.Length);
         var conn = (NpgsqlConnection)db.Database.GetDbConnection();
