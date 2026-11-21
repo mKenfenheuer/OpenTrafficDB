@@ -443,6 +443,10 @@ namespace OpenTrafficDBMigrations
                     b.Property<DateTime>("LastReportedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("RoadType")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<string>("Source")
                         .IsRequired()
                         .HasMaxLength(64)

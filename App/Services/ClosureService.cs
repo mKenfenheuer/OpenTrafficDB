@@ -23,6 +23,7 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
     private const double MaxMergeTailMeters = 1000;
     private const double MinCoverageMeters = 500;   // parallel connectors run within the 25 m buffer for a few hundred metres
     private const double MinCoverageShare = 0.5;
+    private const double MinMainRunMeters = 1000;     // motorway closures run from junction to junction
 
     public async Task<ClosureBatchResponse> SubmitAsync(ClosureBatchRequest request, CancellationToken ct)
     {
@@ -59,7 +60,7 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
 
         // 2. Per line: trim merge tails, drop opposite-carriageway matches.
         var info = await WayInfoAsync(matched.SelectMany(m => m.Edges.SelectMany(e => e.WayIds)).Distinct().ToArray(), ct);
-        var candidates = new List<(int Line, long WayId)>();
+        var candidates = new List<(int Line, long WayId, string? RoadType)>();
         int trimmed = 0, opposite = 0;
         for (int li = 0; li < matched.Count; li++)
         {
@@ -81,35 +82,62 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
                         opposite++;
                         continue;
                     }
-                    candidates.Add((li, wayId));
+                    candidates.Add((li, wayId, e.RoadType));
                 }
             }
         }
 
         // 3. Close only roads the line actually runs along (not long ways it touches at one end).
-        var coverage = await CoverageAsync(matched.Select(m => m.Line).ToList(), candidates, ct);
-        var closed = new Dictionary<long, (DateTime Expires, string Source)>();
+        var coverage = await CoverageAsync(matched.Select(m => m.Line).ToList(),
+            candidates.Select(c => (c.Line, c.WayId)).ToList(), ct);
+        var kept = new List<(int Line, long WayId, string? RoadType)>();
         int uncovered = 0;
-        foreach (var (li, wayId) in candidates.Distinct())
+        foreach (var cand in candidates.Distinct())
         {
-            if (coverage.TryGetValue((li, wayId), out var c) && c.LengthM >= 1
+            if (coverage.TryGetValue((cand.Line, cand.WayId), out var c) && c.LengthM >= 1
                 && c.CoveredM < MinCoverageMeters && c.CoveredM / c.LengthM < MinCoverageShare)
             {
                 uncovered++;
                 continue;
             }
+            kept.Add(cand);
+        }
+
+        // 4. A short closed piece of motorway/trunk main carriageway that joins no other closed main
+        //    carriageway is a fragment: TomTom tiles repeat features clipped and simplified in the
+        //    neighbouring tile's buffer, so the part of a closed ramp after the merge can arrive
+        //    without the ramp itself.
+        var shortRuns = kept.Where(k => IsMainRoad(k.RoadType)).GroupBy(k => k.Line)
+            .Where(g => g.Sum(k => info.TryGetValue(k.WayId, out var w) ? w.LengthM : 0) < MinMainRunMeters)
+            .ToDictionary(g => g.Key, g => g.Select(k => k.WayId).ToArray());
+        int fragments = 0;
+        if (shortRuns.Count > 0)
+        {
+            var batchMain = kept.Where(k => IsMainRoad(k.RoadType) && !shortRuns.ContainsKey(k.Line)).ToList();
+            var joined = await JoinsClosedMainRoadAsync(shortRuns, batchMain, now, ct);
+            foreach (var (li, ways) in shortRuns)
+                if (!joined.Contains(li))
+                {
+                    var drop = ways.ToHashSet();
+                    fragments += kept.RemoveAll(k => k.Line == li && drop.Contains(k.WayId));
+                }
+        }
+
+        var closed = new Dictionary<long, (DateTime Expires, string Source, string? RoadType)>();
+        foreach (var (li, wayId, roadType) in kept)
+        {
             var line = matched[li].Line;
             var expires = now.AddMinutes(Math.Clamp(line.TtlMinutes, 5, 1440));
             if (!closed.TryGetValue(wayId, out var cur) || cur.Expires < expires)
-                closed[wayId] = (expires, line.Source ?? "unknown");
+                closed[wayId] = (expires, line.Source ?? "unknown", roadType);
         }
 
         if (closed.Count > 0)
             await UpsertAsync(closed, now, ct);
 
         logger.LogInformation(
-            "Closures: {Lines} lines, {Matched} matched, {Ways} roads closed ({Trimmed} merge-tail edges, {Opposite} opposite-direction and {Uncovered} barely covered roads dropped).",
-            lines.Count, matched.Count, closed.Count, trimmed, opposite, uncovered);
+            "Closures: {Lines} lines, {Matched} matched, {Ways} roads closed ({Trimmed} merge-tail edges, {Opposite} opposite-direction, {Uncovered} barely covered and {Fragments} fragment roads dropped).",
+            lines.Count, matched.Count, closed.Count, trimmed, opposite, uncovered, fragments);
         return new ClosureBatchResponse { Lines = lines.Count, MatchedLines = matched.Count, ClosedWays = closed.Count };
     }
 
@@ -192,6 +220,46 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
         return result;
     }
 
+    private static bool IsMainRoad(string? roadType) => roadType is "motorway" or "trunk";
+
+    /// <summary>
+    /// Short runs (by line index) that continue a closed main carriageway: one closed in this batch
+    /// by a longer run, or one already in <c>WayClosures</c>. Continuation means an end node of the
+    /// run is the start node of the other way or the other way round (same driving direction).
+    /// </summary>
+    private async Task<HashSet<int>> JoinsClosedMainRoadAsync(Dictionary<int, long[]> runs,
+        List<(int Line, long WayId, string? RoadType)> batchMain, DateTime now, CancellationToken ct)
+    {
+        var result = new HashSet<int>();
+        var runIdx = runs.SelectMany(r => r.Value.Select(_ => r.Key)).ToArray();
+        var runWays = runs.SelectMany(r => r.Value).ToArray();
+        var conn = (NpgsqlConnection)db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            WITH r AS (SELECT run, way FROM unnest(@rr, @rw) AS t(run, way)),
+                 o AS (SELECT way FROM unnest(@ow) AS t(way)
+                       UNION
+                       SELECT c."OsmWayId" FROM "WayClosures" c
+                       WHERE c."ExpiresAt" > @now AND c."RoadType" IN ('motorway', 'trunk'))
+            SELECT DISTINCT r.run
+            FROM r JOIN "WayGeometries" a ON a."OsmWayId" = r.way
+                   CROSS JOIN o
+                   JOIN "WayGeometries" b ON b."OsmWayId" = o.way
+            WHERE NOT EXISTS (SELECT 1 FROM r r2 WHERE r2.run = r.run AND r2.way = o.way)
+              AND a."Geometry" IS NOT NULL AND b."Geometry" IS NOT NULL
+              AND (ST_DWithin(ST_StartPoint(a."Geometry"), ST_EndPoint(b."Geometry"), 0.00002)
+                OR ST_DWithin(ST_EndPoint(a."Geometry"), ST_StartPoint(b."Geometry"), 0.00002))
+            """, conn);
+        cmd.Parameters.Add(new NpgsqlParameter("rr", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = runIdx });
+        cmd.Parameters.Add(new NpgsqlParameter("rw", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = runWays });
+        cmd.Parameters.Add(new NpgsqlParameter("ow", NpgsqlDbType.Array | NpgsqlDbType.Bigint)
+            { Value = batchMain.Select(b => b.WayId).Distinct().ToArray() });
+        cmd.Parameters.Add(new NpgsqlParameter("now", NpgsqlDbType.TimestampTz) { Value = now });
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) result.Add(reader.GetInt32(0));
+        return result;
+    }
+
     private static bool IsCarriageway(string? roadType) =>
         roadType is "motorway" or "motorway_link" or "trunk" or "trunk_link";
 
@@ -237,18 +305,19 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
         return result;
     }
 
-    private async Task UpsertAsync(Dictionary<long, (DateTime Expires, string Source)> closed, DateTime now, CancellationToken ct)
+    private async Task UpsertAsync(Dictionary<long, (DateTime Expires, string Source, string? RoadType)> closed, DateTime now, CancellationToken ct)
     {
         var ids = closed.Keys.Order().ToArray();
         var conn = (NpgsqlConnection)db.Database.GetDbConnection();
         await db.Database.OpenConnectionAsync(ct);
         await using var cmd = new NpgsqlCommand("""
-            INSERT INTO "WayClosures" ("OsmWayId", "FirstReportedAt", "LastReportedAt", "ExpiresAt", "Source")
-            SELECT id, @now, @now, exp, src FROM unnest(@ids, @exp, @src) AS v(id, exp, src)
+            INSERT INTO "WayClosures" ("OsmWayId", "FirstReportedAt", "LastReportedAt", "ExpiresAt", "Source", "RoadType")
+            SELECT id, @now, @now, exp, src, rt FROM unnest(@ids, @exp, @src, @rt) AS v(id, exp, src, rt)
             ON CONFLICT ("OsmWayId") DO UPDATE SET
                 "LastReportedAt"  = EXCLUDED."LastReportedAt",
                 "ExpiresAt"       = GREATEST("WayClosures"."ExpiresAt", EXCLUDED."ExpiresAt"),
                 "Source"          = EXCLUDED."Source",
+                "RoadType"        = EXCLUDED."RoadType",
                 "FirstReportedAt" = CASE WHEN "WayClosures"."ExpiresAt" < @now
                                          THEN EXCLUDED."FirstReportedAt" ELSE "WayClosures"."FirstReportedAt" END;
             DELETE FROM "WayClosures" WHERE "ExpiresAt" < @now - interval '1 day';
@@ -259,6 +328,8 @@ public class ClosureService(AppDbContext db, MapMatchingService matcher, ILogger
             { Value = ids.Select(i => closed[i].Expires).ToArray() });
         cmd.Parameters.Add(new NpgsqlParameter("src", NpgsqlDbType.Array | NpgsqlDbType.Text)
             { Value = ids.Select(i => closed[i].Source).ToArray() });
+        cmd.Parameters.Add(new NpgsqlParameter("rt", NpgsqlDbType.Array | NpgsqlDbType.Text)
+            { Value = ids.Select(i => closed[i].RoadType).ToArray() });
         await cmd.ExecuteNonQueryAsync(ct);
     }
 }

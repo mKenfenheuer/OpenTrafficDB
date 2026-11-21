@@ -95,6 +95,7 @@ public class AppDbContext : DbContext
             e.HasKey(c => c.OsmWayId);
             e.Property(c => c.OsmWayId).ValueGeneratedNever();
             e.Property(c => c.Source).HasMaxLength(64);
+            e.Property(c => c.RoadType).HasMaxLength(32);
             e.HasIndex(c => c.ExpiresAt);
         });
 

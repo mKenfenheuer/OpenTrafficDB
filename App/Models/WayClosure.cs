@@ -14,4 +14,6 @@ public class WayClosure
     public DateTime ExpiresAt { get; set; }
     /// <summary>Reporting source, e.g. "tomtom-flow".</summary>
     public string Source { get; set; } = "";
+    /// <summary>OSM highway type of the matched road (e.g. "motorway", "motorway_link").</summary>
+    public string? RoadType { get; set; }
 }
