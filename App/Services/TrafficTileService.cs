@@ -148,6 +148,8 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                            wg."OsmWayId" AS osm_way_id
                     FROM "WayGeometries" wg
                     WHERE wg."OsmWayId" IN (
+                            SELECT c."OsmWayId" FROM "WayClosures" c WHERE c."ExpiresAt" > NOW()
+                            UNION
                             SELECT h."OsmWayId" FROM "HazardAggregates" h
                             WHERE h."HazardType" = 'RoadClosure'
                               AND h."ExpiresAt" > NOW()

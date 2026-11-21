@@ -118,6 +118,33 @@ public class HazardTileService(ReadOnlyAppDbContext db, IDistributedCache cache)
                 $"{s.ExpiresAt:O}," +
                 $"\"{s.Metadata?.Replace("\"","\"\"")}\"");
         }
+
+        // Closed roads (trace-matched closure lines): one RoadClosure row per road, placed at the
+        // road's centre. The router treats any RoadClosure on a road as impassable.
+        await foreach (var c in (
+            from wc in db.WayClosures
+            where wc.ExpiresAt > now
+            join g in db.WayGeometries on wc.OsmWayId equals g.OsmWayId into gj
+            from g in gj.DefaultIfEmpty()
+            orderby wc.OsmWayId
+            select new
+            {
+                wc.OsmWayId,
+                Lat = g == null ? 0 : (g.MinLat + g.MaxLat) / 2,
+                Lon = g == null ? 0 : (g.MinLon + g.MaxLon) / 2,
+                g.Name,
+                wc.ExpiresAt,
+                wc.Source
+            })
+            .AsNoTracking()
+            .AsAsyncEnumerable()
+            .WithCancellation(ct))
+        {
+            await writer.WriteLineAsync(
+                $"{c.OsmWayId},RoadClosure,{c.Lat.ToString(culture)},{c.Lon.ToString(culture)},0," +
+                $"\"{c.Name?.Replace("\"","\"\"")}\",False,{c.ExpiresAt:O}," +
+                $"\"{{\"\"source\"\":\"\"{c.Source}\"\",\"\"kind\"\":\"\"road_closure\"\"}}\"");
+        }
     }
 
     private static byte[] GzipCompress(byte[] data)

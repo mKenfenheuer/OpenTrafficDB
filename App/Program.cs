@@ -61,6 +61,7 @@ public class Program
         builder.Services.AddScoped<TrafficTileService>();
         builder.Services.AddScoped<HazardTileService>();
         builder.Services.AddScoped<HazardMapMatchingService>();
+        builder.Services.AddScoped<ClosureService>();
         builder.Services.AddScoped<RoutingService>();
         builder.Services.AddSingleton<SpeedValidationService>();
         builder.Services.AddSingleton<HazardValidationService>();

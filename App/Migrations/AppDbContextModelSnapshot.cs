@@ -429,6 +429,32 @@ namespace OpenTrafficDBMigrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("OpenTrafficDBModels.WayClosure", b =>
+                {
+                    b.Property<long>("OsmWayId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("FirstReportedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastReportedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("OsmWayId");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.ToTable("WayClosures");
+                });
+
             modelBuilder.Entity("OpenTrafficDBModels.WayGeometry", b =>
                 {
                     b.Property<long>("Id")
