@@ -11,8 +11,10 @@ namespace OpenTrafficDB.App.Pipeline;
 /// <c>OpenTrafficRouting:BatchSize</c> polylines are in flight at any time. A new batch starts
 /// as soon as a slot is free, so the matcher works continuously instead of in passes.
 ///
-/// Match results are cached per polyline (<c>Pipeline:MatchCacheEntries</c>, sliding
-/// <c>Pipeline:MatchCacheHours</c>). Sources with fixed geometry, such as the TomTom flow
+/// Match results are cached per polyline (<c>Pipeline:MatchCacheEntries</c>, for one to two times
+/// <c>Pipeline:MatchCacheHours</c>, however often they are used: with a sliding expiry the lines of
+/// a source that repeats every few minutes never expired, so improvements of the matcher or the
+/// road graph never reached them). Sources with fixed geometry, such as the TomTom flow
 /// segments that repeat every cycle with new speeds only, are matched once and then served
 /// from the cache, so OpenTrafficRouting (CPU-bound) only sees new geometry.
 ///
@@ -288,7 +290,12 @@ public sealed class SpeedMatchingWorker(
                 var plan = BuildPlan(results[j]!);
                 plans[chunk[j]] = plan;
                 _planCache.Set(allSegments[chunk[j]].CacheKey, plan,
-                    new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = _planTtl });
+                    new MemoryCacheEntryOptions
+                    {
+                        Size = 1,
+                        // Spread, so the whole cache is not matched again at once.
+                        AbsoluteExpirationRelativeToNow = _planTtl * (1 + Random.Shared.NextDouble())
+                    });
             }
         }
 
