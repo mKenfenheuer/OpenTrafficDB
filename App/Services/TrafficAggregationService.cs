@@ -99,14 +99,15 @@ public class TrafficAggregationService(
                 n++;
             }
             if (n == 0) break;
-            Parallel.For(0, n, () => new float[WayProfile.Slots], (i, _, buffer) =>
+            Parallel.For(0, n, () => (new float[WayProfile.Slots], new byte[WayProfileCodec.RawLength]), (i, _, buffers) =>
             {
-                var p = profiles[i];
-                if (p.Length != WayProfile.Slots * 2) { lines[i] = null!; return buffer; }
-                profileWriter.Predict(p, freeflows[i], firsts[i], now, buffer);
+                var (speeds, raw) = buffers;
+                try { WayProfileCodec.Decode(profiles[i], raw); }
+                catch (FormatException) { lines[i] = null!; return buffers; }
+                profileWriter.Predict(raw, freeflows[i], firsts[i], now, speeds);
                 lines[i] = FormattableString.Invariant(
-                    $"{ids[i]},{(int)Math.Round(freeflows[i])},{(int)Math.Round(constrained[i])},{ValhallaSpeedEncoder.Encode(buffer)}");
-                return buffer;
+                    $"{ids[i]},{(int)Math.Round(freeflows[i])},{(int)Math.Round(constrained[i])},{ValhallaSpeedEncoder.Encode(speeds)}");
+                return buffers;
             }, _ => { });
             for (int i = 0; i < n; i++)
                 if (lines[i] != null) await writer.WriteLineAsync(lines[i]);

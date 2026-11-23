@@ -559,48 +559,6 @@ namespace OpenTrafficDBMigrations
                     b.HasAnnotation("Npgsql:StorageParameter:fillfactor", 80);
                 });
 
-            modelBuilder.Entity("OpenTrafficDBModels.WaySpeedAggregate", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<int>("DayOfWeek")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("FirstSeenAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("FiveMinuteBucket")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("LastUpdated")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<long>("OsmWayId")
-                        .HasColumnType("bigint");
-
-                    b.Property<int>("SampleCount")
-                        .HasColumnType("integer");
-
-                    b.Property<double?>("SpeedLimitKmh")
-                        .HasColumnType("double precision");
-
-                    b.Property<double>("SumSpeedKmh")
-                        .HasColumnType("double precision");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OsmWayId", "DayOfWeek", "FiveMinuteBucket")
-                        .IsUnique();
-
-                    b.ToTable("WaySpeedAggregates");
-
-                    b.HasAnnotation("Npgsql:StorageParameter:fillfactor", 80);
-                });
-
             modelBuilder.Entity("OpenTrafficDBModels.WaySpeedSummary", b =>
                 {
                     b.Property<long>("Id")

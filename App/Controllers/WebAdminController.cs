@@ -19,7 +19,7 @@ namespace OpenTrafficDB.App.Controllers;
 [Authorize(AuthenticationSchemes = CookieAuthenticationDefaults.AuthenticationScheme, Policy = "WebAdminOnly")]
 [Produces("application/json")]
 [ApiExplorerSettings(IgnoreApi = true)]
-public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto, StatsHistoryService statsHistory, SpeedPipeline pipeline, SpeedAggregator aggregator, ProfileBackfillService backfill) : ControllerBase
+public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDetection, CryptoService crypto, StatsHistoryService statsHistory, SpeedPipeline pipeline, SpeedAggregator aggregator) : ControllerBase
 {
     private int CurrentUserId =>
         int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "0");
@@ -229,44 +229,17 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
         return Ok(new { message = "IP unblocked." });
     }
 
-    // ── Weekly profile backfill ───────────────────────────────────────────────
-
-    /// <summary>
-    /// Starts the one-time import of the legacy WaySpeedAggregates history into the weekly profiles.
-    /// Reads the whole table once (sequential scan + sort); runs in the background.
-    /// </summary>
-    [HttpPost("profiles/backfill")]
-    [ProducesResponseType(StatusCodes.Status202Accepted)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public IActionResult StartProfileBackfill() =>
-        backfill.TryStart()
-            ? Accepted(new { message = "Profile backfill started.", state = backfill.State })
-            : Conflict(new { error = "Profile backfill is already running.", state = backfill.State });
-
-    /// <summary>Progress of the profile backfill.</summary>
-    [HttpGet("profiles/backfill")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult GetProfileBackfill() => Ok(new
-    {
-        state = backfill.State,
-        rowsRead = backfill.RowsRead,
-        waysMerged = backfill.WaysMerged,
-        startedAt = backfill.StartedAt,
-        finishedAt = backfill.FinishedAt,
-        error = backfill.Error,
-    });
-
     // ── Danger Zone ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Purge all gathered traffic data: speed observations, way aggregates, and way speed summaries.
+    /// Purge all gathered traffic data: speed observations, weekly profiles, and way speed summaries.
     /// Geometries, users, API keys, and blocked IPs are preserved.
     /// </summary>
     [HttpDelete("data")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> PurgeTrafficData()
     {
-        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"WaySpeedSummaries\", \"WaySpeedAggregates\", \"SpeedObservations\" RESTART IDENTITY");
+        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"WaySpeedSummaries\", \"WayProfiles\", \"SpeedObservations\" RESTART IDENTITY");
 
         // Reset contribution counters — the observations are gone
         await db.Users.ExecuteUpdateAsync(s => s.SetProperty(u => u.TotalContributions, 0));

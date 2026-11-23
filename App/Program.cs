@@ -75,8 +75,6 @@ public class Program
         builder.Services.AddSingleton<WayShapeCache>();
         builder.Services.AddSingleton<SpeedProfileWriter>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<SpeedProfileWriter>());
-        builder.Services.AddSingleton<ProfileBackfillService>();
-        builder.Services.AddHostedService(sp => sp.GetRequiredService<ProfileBackfillService>());
         builder.Services.AddSingleton<SpeedAggregator>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<SpeedAggregator>());
         builder.Services.AddHostedService<SpeedMatchingWorker>();

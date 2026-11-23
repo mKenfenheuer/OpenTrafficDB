@@ -14,13 +14,9 @@ public readonly record struct WaySample(long WayId, DateTime Timestamp, double S
 
 /// <summary>
 /// Collects <see cref="WaySample"/>s in memory and writes them to Postgres every
-/// <c>Pipeline:FlushSeconds</c> (default 10 s) as two bulk upserts:
-/// <list type="bullet">
-/// <item><c>WaySpeedAggregates</c>: per road, weekday and 5-minute bucket, sum and count of speeds.</item>
-/// <item><c>WaySpeedSummaries</c>: live (constrained) and free-flow speed per road as an
-/// exponential moving average, plus the encoded Valhalla speed profile.</item>
-/// </list>
-/// Raw observations are never stored. Pending samples are flushed on graceful shutdown.
+/// <c>Pipeline:FlushSeconds</c> (default 10 s) as one bulk upsert into <c>WaySpeedSummaries</c>:
+/// live (constrained) and free-flow speed per road as an exponential moving average. The weekly
+/// profiles are maintained by <see cref="SpeedProfileWriter"/>. Raw observations are never stored. Pending samples are flushed on graceful shutdown.
 /// </summary>
 public sealed class SpeedAggregator(
     IServiceScopeFactory scopeFactory,
@@ -34,13 +30,6 @@ public sealed class SpeedAggregator(
     private List<WaySample> _pending = [];
     private long _flushedTotal;
     private long _lastSummariesMs;
-    private const int UpsertChunkRows = 20_000;
-
-    // WaySpeedAggregates (one row per road and 5-minute slot of the week, 200M+ rows) is not read by
-    // anything yet, and updating random rows of it costs ~16 KB of disk writes per sample (row,
-    // index entries and full-page WAL images). Off by default until historic profiles are built from it.
-    private readonly bool _writeWeeklyAggregates =
-        bool.TryParse(config["Pipeline:WriteWeeklyAggregates"], out var wa) && wa;
 
     private readonly TimeSpan _flushInterval = TimeSpan.FromSeconds(
         double.TryParse(config["Pipeline:FlushSeconds"], out var f) ? f : 10);
@@ -110,8 +99,7 @@ public sealed class SpeedAggregator(
         }
 
         var stopwatch = Stopwatch.StartNew();
-        // Sorted by way id: upserts then walk the unique indexes in key order, which turns random
-        // I/O on the large aggregate table into mostly sequential page access.
+        // Sorted by way id: the upsert then walks the primary key in key order.
         var byWay = samples.GroupBy(s => s.WayId)
             .OrderBy(g => g.Key)
             .Select(g => (WayId: g.Key, Samples: g.OrderBy(s => s.Timestamp).ToList()))
@@ -119,8 +107,7 @@ public sealed class SpeedAggregator(
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        // WaySpeedAggregates is large (one row per road and 5-minute slot of the week); a flush can
-        // take longer than the default 30 s command timeout under load.
+        // A flush can take longer than the default 30 s command timeout under load.
         db.Database.SetCommandTimeout(TimeSpan.FromMinutes(5));
 
         try
@@ -132,8 +119,6 @@ public sealed class SpeedAggregator(
             var summariesMs = stopwatch.ElapsedMilliseconds;
             await UpsertSummariesAsync(db, byWay, ct);
             summariesMs = stopwatch.ElapsedMilliseconds - summariesMs;
-            if (_writeWeeklyAggregates)
-                await UpsertAggregatesAsync(db, byWay, ct);
             _lastSummariesMs = summariesMs;
 
             db.AggregationMetrics.Add(new AggregationMetric
@@ -155,60 +140,6 @@ public sealed class SpeedAggregator(
         Interlocked.Add(ref _flushedTotal, samples.Count);
         logger.LogInformation("Flushed {SampleCount} samples for {WayCount} ways in {ElapsedMs} ms (summaries {SummariesMs} ms).",
             samples.Count, byWay.Count, stopwatch.ElapsedMilliseconds, _lastSummariesMs);
-    }
-
-    private static int BucketIndex(DateTime t) =>
-        ((int)t.DayOfWeek + 6) % 7 * 288 + (t.Hour * 60 + t.Minute) / 5;
-
-    private readonly record struct AggregateRow(
-        long WayId, int Dow, int Bucket, double Sum, int Count, double? Limit, DateTime First, DateTime Last);
-
-    private static async Task UpsertAggregatesAsync(AppDbContext db,
-        List<(long WayId, List<WaySample> Samples)> byWay, CancellationToken ct)
-    {
-        var rows = new List<AggregateRow>();
-        foreach (var (wayId, list) in byWay)
-            foreach (var g in list.GroupBy(s => BucketIndex(s.Timestamp)))
-                rows.Add(new AggregateRow(wayId, (g.Key / 288 + 1) % 7, g.Key % 288,
-                    g.Sum(s => s.SpeedMs * 3.6), g.Count(),
-                    g.LastOrDefault(s => s.SpeedLimitKmh != null).SpeedLimitKmh,
-                    g.Min(s => s.Timestamp), g.Max(s => s.Timestamp)));
-
-        // Key order of the unique index (OsmWayId, DayOfWeek, FiveMinuteBucket).
-        rows.Sort((x, y) =>
-        {
-            var c = x.WayId.CompareTo(y.WayId);
-            if (c != 0) return c;
-            c = x.Dow.CompareTo(y.Dow);
-            return c != 0 ? c : x.Bucket.CompareTo(y.Bucket);
-        });
-
-        for (int offset = 0; offset < rows.Count; offset += UpsertChunkRows)
-        {
-            var chunk = rows.Skip(offset).Take(UpsertChunkRows).ToArray();
-            await db.Database.ExecuteSqlRawAsync("""
-                INSERT INTO "WaySpeedAggregates"
-                ("OsmWayId","DayOfWeek","FiveMinuteBucket",
-                 "SumSpeedKmh","SampleCount","SpeedLimitKmh","LastUpdated","FirstSeenAt")
-                SELECT * FROM unnest(@way_ids,@dows,@buckets,@sums,@counts,@limits,@last,@first)
-                ON CONFLICT ("OsmWayId","DayOfWeek","FiveMinuteBucket") DO UPDATE SET
-                    "SumSpeedKmh"   = "WaySpeedAggregates"."SumSpeedKmh" + EXCLUDED."SumSpeedKmh",
-                    "SampleCount"   = "WaySpeedAggregates"."SampleCount" + EXCLUDED."SampleCount",
-                    "SpeedLimitKmh" = COALESCE(EXCLUDED."SpeedLimitKmh","WaySpeedAggregates"."SpeedLimitKmh"),
-                    "LastUpdated"   = EXCLUDED."LastUpdated"
-                """,
-                [
-                    new NpgsqlParameter("way_ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = chunk.Select(r => r.WayId).ToArray() },
-                    new NpgsqlParameter("dows", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = chunk.Select(r => r.Dow).ToArray() },
-                    new NpgsqlParameter("buckets", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = chunk.Select(r => r.Bucket).ToArray() },
-                    new NpgsqlParameter("sums", NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = chunk.Select(r => r.Sum).ToArray() },
-                    new NpgsqlParameter("counts", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = chunk.Select(r => r.Count).ToArray() },
-                    new NpgsqlParameter("limits", NpgsqlDbType.Array | NpgsqlDbType.Double) { Value = chunk.Select(r => r.Limit).ToArray() },
-                    new NpgsqlParameter("last", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = chunk.Select(r => r.Last).ToArray() },
-                    new NpgsqlParameter("first", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = chunk.Select(r => r.First).ToArray() },
-                ],
-                ct);
-        }
     }
 
     /// <summary>

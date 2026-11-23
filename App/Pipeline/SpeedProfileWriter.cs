@@ -13,6 +13,9 @@ namespace OpenTrafficDB.App.Pipeline;
 /// (<see cref="Predict"/>, TrafficAggregationService): stored, it was rewritten for every road on
 /// every flush (1.4M rows of 540 bytes per 30 minutes) although the router reads it once a day.
 ///
+/// Profiles are stored in the <see cref="WayProfileCodec"/> format (~235 bytes per road) and
+/// decoded to the 4,032-byte slot array only while they are updated.
+///
 /// Samples are collected in memory per road and written every <c>Pipeline:ProfileFlushMinutes</c>
 /// (default 30): one read and one write of a compact row per touched road, in key order and in
 /// chunks. Samples keep their own five-minute slot, so a longer interval loses nothing; with 5
@@ -60,6 +63,9 @@ public sealed class SpeedProfileWriter(
     {
         logger.LogInformation("Speed profile writer started. FlushInterval={Interval}, CountCap={Cap}.",
             _flushInterval, _countCap);
+        try { await ConvertLegacyProfilesAsync(stoppingToken); }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+        catch (Exception ex) { logger.LogError(ex, "Conversion of legacy profiles failed; they stay readable and are converted when next written."); }
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await Task.Delay(_flushInterval, stoppingToken); }
@@ -126,41 +132,69 @@ public sealed class SpeedProfileWriter(
             return (firstSeen is { } f && f < first ? f : first, samples.Max(s => s.Timestamp));
         }, ct);
 
-    /// <summary>A road's history from the legacy WaySpeedAggregates table.</summary>
-    public sealed record HistoryWay(long WayId, List<(int Slot, double AvgKmh, int Count)> Slots, DateTime FirstSeen, DateTime LastUpdated);
-
     /// <summary>
-    /// Merges legacy history into the profiles (count-weighted average per slot, count capped) and
-    /// re-encodes the predictions. Used once by <see cref="ProfileBackfillService"/>.
+    /// One-time conversion of profiles stored raw (4,032 bytes, compressed by Postgres) into the
+    /// <see cref="WayProfileCodec"/> format, in key order and chunks of <see cref="ChunkWays"/>,
+    /// each locked like a flush. Finds nothing once all rows are converted; legacy rows stay
+    /// readable, so an interrupted conversion continues on the next start.
     /// </summary>
-    public Task MergeHistoryAsync(List<HistoryWay> ways, CancellationToken ct)
+    private async Task ConvertLegacyProfilesAsync(CancellationToken ct)
     {
-        var byId = ways.ToDictionary(w => w.WayId);
-        return ProcessChunkAsync([.. byId.Keys.Order()], (wayId, profile, firstSeen) =>
+        var started = DateTime.UtcNow;
+        long after = long.MinValue, converted = 0;
+        while (true)
         {
-            var h = byId[wayId];
-            foreach (var (slot, avgKmh, count) in h.Slots)
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Database.SetCommandTimeout(TimeSpan.FromMinutes(5));
+            var conn = (NpgsqlConnection)db.Database.GetDbConnection();
+            await db.Database.OpenConnectionAsync(ct);
+            await using var tx = await conn.BeginTransactionAsync(ct);
+
+            // octet_length reads the raw size from the TOAST header without decompressing.
+            var ids = new List<long>(ChunkWays); var raws = new List<byte[]>(ChunkWays);
+            await using (var cmd = new NpgsqlCommand($"""
+                SELECT "OsmWayId", "Profile" FROM "WayProfiles"
+                WHERE "OsmWayId" > @after AND octet_length("Profile") = {WayProfileCodec.RawLength}
+                ORDER BY "OsmWayId" LIMIT {ChunkWays}
+                FOR UPDATE
+                """, conn, tx))
             {
-                int curAvg = profile[slot * 2], curCount = profile[slot * 2 + 1];
-                var total = curCount + count;
-                if (total <= 0) continue;
-                var avg = (curAvg * (double)curCount + avgKmh * count) / total;
-                profile[slot * 2] = (byte)Math.Clamp(Math.Round(avg), 0, 255);
-                profile[slot * 2 + 1] = (byte)Math.Min(total, _countCap);
+                cmd.Parameters.AddWithValue("after", after);
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct)) { ids.Add(reader.GetInt64(0)); raws.Add((byte[])reader[1]); }
             }
-            var first = firstSeen is { } f && f < h.FirstSeen ? f : h.FirstSeen;
-            return (first, h.LastUpdated);
-        }, ct, keepNewerLastUpdated: true);
+            if (ids.Count == 0) break;
+
+            var encoded = new byte[ids.Count][];
+            Parallel.For(0, ids.Count, i => encoded[i] = WayProfileCodec.Encode(raws[i]));
+            await using (var upd = new NpgsqlCommand("""
+                UPDATE "WayProfiles" p SET "Profile" = u.profile
+                FROM unnest(@ids, @profiles) AS u(id, profile)
+                WHERE p."OsmWayId" = u.id
+                """, conn, tx))
+            {
+                upd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = ids.ToArray() });
+                upd.Parameters.Add(new NpgsqlParameter("profiles", NpgsqlDbType.Array | NpgsqlDbType.Bytea) { Value = encoded });
+                await upd.ExecuteNonQueryAsync(ct);
+            }
+            await tx.CommitAsync(ct);
+            converted += ids.Count;
+            after = ids[^1];
+        }
+        if (converted > 0)
+            logger.LogInformation("Profiles: converted {Count} legacy profiles to the compact format in {ElapsedMs} ms.",
+                converted, (long)(DateTime.UtcNow - started).TotalMilliseconds);
     }
 
     /// <summary>
     /// Locked read-modify-write of the profiles of one chunk of roads: reads the profiles with
-    /// FOR UPDATE (so the live flush and the backfill never overwrite each other), applies
+    /// FOR UPDATE (so concurrent flushes, e.g. on shutdown, never overwrite each other), applies
     /// <paramref name="mutate"/> and writes them back in one transaction.
     /// </summary>
     private async Task ProcessChunkAsync(long[] chunk,
         Func<long, byte[], DateTime?, (DateTime FirstSeen, DateTime LastUpdated)> mutate,
-        CancellationToken ct, bool keepNewerLastUpdated = false)
+        CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -186,26 +220,36 @@ public sealed class SpeedProfileWriter(
         var n = chunk.Length;
         var profiles = new byte[n][]; var firsts = new DateTime[n]; var lasts = new DateTime[n];
 
-        for (int i = 0; i < n; i++)
+        // Decode, update and encode (WayProfileCodec) in parallel: ~10 µs per road.
+        Parallel.For(0, n, () => new byte[WayProfileCodec.RawLength], (i, _, profile) =>
         {
             var wayId = chunk[i];
-            existing.TryGetValue(wayId, out var cur);
-            var profile = cur.Profile is { Length: WayProfile.Slots * 2 } p ? p : new byte[WayProfile.Slots * 2];
-            var (first, last) = mutate(wayId, profile, cur.Profile != null ? cur.FirstSeen : null);
-            profiles[i] = profile;
+            var found = existing.TryGetValue(wayId, out var cur);
+            if (!found) Array.Clear(profile);
+            else
+            {
+                try { WayProfileCodec.Decode(cur.Profile, profile); }
+                catch (FormatException ex)
+                {
+                    // Start over instead of failing (and re-queuing) the whole chunk on every flush.
+                    logger.LogWarning(ex, "Profile of way {WayId} is unreadable ({Length} bytes); starting a new one.", wayId, cur.Profile.Length);
+                    Array.Clear(profile);
+                }
+            }
+            var (first, last) = mutate(wayId, profile, found ? cur.FirstSeen : null);
+            profiles[i] = WayProfileCodec.Encode(profile);
             firsts[i] = first;
             lasts[i] = last;
-        }
+            return profile;
+        }, _ => { });
 
-        await using (var upsert = new NpgsqlCommand($"""
+        await using (var upsert = new NpgsqlCommand("""
             INSERT INTO "WayProfiles" ("OsmWayId","Profile","FirstSeenAt","LastUpdated")
             SELECT * FROM unnest(@ids, @profiles, @firsts, @lasts)
             ON CONFLICT ("OsmWayId") DO UPDATE SET
                 "Profile"     = EXCLUDED."Profile",
                 "FirstSeenAt" = EXCLUDED."FirstSeenAt",
-                "LastUpdated" = {(keepNewerLastUpdated
-                    ? "GREATEST(\"WayProfiles\".\"LastUpdated\", EXCLUDED.\"LastUpdated\")"
-                    : "EXCLUDED.\"LastUpdated\"")}
+                "LastUpdated" = EXCLUDED."LastUpdated"
             """, conn, tx))
         {
             upsert.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = chunk });
