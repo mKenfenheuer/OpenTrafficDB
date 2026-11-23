@@ -213,8 +213,8 @@ public sealed class SpeedAggregator(
 
     /// <summary>
     /// Updates WaySpeedSummaries (live and free-flow speed, road class) with an exponential moving
-    /// average (α = 0.8), oldest sample first. EncodedSpeeds (the prediction) is owned by
-    /// <see cref="SpeedProfileWriter"/>. Original description:
+    /// average (α = 0.8), oldest sample first. Predictions come from the weekly profiles
+    /// (<see cref="SpeedProfileWriter"/>). Original description:
     /// so the most recent traversal has the highest weight. Same math as the former
     /// database-queue aggregation, applied to samples instead of raw points.
     /// </summary>

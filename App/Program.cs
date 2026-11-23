@@ -202,7 +202,17 @@ public class Program
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             db.Database.SetCommandTimeout(TimeSpan.FromMinutes(30));   // data migrations on large tables
-            await db.Database.MigrateAsync();
+            // The database can be briefly unreachable when it was just restarted (pgbouncer caches the
+            // failed login for a few seconds): retry instead of crashing into a restart loop.
+            for (int attempt = 1; ; attempt++)
+            {
+                try { await db.Database.MigrateAsync(); break; }
+                catch (Exception ex) when (attempt < 12 && ex is Npgsql.NpgsqlException or System.Net.Sockets.SocketException)
+                {
+                    Console.WriteLine($"Database not reachable yet ({ex.Message}); retrying in 5 s (attempt {attempt}).");
+                    await Task.Delay(TimeSpan.FromSeconds(5));
+                }
+            }
             db.Database.SetCommandTimeout(null);
 
             // Seed in-memory blocked IP cache from DB

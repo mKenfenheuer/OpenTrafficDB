@@ -14,6 +14,7 @@ namespace OpenTrafficDB.App.Services;
 public class TrafficAggregationService(
     AppDbContext db,
     ReadOnlyAppDbContext readDb,
+    OpenTrafficDB.App.Pipeline.SpeedProfileWriter profileWriter,
     IConfiguration config,
     ILogger<TrafficAggregationService> logger)
 {
@@ -60,25 +61,55 @@ public class TrafficAggregationService(
     // ── Valhalla CSV export ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Streams the Valhalla predicted-traffic CSV from pre-computed encoded speeds in WaySpeedSummaries.
-    /// No DCT computation at export time — encoding happens during aggregation.
+    /// Streams the Valhalla predicted-traffic CSV. The prediction of each road is computed here from
+    /// its weekly profile and current free-flow speed (<see cref="OpenTrafficDB.App.Pipeline.SpeedProfileWriter.Predict"/>,
+    /// DCT encoding), in parallel per block of rows, so free-flow corrections take effect at once
+    /// and the profile flush does not rewrite 1.4M stored encodings every 30 minutes.
     /// </summary>
     public async Task WriteValhallaExportCsvAsync(Stream output, CancellationToken ct = default)
     {
-        await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 65536, leaveOpen: true);
+        const int Block = 20_000;
+        await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 1 << 16, leaveOpen: true);
         await writer.WriteLineAsync("way_id,freeflow_speed,constrained_speed,historical_speeds");
 
-        await foreach (var s in readDb.WaySpeedSummaries
-            .Where(s => s.EncodedSpeeds != null)
-            .OrderBy(s => s.OsmWayId)
-            .AsNoTracking()
-            .Select(s => new { s.OsmWayId, s.FreeflowSpeed, s.ConstrainedSpeed, s.EncodedSpeeds })
-            .AsAsyncEnumerable()
-            .WithCancellation(ct))
+        var conn = (NpgsqlConnection)readDb.Database.GetDbConnection();
+        await readDb.Database.OpenConnectionAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT p."OsmWayId", p."Profile", p."FirstSeenAt", s."FreeflowSpeed", s."ConstrainedSpeed"
+            FROM "WayProfiles" p
+            JOIN "WaySpeedSummaries" s ON s."OsmWayId" = p."OsmWayId"
+            ORDER BY p."OsmWayId"
+            """, conn) { CommandTimeout = 1800 };
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+
+        var now = DateTime.UtcNow;
+        var ids = new long[Block]; var profiles = new byte[Block][]; var firsts = new DateTime[Block];
+        var freeflows = new double[Block]; var constrained = new double[Block]; var lines = new string[Block];
+        bool more = true;
+        while (more)
         {
-            var freeflow = (int)Math.Round(s.FreeflowSpeed);
-            var constrained = (int)Math.Round(s.ConstrainedSpeed ?? s.FreeflowSpeed);
-            await writer.WriteLineAsync($"{s.OsmWayId},{freeflow},{constrained},{s.EncodedSpeeds}");
+            int n = 0;
+            while (n < Block && (more = await reader.ReadAsync(ct)))
+            {
+                ids[n] = reader.GetInt64(0);
+                profiles[n] = (byte[])reader[1];
+                firsts[n] = reader.GetDateTime(2);
+                freeflows[n] = reader.GetDouble(3);
+                constrained[n] = reader.IsDBNull(4) ? freeflows[n] : reader.GetDouble(4);
+                n++;
+            }
+            if (n == 0) break;
+            Parallel.For(0, n, () => new float[WayProfile.Slots], (i, _, buffer) =>
+            {
+                var p = profiles[i];
+                if (p.Length != WayProfile.Slots * 2) { lines[i] = null!; return buffer; }
+                profileWriter.Predict(p, freeflows[i], firsts[i], now, buffer);
+                lines[i] = FormattableString.Invariant(
+                    $"{ids[i]},{(int)Math.Round(freeflows[i])},{(int)Math.Round(constrained[i])},{ValhallaSpeedEncoder.Encode(buffer)}");
+                return buffer;
+            }, _ => { });
+            for (int i = 0; i < n; i++)
+                if (lines[i] != null) await writer.WriteLineAsync(lines[i]);
         }
     }
 

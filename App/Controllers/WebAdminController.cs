@@ -243,18 +243,6 @@ public class WebAdminController(AppDbContext db, AbuseDetectionService abuseDete
             ? Accepted(new { message = "Profile backfill started.", state = backfill.State })
             : Conflict(new { error = "Profile backfill is already running.", state = backfill.State });
 
-    /// <summary>
-    /// Re-encodes the predicted speeds of all roads whose summary changed since <paramref name="since"/>
-    /// (UTC), from their unchanged profiles and the current free-flow speed. Progress: GET profiles/backfill.
-    /// </summary>
-    [HttpPost("profiles/reencode")]
-    [ProducesResponseType(StatusCodes.Status202Accepted)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public IActionResult StartProfileReencode([FromQuery] DateTime since) =>
-        backfill.TryStartReencode(DateTime.SpecifyKind(since, DateTimeKind.Utc))
-            ? Accepted(new { message = "Profile re-encode started.", state = backfill.State })
-            : Conflict(new { error = "Profile backfill or re-encode is already running.", state = backfill.State });
-
     /// <summary>Progress of the profile backfill.</summary>
     [HttpGet("profiles/backfill")]
     [ProducesResponseType(StatusCodes.Status200OK)]

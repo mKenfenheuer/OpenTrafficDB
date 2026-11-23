@@ -10,6 +10,4 @@ public class WaySpeedSummary
     /// <summary>Road class for zoom-dependent tile filtering: 1 motorway/trunk, 2 primary, 3 secondary, 4 tertiary, 5 other.</summary>
     public short? RoadClass { get; set; }
     public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
-    /// <summary>Pre-computed Valhalla DCT-encoded speed string. Null until first aggregation.</summary>
-    public string? EncodedSpeeds { get; set; }
 }

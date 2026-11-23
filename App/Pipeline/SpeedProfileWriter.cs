@@ -8,9 +8,10 @@ using OpenTrafficDBServices;
 namespace OpenTrafficDB.App.Pipeline;
 
 /// <summary>
-/// Maintains the weekly speed profile of every road (<see cref="WayProfile"/>) and derives the
-/// Valhalla predicted-speed encoding (<c>WaySpeedSummaries.EncodedSpeeds</c>) from it, which the
-/// Valhalla CSV export and OpenTrafficRouting's predicted traffic use.
+/// Maintains the weekly speed profile of every road (<see cref="WayProfile"/>). The Valhalla
+/// predicted-speed encoding is derived from it when the Valhalla CSV is exported
+/// (<see cref="Predict"/>, TrafficAggregationService): stored, it was rewritten for every road on
+/// every flush (1.4M rows of 540 bytes per 30 minutes) although the router reads it once a day.
 ///
 /// Samples are collected in memory per road and written every <c>Pipeline:ProfileFlushMinutes</c>
 /// (default 30): one read and one write of a compact row per touched road, in key order and in
@@ -153,18 +154,9 @@ public sealed class SpeedProfileWriter(
     }
 
     /// <summary>
-    /// Recomputes the predictions of the given roads from their unchanged profiles and the current
-    /// free-flow speed (empty slots are filled with free flow, so a corrected free flow must be
-    /// re-encoded). Profiles and their timestamps stay as they are.
-    /// </summary>
-    public Task ReencodeAsync(long[] chunk, CancellationToken ct) =>
-        ProcessChunkAsync(chunk, (_, _, firstSeen) => (firstSeen ?? DateTime.UtcNow, DateTime.MinValue), ct,
-            keepNewerLastUpdated: true);
-
-    /// <summary>
     /// Locked read-modify-write of the profiles of one chunk of roads: reads the profiles with
     /// FOR UPDATE (so the live flush and the backfill never overwrite each other), applies
-    /// <paramref name="mutate"/>, re-encodes the predictions and writes both back in one transaction.
+    /// <paramref name="mutate"/> and writes them back in one transaction.
     /// </summary>
     private async Task ProcessChunkAsync(long[] chunk,
         Func<long, byte[], DateTime?, (DateTime FirstSeen, DateTime LastUpdated)> mutate,
@@ -191,21 +183,8 @@ public sealed class SpeedProfileWriter(
                 existing[reader.GetInt64(0)] = ((byte[])reader[1], reader.GetDateTime(2));
         }
 
-        var freeflowById = new Dictionary<long, double>(chunk.Length);
-        await using (var cmd = new NpgsqlCommand("""
-            SELECT "OsmWayId", "FreeflowSpeed" FROM "WaySpeedSummaries" WHERE "OsmWayId" = ANY(@ids)
-            """, conn, tx))
-        {
-            cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = chunk });
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
-                freeflowById[reader.GetInt64(0)] = reader.GetDouble(1);
-        }
-
-        var now = DateTime.UtcNow;
         var n = chunk.Length;
         var profiles = new byte[n][]; var firsts = new DateTime[n]; var lasts = new DateTime[n];
-        var encoded = new string[n]; var freeflows = new double[n];
 
         for (int i = 0; i < n; i++)
         {
@@ -216,16 +195,7 @@ public sealed class SpeedProfileWriter(
             profiles[i] = profile;
             firsts[i] = first;
             lasts[i] = last;
-            freeflows[i] = freeflowById.TryGetValue(wayId, out var ff) ? ff : MeanSpeed(profile);
         }
-
-        // The DCT encoding is CPU-bound (~0.3 ms per road): run it on all cores.
-        Parallel.For(0, n, () => new float[WayProfile.Slots], (i, _, buffer) =>
-        {
-            Predict(profiles[i], freeflows[i], firsts[i], now, buffer);
-            encoded[i] = ValhallaSpeedEncoder.Encode(buffer);
-            return buffer;
-        }, _ => { });
 
         await using (var upsert = new NpgsqlCommand($"""
             INSERT INTO "WayProfiles" ("OsmWayId","Profile","FirstSeenAt","LastUpdated")
@@ -244,16 +214,6 @@ public sealed class SpeedProfileWriter(
             upsert.Parameters.Add(new NpgsqlParameter("lasts", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = lasts });
             await upsert.ExecuteNonQueryAsync(ct);
         }
-        await using (var enc = new NpgsqlCommand("""
-            UPDATE "WaySpeedSummaries" s SET "EncodedSpeeds" = v.enc
-            FROM unnest(@ids, @enc) AS v(id, enc)
-            WHERE s."OsmWayId" = v.id
-            """, conn, tx))
-        {
-            enc.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = chunk });
-            enc.Parameters.Add(new NpgsqlParameter("enc", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = encoded });
-            await enc.ExecuteNonQueryAsync(ct);
-        }
         await tx.CommitAsync(ct);
     }
 
@@ -270,19 +230,11 @@ public sealed class SpeedProfileWriter(
         profile[slot * 2 + 1] = (byte)newCount;
     }
 
-    private static double MeanSpeed(byte[] profile)
-    {
-        double sum = 0; int n = 0;
-        for (int i = 0; i < WayProfile.Slots; i++)
-            if (profile[i * 2 + 1] > 0) { sum += profile[i * 2]; n++; }
-        return n > 0 ? sum / n : 50;
-    }
-
     /// <summary>Fills <paramref name="buffer"/> with the predicted speed (km/h) of every slot.</summary>
     public void Predict(byte[] profile, double freeflow, DateTime firstSeen, DateTime now, float[] buffer)
     {
         var weeks = Math.Clamp((int)Math.Ceiling((now - firstSeen).TotalDays / 7.0), 1, _countCap);
-        var hasData = new bool[WayProfile.Slots];
+        Span<bool> hasData = stackalloc bool[WayProfile.Slots];
         Array.Fill(buffer, (float)freeflow);
 
         for (int i = 0; i < WayProfile.Slots; i++)

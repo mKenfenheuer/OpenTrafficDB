@@ -129,7 +129,7 @@ public class AppDbContext : DbContext
             // non-HOT update (new row version plus three index entries). The tile query reaches the
             // rows through OsmWayId and only filters on LastUpdated; the index was used 4 times in
             // two days while 480 million updates maintained it.
-            // fillfactor=80: ConstrainedSpeed, FreeflowSpeed, EncodedSpeeds updated on every aggregation cycle.
+            // fillfactor=80: ConstrainedSpeed, FreeflowSpeed and LastUpdated change on every aggregation cycle.
             e.HasStorageParameter("fillfactor", 80);
         });
 
