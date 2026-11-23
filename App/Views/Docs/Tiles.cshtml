@@ -43,7 +43,7 @@
         </tbody>
     </table>
     <p class="text-muted text-sm" style="margin-top:12px;line-height:1.8">
-        Response headers: <code>Content-Encoding: gzip</code> · <code>Content-Type: application/vnd.mapbox-vector-tile</code> · <code>Cache-Control: public, max-age=60</code>
+        Response headers: <code>Content-Encoding: gzip</code> · <code>Content-Type: application/vnd.mapbox-vector-tile</code> · <code>Cache-Control: public, max-age=60</code> (zoom ≤ 10) or <code>max-age=30</code> (zoom ≥ 11)
     </p>
 </div>
 
@@ -103,6 +103,16 @@
             </tr>
         </tbody>
     </table>
+    <p class="text-muted text-sm" style="line-height:1.8;margin-top:12px">
+        <strong style="color:var(--text)">Zoom ≤ 10 (overview tiles):</strong> roads are not split per OSM way.
+        All roads of a tile with a similar delay are merged into one <strong style="color:var(--text)">MultiLineString</strong> feature
+        that carries only <code>delay_factor</code>, rounded to a band:
+        <code>0</code> (below 0.125), <code>0.25</code> (0.125–0.375), <code>0.5</code> (0.375–0.625) or <code>0.75</code> (0.625 and above).
+        Roads without a known free-flow speed form one feature without <code>delay_factor</code>.
+        <code>osm_way_id</code>, <code>speed_kmh</code> and the other properties are only present from zoom 11 on.
+        These tiles use an extent of 2048 instead of 4096. Overview tiles show motorways and trunk roads up to zoom 8,
+        plus primary roads at zoom 9 and secondary roads at zoom 10.
+    </p>
 </div>
 
 <div class="card section">
@@ -191,7 +201,9 @@ Max zoom: 16</div>
 <div class="card section">
     <div class="card-title">Caching</div>
     <p class="text-muted text-sm" style="line-height:1.8">
-        Traffic tiles are served with <code>Cache-Control: public, max-age=15</code> (hazard tiles: 60). For live traffic dashboards, refresh the tile source every 15 seconds by appending a cache-busting query parameter:
+        Traffic tiles are served with <code>Cache-Control: public, max-age=60</code> at zoom ≤ 10 and <code>max-age=30</code> at zoom ≥ 11 (hazard tiles: 60).
+        Live speeds are refreshed server side about every 10 seconds. Clients that honour HTTP expiry receive fresh tiles once a tile has expired.
+        To force a refresh earlier, append a cache-busting query parameter:
     </p>
     <div class="code-block"><span class="code-comment">// Refresh source every 60 s</span>
 setInterval(() => {

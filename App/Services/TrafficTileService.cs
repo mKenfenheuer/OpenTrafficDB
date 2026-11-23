@@ -35,6 +35,19 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60)
     };
 
+    /// <summary>
+    /// Highest zoom whose "traffic" layer holds merged per-delay-band features (only delay_factor)
+    /// instead of one feature per OSM way. Cuts a z6 tile from ~2.1 MB to ~140 KB (uncompressed).
+    /// </summary>
+    public const int MergedMaxZoom = 10;
+
+    // MVT extent for merged tiles. With the 1-unit simplification the shape error stays below
+    // ~0.4 px of a 512 px tile, far under the line width; 4096 would only add coordinate bytes.
+    private const int MergedExtent = 2048;
+
+    // Highest zoom built in Web Mercator (EPSG:3857) instead of linear lon/lat; see BuildTileInternalAsync.
+    private const int MercatorMaxZoom = 8;
+
     // Requests for the same tile that arrive while it is being built share that one build.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<byte[]>> _inFlight = new();
 
@@ -52,7 +65,7 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         {
             // Not cancelled by this request: other requests may be waiting for the result.
             var tile = await BuildTileInternalAsync(z, x, y, CancellationToken.None);
-            await cache.SetAsync(key, tile, z <= 10 ? LowZoomOptions : TileOptions, CancellationToken.None);
+            await cache.SetAsync(key, tile, z <= MergedMaxZoom ? LowZoomOptions : TileOptions, CancellationToken.None);
             tcs.SetResult(tile);
             return tile;
         }
@@ -100,20 +113,18 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
         // partial spatial index for that level (IX_WayGeometries_BBox_ClassN): a z8 tile then scans
         // ~8k motorway geometries instead of ~200k roads of all classes. Values are parameters.
         var classFilter = maxRoadClass < 5 ? $"AND wg.\"RoadClass\" <= {maxRoadClass}" : "";
-        var sql = $$"""
-            SELECT (SELECT ST_AsMVT(q, 'traffic', 4096, 'geom')
-            FROM (
-                SELECT
-                    ST_AsMVTGeom(base."Geometry", ST_MakeEnvelope({0}, {1}, {2}, {3}, 4326), 4096, 64, true) AS geom,
-                    base."OsmWayId"                                                     AS osm_way_id,
-                    ROUND(base.speed_kmh::numeric, 1)::float8                          AS speed_kmh,
-                    base.freeflow_kmh,
-                    CASE WHEN base."ConstrainedSpeed" IS NOT NULL THEN 'live'
-                         ELSE 'historic' END                                            AS source,
-                    base.speed_limit_kmh,
-                    CASE WHEN base."FreeflowSpeed" IS NOT NULL
-                         THEN ROUND(base.delay::numeric, 3)::float8 END                AS delay_factor
-                FROM (
+
+        // Geometries are stored in EPSG:4326. Mapping lon/lat linearly onto the tile ignores the
+        // Mercator stretch in y; that error grows with tile height (z6: ~5 px, z8: ~1.2 px at 512 px,
+        // z9: 0.6 px). Up to MercatorMaxZoom, project to EPSG:3857 and clip to the exact tile
+        // envelope. The BBox prefilter stays on the 4326 index (same tile bounds).
+        var mercator = z <= MercatorMaxZoom;
+        var trafficGeom = mercator ? "ST_Transform(base.\"Geometry\", 3857)" : "base.\"Geometry\"";
+        var closureGeom = mercator ? "ST_Transform(wg.\"Geometry\", 3857)" : "wg.\"Geometry\"";
+        var tileEnvelope = mercator
+            ? "ST_TileEnvelope({7}, {8}, {9})"
+            : "ST_MakeEnvelope({0}, {1}, {2}, {3}, 4326)";
+        var baseSql = $$"""
                     SELECT
                         wg."OsmWayId",
                         wg."Geometry",
@@ -136,15 +147,60 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                     WHERE wg."BBox" && ST_MakeEnvelope({0}, {1}, {2}, {3}, 4326)
                       {{classFilter}}
                       AND COALESCE(wss."RoadClass", wg."RoadClass") <= {6}
-                ) base
+            """;
+
+        var trafficSql = z <= MergedMaxZoom
+            // Overview zooms: one feature per delay band instead of one per OSM way. Roads in a band
+            // are clipped per way, collected and line-merged into one MultiLineString, then simplified
+            // by one tile unit (Douglas-Peucker; ST_AsMVTGeom only drops collinear points). Only the
+            // band value is kept as delay_factor; NULL band = no free-flow speed known (grey).
+            // Higher bands come last so congestion is drawn on top. ST_AsMVT skips NULL geometries.
+            ? $$"""
+            SELECT ST_AsMVT(q, 'traffic', {{MergedExtent}}, 'geom')
+            FROM (
+                SELECT
+                    f.delay_factor,
+                    ST_Simplify(ST_LineMerge(ST_CollectionExtract(ST_Collect(f.geom), 2)), 1) AS geom
+                FROM (
+                    SELECT
+                        ST_AsMVTGeom({{trafficGeom}}, {{tileEnvelope}},
+                                     {{MergedExtent}}, {{MergedExtent / 64}}, true)      AS geom,
+                        CASE WHEN base."FreeflowSpeed" IS NOT NULL
+                             THEN LEAST(ROUND(base.delay * 4) / 4, 0.75) END            AS delay_factor
+                    FROM ({{baseSql}}) base
+                    WHERE COALESCE(base.delay, 0) >= {5}
+                ) f
+                WHERE f.geom IS NOT NULL
+                GROUP BY f.delay_factor
+                ORDER BY f.delay_factor NULLS FIRST
+            ) q
+            """
+            : $$"""
+            SELECT ST_AsMVT(q, 'traffic', 4096, 'geom')
+            FROM (
+                SELECT
+                    ST_AsMVTGeom(base."Geometry", ST_MakeEnvelope({0}, {1}, {2}, {3}, 4326), 4096, 64, true) AS geom,
+                    base."OsmWayId"                                                     AS osm_way_id,
+                    ROUND(base.speed_kmh::numeric, 1)::float8                          AS speed_kmh,
+                    base.freeflow_kmh,
+                    CASE WHEN base."ConstrainedSpeed" IS NOT NULL THEN 'live'
+                         ELSE 'historic' END                                            AS source,
+                    base.speed_limit_kmh,
+                    CASE WHEN base."FreeflowSpeed" IS NOT NULL
+                         THEN ROUND(base.delay::numeric, 3)::float8 END                AS delay_factor
+                FROM ({{baseSql}}) base
                 WHERE COALESCE(base.delay, 0) >= {5}
             ) q
-            WHERE q.geom IS NOT NULL)
+            WHERE q.geom IS NOT NULL
+            """;
+
+        var sql = $$"""
+            SELECT ({{trafficSql}})
             -- Second layer: roads with an active closure, independent of live speed data. Driven by
             -- the (few) active closures near the tile instead of probing every road in the tile.
             || (SELECT ST_AsMVT(c, 'closures', 4096, 'geom')
                 FROM (
-                    SELECT ST_AsMVTGeom(wg."Geometry", ST_MakeEnvelope({0}, {1}, {2}, {3}, 4326), 4096, 64, true) AS geom,
+                    SELECT ST_AsMVTGeom({{closureGeom}}, {{tileEnvelope}}, 4096, 64, true) AS geom,
                            wg."OsmWayId" AS osm_way_id
                     FROM "WayGeometries" wg
                     WHERE wg."OsmWayId" IN (
@@ -161,8 +217,10 @@ public class TrafficTileService(ReadOnlyAppDbContext db, IDistributedCache cache
                 ) c
                 WHERE c.geom IS NOT NULL) AS "Value"
             """;
+        // JIT is off server-wide (docker-compose: jit=off): ST_Transform raises the z6 plan cost
+        // above the JIT thresholds and compiling took ~1 s for a query that runs in ~0.4 s.
         var result = await db.Database
-            .SqlQueryRaw<byte[]>(sql, minLon, minLat, maxLon, maxLat, liveCutoff, _minDelay, (short)maxRoadClass)
+            .SqlQueryRaw<byte[]>(sql, minLon, minLat, maxLon, maxLat, liveCutoff, _minDelay, (short)maxRoadClass, z, x, y)
             .FirstOrDefaultAsync(ct);
 
         // ST_AsMVT returns empty bytea (zero bytes) when no features match — treat as empty tile.

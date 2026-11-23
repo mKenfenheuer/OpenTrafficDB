@@ -259,7 +259,12 @@
         const fmt = (v, unit) => v != null ? (+v).toFixed(1) + (unit || '') : '—';
         const pct = (v) => v != null ? Math.round(+v * 100) + '%' : '—';
 
-        const html = `
+        // Zoom <= 10 tiles merge roads per delay band and carry only delay_factor.
+        const html = p.osm_way_id == null ? `
+            <div>
+                <div class="popup-row"><span class="popup-label">Delay</span><span class="popup-val">≈ ${pct(p.delay_factor)}</span></div>
+                <div class="popup-source">Zoom in for road details</div>
+            </div>` : `
             <div>
                 <div class="popup-row"><span class="popup-label">Speed</span><span class="popup-val">${fmt(p.speed_kmh, ' km/h')}</span></div>
                 <div class="popup-row"><span class="popup-label">Limit</span><span class="popup-val">${p.speed_limit_kmh != null ? fmt(p.speed_limit_kmh, ' km/h') : (p.osm_max_speed != null ? fmt(p.osm_max_speed, ' km/h') : '—')}</span></div>

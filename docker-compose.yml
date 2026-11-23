@@ -13,8 +13,7 @@ services:
       -c max_parallel_workers=12
       -c max_parallel_workers_per_gather=4
       -c max_parallel_maintenance_workers=4
-      -c jit=on
-      -c jit_above_cost=50000
+      -c jit=off
       -c random_page_cost=1.1
       -c effective_io_concurrency=200
       -c wal_buffers=${PG_WAL_BUFFERS:-16MB}

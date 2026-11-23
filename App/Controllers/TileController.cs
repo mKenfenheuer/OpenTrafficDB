@@ -42,7 +42,7 @@ public class TileController(
                 new
                 {
                     id          = "traffic",
-                    description = "Road segments with speed and congestion data.",
+                    description = "Road segments with speed and congestion data. At zoom <= 10 roads are merged per delay band and carry only delay_factor (0, 0.25, 0.5, 0.75 or absent).",
                     minzoom     = 6,
                     maxzoom     = 16,
                     fields      = new Dictionary<string, string>
@@ -266,7 +266,11 @@ public class TileController(
 
         var bytes = await trafficTiles.BuildTileAsync(z, x, y, ct);
         Response.Headers["Content-Encoding"] = "gzip";
-        Response.Headers["Cache-Control"] = "public, max-age=15";
+        // Clients refresh by HTTP expiry. Overview tiles change little per minute (and are cached
+        // server side for 60 s); detail tiles follow the ~10 s live refresh more closely.
+        Response.Headers["Cache-Control"] = z <= TrafficTileService.MergedMaxZoom
+            ? "public, max-age=60"
+            : "public, max-age=30";
         return File(bytes, "application/vnd.mapbox-vector-tile");
     }
 }
