@@ -632,8 +632,6 @@ namespace OpenTrafficDBMigrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("LastUpdated");
-
                     b.HasIndex("OsmWayId")
                         .IsUnique();
 

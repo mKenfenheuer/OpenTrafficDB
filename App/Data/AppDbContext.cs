@@ -125,8 +125,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<WaySpeedSummary>(e =>
         {
             e.HasIndex(s => s.OsmWayId).IsUnique();
-            // Used by the tile query: WHERE wss."LastUpdated" >= NOW() - INTERVAL '60 minutes'
-            e.HasIndex(s => s.LastUpdated);
+            // No index on LastUpdated: it changes on every update, so the index made every update a
+            // non-HOT update (new row version plus three index entries). The tile query reaches the
+            // rows through OsmWayId and only filters on LastUpdated; the index was used 4 times in
+            // two days while 480 million updates maintained it.
             // fillfactor=80: ConstrainedSpeed, FreeflowSpeed, EncodedSpeeds updated on every aggregation cycle.
             e.HasStorageParameter("fillfactor", 80);
         });

@@ -21,6 +21,9 @@ services:
       -c synchronous_commit=off
       -c wal_compression=zstd
       -c checkpoint_completion_target=0.9
+      -c max_wal_size=${PG_MAX_WAL_SIZE:-16GB}
+      -c min_wal_size=2GB
+      -c checkpoint_timeout=15min
       -c default_statistics_target=200
       -c autovacuum_vacuum_scale_factor=0.01
       -c autovacuum_analyze_scale_factor=0.005
