@@ -13,8 +13,11 @@ namespace OpenTrafficDB.App.Pipeline;
 /// Valhalla CSV export and OpenTrafficRouting's predicted traffic use.
 ///
 /// Samples are collected in memory per road and written every <c>Pipeline:ProfileFlushMinutes</c>
-/// (default 5): one read and one write of a compact row per touched road, in key order and in
-/// chunks. The prediction is computed in the same step, so no separate pass over the data is needed.
+/// (default 30): one read and one write of a compact row per touched road, in key order and in
+/// chunks. Samples keep their own five-minute slot, so a longer interval loses nothing; with 5
+/// minutes the ~800k roads TomTom covers were rewritten (4 KB each) and re-encoded on every pass,
+/// a pass took 6 minutes on 2-3 cores and the next one started 5 minutes later. The router
+/// reads the predictions once a day. The prediction is computed in the same step, so no separate pass over the data is needed.
 ///
 /// Prediction per five-minute slot (same rules as the original aggregate-based encoding):
 /// the slot average blended with the free-flow speed for weeks without a sample, empty slots
@@ -29,7 +32,7 @@ public sealed class SpeedProfileWriter(
     private const int GapFillSlots = 12;   // ±60 min
 
     private readonly TimeSpan _flushInterval = TimeSpan.FromMinutes(
-        double.TryParse(config["Pipeline:ProfileFlushMinutes"], out var f) ? f : 5);
+        double.TryParse(config["Pipeline:ProfileFlushMinutes"], out var f) ? f : 30);
     private readonly int _countCap = int.TryParse(config["Pipeline:ProfileCountCap"], out var c) ? Math.Clamp(c, 1, 255) : 52;
 
     private readonly object _lock = new();
