@@ -53,6 +53,21 @@ public class TrafficController(
         return new EmptyResult();
     }
 
+    /// <summary>Length of every way with known geometry (<c>way_id,length_m</c>), for the router.</summary>
+    [HttpGet("ways/lengths/csv")]
+    [Produces("text/csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> GetWayLengthsCsv(CancellationToken ct)
+    {
+        if (!CheckReadRate()) return StatusCode(429, new { error = "Rate limit exceeded." });
+
+        Response.ContentType = "text/csv";
+        Response.Headers["Content-Disposition"] = "attachment; filename=\"way_lengths.csv\"";
+        await aggregation.WriteWayLengthsCsvAsync(Response.Body, ct);
+        return new EmptyResult();
+    }
+
     private string GetIp()    => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     private string GetKeyId() => User.FindFirstValue("keyId") ?? string.Empty;
     private bool   CheckReadRate() => abuseDetection.CheckReadRate(GetIp(), GetKeyId());

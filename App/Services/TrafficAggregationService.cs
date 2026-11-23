@@ -110,4 +110,24 @@ public class TrafficAggregationService(
         }
     }
 
+    /// <summary>
+    /// Writes the length of every way with geometry as <c>way_id,length_m</c>. The router weights
+    /// the member ways of its compacted edges by length (a 120 m way in a jam must not count as
+    /// much as a 1.9 km one).
+    /// </summary>
+    public async Task WriteWayLengthsCsvAsync(Stream output, CancellationToken ct = default)
+    {
+        await using var writer = new StreamWriter(output, Encoding.UTF8, bufferSize: 65536, leaveOpen: true);
+        await writer.WriteLineAsync("way_id,length_m");
+
+        var conn = (NpgsqlConnection)readDb.Database.GetDbConnection();
+        await readDb.Database.OpenConnectionAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT "OsmWayId", ST_Length("Geometry"::geography)
+            FROM "WayGeometries" WHERE "Geometry" IS NOT NULL
+            """, conn) { CommandTimeout = 600 };
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            await writer.WriteLineAsync(FormattableString.Invariant($"{reader.GetInt64(0)},{reader.GetDouble(1):F0}"));
+    }
 }
