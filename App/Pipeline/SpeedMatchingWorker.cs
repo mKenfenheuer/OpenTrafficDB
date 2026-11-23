@@ -18,6 +18,10 @@ namespace OpenTrafficDB.App.Pipeline;
 /// segments that repeat every cycle with new speeds only, are matched once and then served
 /// from the cache, so OpenTrafficRouting (CPU-bound) only sees new geometry.
 ///
+/// A compacted router edge covers several OSM ways (a motorway between two interchanges can be
+/// 10 km and 20 ways long). Each point counts only for the member ways it lies next to, see
+/// <see cref="MemberWayAssignment"/>: before, a jam on 500 m of such an edge was written to all its ways.
+///
 /// Per trip and road, the matched points are averaged into one sample (speed, time, limit).
 /// Roads crossed between two points (interpolated edges) get one sample each, unless the trip
 /// already has a point on them. This "one sample per traversal" keeps the aggregation volume
@@ -27,6 +31,7 @@ public sealed class SpeedMatchingWorker(
     SpeedPipeline pipeline,
     SpeedAggregator aggregator,
     MapMatchingService matcher,
+    WayShapeCache wayShapes,
     IConfiguration config,
     ILogger<SpeedMatchingWorker> logger) : BackgroundService
 {
@@ -206,13 +211,16 @@ public sealed class SpeedMatchingWorker(
         }
     }
 
-    private MatchPlan BuildPlan(MapMatchingService.TraceResult result)
+    private MatchPlan BuildPlan(MapMatchingService.TraceResult result, Segment segment,
+        IReadOnlyDictionary<long, float[]> shapes)
     {
         var points = matcher.ParsePointMatches(result);
         var idx = new int[points.Count]; var ways = new long[points.Count][]; var limits = new double?[points.Count];
         var classes = new short[points.Count];
         var k = 0;
         foreach (var (i, m) in points) { idx[k] = i; ways[k] = m.WayIds; limits[k] = m.SpeedLimitKmh; classes[k] = m.RoadClass; k++; }
+        var trace = segment.Points.Select(p => (p.Point.Latitude, p.Point.Longitude)).ToArray();
+        MemberWayAssignment.Assign(trace, idx, ways, shapes);
 
         var interpolated = new List<InterpolatedWay>();
         if (result.Edges != null && result.MatchedPoints != null)
@@ -284,10 +292,11 @@ public sealed class SpeedMatchingWorker(
                 anyUnreachable = true;
                 continue;
             }
+            var shapes = await wayShapes.GetAsync(MemberWayAssignment.MemberWays(results), ct);
             for (int j = 0; j < chunk.Count && j < results.Count; j++)
             {
                 if (results[j] == null) continue;   // transport error: not cached, retried with the trip's next points
-                var plan = BuildPlan(results[j]!);
+                var plan = BuildPlan(results[j]!, allSegments[chunk[j]], shapes);
                 plans[chunk[j]] = plan;
                 _planCache.Set(allSegments[chunk[j]].CacheKey, plan,
                     new MemoryCacheEntryOptions
@@ -323,7 +332,7 @@ public sealed class SpeedMatchingWorker(
                     var (point, isContext) = segment.Points[idx];
                     if (isContext || !matchedSeqs.Add(point.Seq)) continue;
 
-                    // A point on a shortcut edge counts for every way the edge covers.
+                    // A point on a compacted edge counts for the member ways next to it (MemberWayAssignment).
                     foreach (var wayId in plan.PointWays[k])
                     {
                         pointWays.TryGetValue(wayId, out var acc);
